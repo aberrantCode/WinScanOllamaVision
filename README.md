@@ -1,0 +1,87 @@
+# WinScanOllamaVision
+
+This is a Python-based desktop utility designed to intelligently organize scanned PDF documents. It inspects local scan folders, combines multi-part PDF documents, renames them based on content extracted by an Ollama vision model, and moves them to an organized subfolder. The application provides a user interface for previewing, correcting extracted information, and confirming file operations.
+
+## Features:
+*   Intelligent grouping of scanned pages into documents based on timestamp and AI validation.
+*   Extraction of `Source Company`, `Document Title`, and `Date` using a configurable Ollama vision model.
+*   User interface for previewing pages, editing extracted information, and confirming actions.
+*   Automatic conversion of TIFF files to PNG for processing.
+*   Conversion of multiple PNG/TIFF images into a single, text-searchable PDF.
+*   Configurable Ollama model selection from a dropdown, with options to pull (download) remote models and view model details on the Ollama website.
+*   Robust error handling at each stage, with user prompts for manual intervention or confirmation.
+*   Final confirmation dialog providing explicit control over PDF acceptance and source file deletion.
+
+## Repository:
+https://github.com/aberrantCode/WinScanOllamaVision.git
+
+## Setup:
+
+### 1. Install Python
+Ensure you have Python 3.8+ installed on your system. You can download it from [python.org](https://www.python.org/downloads/).
+
+### 2. Install Ollama
+Download and install Ollama from [ollama.com](https://ollama.com/). Make sure the Ollama server is running locally (it usually starts automatically).
+
+### 3. Install a Vision Model
+You need an Ollama vision model for the application to work. The application defaults to `qwen2.5-vl`. You can pull it via the CLI:
+```bash
+ollama pull qwen2.5-vl
+```
+Or, you can pull other vision models like `llava:latest` or `deepseek-ocr` which can also be selected and pulled directly from within the application's UI.
+
+### 4. Clone the Repository
+```bash
+git clone https://github.com/aberrantCode/WinScanOllamaVision.git
+cd WinScanOllamaVision
+```
+
+### 5. Install Python Dependencies
+It's recommended to use a Python virtual environment:
+```bash
+python -m venv venv
+.\venv\Scripts\activate   # On Windows
+source venv/bin/activate # On macOS/Linux
+```
+Then install the required packages:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage:
+
+### 1. Configure Settings (`settings.ini`)
+The application automatically creates a `settings.ini` file in the root directory if it doesn't exist. You can edit this file to customize:
+*   `[Ollama]`
+    *   `model`: The default Ollama vision model to use (e.g., `qwen2.5-vl`).
+    *   `base_url`: The URL of your Ollama server (default: `http://localhost:11434`).
+*   `[DocumentProcessing]`
+    *   `scan_folder`: The path to your input folder (default: `C:\Users\{username}\Pictures\Scans`).
+    *   `organized_subfolder`: The name of the subfolder where organized PDFs will be moved (default: `ORGANIZED`).
+    *   `title_keywords`: A comma-separated list of keywords Ollama will use to identify document titles (e.g., `Invoice, Statement, Bill`).
+*   `[GUI]`
+    *   `window_width`, `window_height`: Initial dimensions of the application window.
+
+### 2. Run the Application
+```bash
+python src/gui.py
+```
+
+### 3. Workflow:
+*   **Model Selection:** Use the dropdown to select your desired Ollama vision model. If a remote model is chosen, click "Pull Model" to download it.
+*   **Scan & Group:** Click "Scan & Group New Documents". The application will scan your `scan_folder`, convert any TIFFs to PNGs, and propose groups of pages for documents based on scan timestamps. It will then use Ollama to validate the grouping.
+*   **Review & Edit:** For each proposed document, you will see a preview of its pages. Ollama's suggestions for `Company`, `Title`, and `Date` will populate editable text fields. You can correct these manually. You can also uncheck pages you don't want included in the current document group.
+*   **Approve & Process:** Click "Approve & Process Document". The application will generate the final PDF.
+*   **Final Confirmation:** A dialog will appear, showing the created PDF and any warnings (e.g., page count mismatch, non-searchable PDF). You will have three options:
+    1.  **Accept & Delete Source Files**: Keeps the PDF, deletes the original PNGs.
+    2.  **Accept & Keep Source Files**: Keeps the PDF, but keeps the original PNGs.
+    3.  **Reject & Delete PDF**: Deletes the new PDF, keeps the original PNGs.
+
+## Development:
+
+### Running Tests:
+Navigate to the root directory of the project and run:
+```bash
+python -m unittest discover tests
+```
+This will execute all tests in the `tests/` directory.

@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+/bin/activate
+/bin/activate.csh
+/bin/activate.fish
+/bin/activate.ps1
+/bin/activate.sh
+/bin/activate.zsh
+/bin/python
+/bin/python2
+/bin/python3
+/bin/pip
+/bin/pip2
+/bin/pip3
+
+# IDE specific files
+.idea/
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+
+# Test / coverage
+.coverage
+.pytest_cache/
+htmlcov/
+.nox/
+
+# Logs
+*.log
+*.tmp
+
+# Configuration files
+settings.ini # Our planned settings file
+.env # Environment variables
+
+# Ollama-related (if any local store is created in the repo)
+.ollama/
+
+# Scanned files (input and output) - these should not be version controlled
+scans/
+organized/

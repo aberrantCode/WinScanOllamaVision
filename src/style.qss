@@ -1,0 +1,146 @@
+/*
+ * Cyberpunk/Dark Mode Stylesheet for WinScanOllamaVision
+ * Colors:
+ *   - Dark Background: #121212
+ *   - Panel Background: #1E1E1E (slightly lighter)
+ *   - Neon Blue: #00A8E8
+ *   - Neon Magenta: #D800FF
+ *   - Text Color: #E0E0E0
+ *   - Border Color: #333333
+ */
+
+QWidget {
+    background-color: #121212;
+    color: #E0E0E0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 10pt;
+}
+
+QMainWindow {
+    background-color: #121212;
+}
+
+/* --- Labels and Text --- */
+QLabel {
+    background-color: transparent;
+}
+
+QLineEdit, QComboBox {
+    background-color: #2A2A2A;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    padding: 5px;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #00A8E8;
+}
+
+QComboBox::drop-down {
+    border: none;
+}
+
+/* Make the dropdown list solid */
+QComboBox QAbstractItemView {
+    background-color: #2A2A2A;
+    border: 1px solid #333333;
+    selection-background-color: #00A8E8;
+}
+
+/* --- Buttons --- */
+QPushButton {
+    background-color: transparent;
+    border: 1px solid #00A8E8;
+    border-radius: 5px;
+    padding: 8px 15px;
+    color: #00A8E8;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #00A8E8;
+    color: #121212;
+}
+
+QPushButton:pressed {
+    background-color: #007EA8; /* A darker blue for pressed state */
+    border: 1px solid #007EA8;
+}
+
+QPushButton:disabled {
+    color: #555555;
+    border-color: #333333;
+    background-color: transparent;
+}
+
+
+/* --- Scroll Area (for document preview) --- */
+QScrollArea {
+    border: 1px solid #333333;
+    background-color: #1E1E1E;
+    border-radius: 5px;
+}
+
+/* --- Frames and Panels --- */
+QFrame {
+    border: 1px solid #333333;
+    border-radius: 5px;
+    background-color: transparent;
+}
+
+/* --- CheckBox --- */
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #333333;
+    border-radius: 3px;
+    background-color: #2A2A2A;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #00A8E8;
+    border: 1px solid #00A8E8;
+    image: url(checkmark.png); /* Placeholder for a checkmark icon */
+}
+
+QCheckBox::indicator:hover {
+    border: 1px solid #00A8E8;
+}
+
+
+/* --- Dialogs --- */
+QDialog {
+    background-color: #1A1A1A;
+    border: 1px solid #333333;
+}
+
+/* --- Message Box --- */
+QMessageBox {
+    background-color: #1E1E1E;
+}
+
+QMessageBox QLabel {
+    color: #E0E0E0;
+    font-size: 11pt;
+}
+
+/* --- List Widgets --- */
+QListWidget {
+    background-color: #2A2A2A;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    padding: 5px;
+}
+
+QListWidget::item {
+    padding: 5px;
+}
+
+QListWidget::item:hover {
+    background-color: #3A3A3A;
+}
+
+QListWidget::item:selected {
+    background-color: #00A8E8;
+    color: #121212;
+}
