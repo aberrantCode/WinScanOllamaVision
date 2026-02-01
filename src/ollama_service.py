@@ -1,78 +1,68 @@
-import requests
+import ollama
 import json
-import base64
 import os
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Any
 
 class OllamaService:
     def __init__(self, base_url: str = "http://localhost:11434"):
+        # The SDK uses OLLAMA_HOST environment variable or default localhost:11434
+        # We can set the host if needed
+        if base_url != "http://localhost:11434":
+            os.environ['OLLAMA_HOST'] = base_url
         self.base_url = base_url
-        self.session = requests.Session()
-
-    def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
-        url = f"{self.base_url}/{endpoint}"
-        try:
-            response = self.session.request(method, url, **kwargs)
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            return response.json()
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError(f"Failed to connect to Ollama server at {self.base_url}. Is it running?")
-        except requests.exceptions.HTTPError as e:
-            raise ConnectionError(f"HTTP Error: {e.response.status_code} - {e.response.text}")
-        except json.JSONDecodeError:
-            raise ValueError(f"Failed to decode JSON from response: {response.text}")
-        except Exception as e:
-            raise Exception(f"An unexpected error occurred: {e}")
 
     def list_models(self) -> List[Dict[str, Any]]:
         """Lists locally available Ollama models."""
-        response = self._make_request("GET", "api/tags")
-        return response.get("models", [])
-
-    def pull_model(self, model_name: str) -> None:
-        """Pulls an Ollama model. This will block until the download is complete."""
-        # The /api/pull endpoint is streamed, so we handle it differently
-        url = f"{self.base_url}/api/pull"
-        payload = {"name": model_name}
         try:
-            with self.session.post(url, json=payload, stream=True) as response:
-                response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=None): # Process as soon as chunks arrive
-                    if chunk:
-                        try:
-                            # Each chunk might be a complete JSON object or part of one
-                            decoded_chunk = chunk.decode('utf-8')
-                            for line in decoded_chunk.splitlines():
-                                if line.strip():
-                                    data = json.loads(line)
-                                    # print(f"Pulling {model_name}: {data.get('status', 'progress')} - {data.get('digest', '')} {data.get('total', '')}")
-                                    # In a real GUI, you'd emit signals here for progress
-                        except json.JSONDecodeError:
-                            # Not a complete JSON line, might be partial or non-json output
-                            pass # Or log it if necessary
-            # Final check to see if the model is now in the list
+            response = ollama.list()
+            return response.get("models", [])
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to Ollama server. Is it running? Error: {e}")
+
+    @staticmethod
+    def is_vision_model(model_name: str) -> bool:
+        """
+        Determine if a model is a vision model based on its name.
+        Vision models typically have specific name patterns.
+        """
+        vision_keywords = [
+            'llava', 'bakllava', 'llava-phi', 'llava-llama3', 'llava-v1',
+            'moondream', 'cogvlm', 'qwen-vl', 'qwen2-vl', 'qwen2.5-vl', 'qwen3-vl',
+            'deepseek-vl', 'yi-vl', 'phi-3-vision', 'phi3-vision',
+            'internvl', 'minicpm-v', 'vision', 'vl-', '-vl', '-vision'
+        ]
+        model_lower = model_name.lower()
+        return any(keyword in model_lower for keyword in vision_keywords)
+
+    def pull_model(self, model_name: str, progress_callback=None) -> None:
+        """Pulls an Ollama model. This will block until the download is complete."""
+        try:
+            # The SDK's pull method handles streaming
+            for progress in ollama.pull(model_name, stream=True):
+                if progress_callback and 'status' in progress:
+                    status = progress.get('status', '')
+                    completed = progress.get('completed', 0)
+                    total = progress.get('total', 0)
+                    if total > 0:
+                        pct = int((completed / total) * 100)
+                        progress_callback(f"{status}: {pct}%")
+                    else:
+                        progress_callback(status)
+
+            # Verify model was pulled
             if not any(m['name'].startswith(model_name) for m in self.list_models()):
                 raise Exception(f"Model '{model_name}' did not appear in list_models after pull operation.")
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError(f"Failed to connect to Ollama server at {self.base_url}. Is it running?")
-        except requests.exceptions.HTTPError as e:
-            raise ConnectionError(f"HTTP Error pulling model: {e.response.status_code} - {e.response.text}")
         except Exception as e:
             raise Exception(f"An unexpected error occurred during model pull: {e}")
 
-    def _encode_image(self, image_path: str) -> str:
-        """Encodes an image file to a base64 string."""
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode("utf-8")
-
-    def chat_with_vision_model(self, 
-                               model_name: str, 
-                               image_paths: List[str], 
+    def chat_with_vision_model(self,
+                               model_name: str,
+                               image_paths: List[str],
                                prompt: str,
                                format_json: bool = False
                                ) -> Dict[str, Any]:
         """
-        Chats with a vision-capable Ollama model.
+        Chats with a vision-capable Ollama model using the Python SDK.
         Args:
             model_name: The name of the vision model to use.
             image_paths: A list of paths to image files (e.g., PNG) to include in the message.
@@ -81,50 +71,84 @@ class OllamaService:
         Returns:
             The model's response.
         """
-        encoded_images = [self._encode_image(path) for path in image_paths]
-        
-        messages = [
-            {
-                "role": "user",
-                "content": prompt,
-                "images": encoded_images
-            }
-        ]
-        
-        payload = {
-            "model": model_name,
-            "messages": messages,
-            "stream": False,
-            "options": {
-                "temperature": 0.1 # Keep temperature low for factual extraction
-            }
-        }
+        # DEBUG: Show what images are being processed
+        print(f"\n=== DEBUG: Ollama Vision Request (SDK) ===")
+        print(f"Model: {model_name}")
+        print(f"Image paths received: {len(image_paths)}")
+        for i, path in enumerate(image_paths, 1):
+            exists = os.path.exists(path) if path else False
+            size = os.path.getsize(path) if exists else 0
+            print(f"  Image {i}: {path}")
+            print(f"    Exists: {exists} | Size: {size} bytes")
 
-        if format_json:
-            payload["format"] = "json"
+        try:
+            # The SDK accepts file paths directly and handles encoding
+            # Build the request parameters
+            chat_params = {
+                'model': model_name,
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': prompt,
+                        'images': image_paths  # SDK accepts paths directly!
+                    }
+                ],
+                'options': {
+                    'temperature': 0.1  # Keep temperature low for factual extraction
+                }
+            }
 
-        response = self._make_request("POST", "api/chat", json=payload)
-        return response.get("message", {})
+            # Only add format parameter if we want JSON
+            if format_json:
+                chat_params['format'] = 'json'
+
+            response = ollama.chat(**chat_params)
+
+            print(f"SDK Response received successfully")
+            print(f"  Message content length: {len(response['message']['content'])} chars")
+            print("==========================================\n")
+
+            return response.get("message", {})
+
+        except Exception as e:
+            print(f"ERROR in chat_with_vision_model: {e}")
+            print("==========================================\n")
+            raise ConnectionError(f"Failed to communicate with Ollama: {e}")
 
     # --- Specific Application Prompts ---
-    
-    def validate_grouping(self, model_name: str, image_paths: List[str]) -> bool:
+
+    def validate_grouping(self, model_name: str, image_paths: List[str], custom_prompt: str = None) -> bool:
         """
         Uses Ollama to determine if a list of images likely belongs to the same document.
         Returns True if they do, False otherwise.
         """
-        prompt = (
-            "You are an expert document analyst. Examine the provided images. "
-            "Determine if all pages belong to the *same continuous physical document*. "
-            "Respond ONLY with 'YES' if all pages are from the same document, or 'NO' if they are not. "
-            "Do not add any other text or explanation."
-        )
-        response_message = self.chat_with_vision_model(model_name, image_paths, prompt).get("content", "").strip().upper()
-        return response_message == "YES"
+        if custom_prompt:
+            prompt = custom_prompt
+        else:
+            # Default prompt
+            prompt = (
+                "You are an expert document analyst. Examine the provided images. "
+                "Determine if all pages belong to the *same continuous physical document*. "
+                "Respond ONLY with 'YES' if all pages are from the same document, or 'NO' if they are not. "
+                "Do not add any other text or explanation."
+            )
 
-    def extract_document_info(self, 
-                              model_name: str, 
-                              image_paths: List[str], 
+        response = self.chat_with_vision_model(model_name, image_paths, prompt)
+        response_message = response.get("content", "").strip()
+
+        # DEBUG: Show raw response
+        print(f"\n=== DEBUG: Validation Response ===")
+        print(f"Raw response: '{response_message}'")
+        print(f"Upper case: '{response_message.upper()}'")
+        print(f"Equals 'YES': {response_message.upper() == 'YES'}")
+        print(f"Contains 'YES': {'YES' in response_message.upper()}")
+        print("=================================\n")
+
+        return response_message.upper() == "YES"
+
+    def extract_document_info(self,
+                              model_name: str,
+                              image_paths: List[str],
                               title_keywords: str
                               ) -> Dict[str, Optional[str]]:
         """
@@ -136,45 +160,117 @@ class OllamaService:
         Returns:
             A dictionary with 'company', 'title', and 'date' keys.
         """
-        prompt = f"""You are an expert at extracting key information from scanned documents.
-Analyze the provided images to identify the following:
-1.  **Source Company:** The name of the organization that issued the document. Look at headers, footers, logos, or return addresses.
-2.  **Document Title:** The main purpose or type of the document (e.g., Invoice, Statement, Bill, Receipt, Report, Contract, Agreement). Consider the provided keywords: '{title_keywords}'. Choose the most appropriate and concise title.
-3.  **Relevant Date:** The primary date associated with the document (e.g., issue date, statement date, invoice date, contract date). Prioritize the most prominent and relevant date.
-Respond ONLY in JSON format. Your JSON should contain three keys: 'company', 'title', and 'date'.
-If any information cannot be found, use null for its value.
-Example: {{ "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }}
+        prompt = f"""Extract key information from the document images.
+
+CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, no code blocks.
+
+Required JSON format:
+{{
+  "company": "company name or null",
+  "title": "document type or null",
+  "date": "YYYY-MM-DD or null"
+}}
+
+Task:
+1. Company: Organization name from headers/footers/logos
+2. Title: Document type. Use one of these if applicable: {title_keywords}
+3. Date: Primary document date in YYYY-MM-DD format
+
+Rules:
+- Return ONLY the JSON object
+- Use null for missing values
+- Keep company/title concise (under 50 chars)
+- Date must be YYYY-MM-DD format or null
 """
 
         try:
-            response = self.chat_with_vision_model(model_name, image_paths, prompt, format_json=True)
+            # Try without format='json' first - rely on prompt only
+            response = self.chat_with_vision_model(model_name, image_paths, prompt, format_json=False)
             content = response.get("content", "{}")
+
+            print(f"\n=== DEBUG: Metadata Extraction Response ===")
+            print(f"Raw content: {content}")
+            print("==========================================\n")
+
+            # Try to clean the JSON if it has markdown code blocks or extra text
+            content = content.strip()
+            if content.startswith("```"):
+                # Remove markdown code blocks
+                lines = content.split('\n')
+                content = '\n'.join(line for line in lines if not line.strip().startswith("```"))
+                content = content.strip()
+
+            # Try to extract JSON object if surrounded by other text
+            if not content.startswith("{"):
+                # Find first { and last }
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1:
+                    content = content[start:end+1]
+
+            # If content is still not valid, try manual extraction
+            if not content.endswith("}"):
+                # Might be incomplete - try to find a valid JSON substring
+                end = content.rfind("}")
+                if end != -1:
+                    content = content[:end+1]
+
+            print(f"Cleaned content: {content}")
+
             extracted_info = json.loads(content)
-            
+
             # Ensure keys exist, even if null
             return {
                 "company": extracted_info.get("company"),
                 "title": extracted_info.get("title"),
                 "date": extracted_info.get("date")
             }
-        except json.JSONDecodeError:
-            print(f"Warning: Ollama did not return valid JSON for info extraction: {content}")
-            return {"company": None, "title": None, "date": None}
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in extract_document_info: {e}")
+            print(f"Content was: {content}")
+
+            # Try to manually parse what we can from the broken JSON
+            # Look for key-value pairs even if JSON is incomplete
+            company = None
+            title = None
+            date = None
+
+            if "company" in content.lower():
+                # Try to extract company value
+                import re
+                match = re.search(r'"company"\s*:\s*"([^"]*)"', content, re.IGNORECASE)
+                if match:
+                    company = match.group(1)
+
+            if "title" in content.lower():
+                match = re.search(r'"title"\s*:\s*"([^"]*)"', content, re.IGNORECASE)
+                if match:
+                    title = match.group(1)
+
+            if "date" in content.lower():
+                match = re.search(r'"date"\s*:\s*"([^"]*)"', content, re.IGNORECASE)
+                if match:
+                    date = match.group(1)
+
+            print(f"Manually extracted: company={company}, title={title}, date={date}")
+            return {"company": company, "title": title, "date": date}
         except Exception as e:
-            print(f"Error during document info extraction: {e}")
+            print(f"Error in extract_document_info: {e}")
+            # Silently handle extraction errors - return None values
             return {"company": None, "title": None, "date": None}
 
-    def extract_text_and_coords(self, 
-                                model_name: str, 
-                                image_paths: List[str]
+    def extract_text_and_coords(self,
+                                model_name: str,
+                                image_paths: List[str],
+                                progress_callback=None
                                 ) -> Dict[str, Any]:
         """
         Uses Ollama (specifically a model known for structured OCR output like Qwen2.5-VL)
         to extract text and its bounding box coordinates from document images.
-        
+
         Note: This functionality heavily depends on the chosen model's capabilities
         to provide structured (e.g., JSON) output with bounding box information.
-        
+
         Args:
             model_name: The vision model to use (e.g., 'qwen2.5-vl').
             image_paths: List of image paths for the document.
@@ -200,7 +296,7 @@ Example:
   }
 ]
 """
-        
+
         try:
             response = self.chat_with_vision_model(model_name, image_paths, prompt, format_json=True)
             content = response.get("content", "[]")
@@ -208,13 +304,13 @@ Example:
             if isinstance(extracted_data, list):
                 return {"pages": extracted_data}
             else:
-                print(f"Warning: Ollama did not return expected list of pages for text and coords: {content}")
+                # Silently handle unexpected format
                 return {"pages": []}
         except json.JSONDecodeError:
-            print(f"Warning: Ollama did not return valid JSON for text and coords extraction: {content}")
+            # Silently handle JSON decode errors
             return {"pages": []}
         except Exception as e:
-            print(f"Error during text and coords extraction: {e}")
+            # Silently handle extraction errors
             return {"pages": []}
 
 
@@ -232,20 +328,14 @@ if __name__ == "__main__":
         else:
             print("No models found. Please pull some models using 'ollama pull <model_name>'.")
 
-        # Example for pull_model (uncomment to test, it will block)
-        # print("\nAttempting to pull 'llava:latest' (this might take a while)...")
-        # ollama_service.pull_model("llava:latest")
-        # print("'llava:latest' pulled successfully.")
-
         # Dummy image file for testing chat_with_vision_model
-        # You would replace this with actual image paths
         dummy_image_path = "temp_dummy_image.png"
         from PIL import Image
         img = Image.new('RGB', (60, 30), color = 'red')
         img.save(dummy_image_path)
 
         if models:
-            vision_model = next((m['name'] for m in models if 'vision' in m['family'] or 'llava' in m['name'] or 'qwen' in m['name']), None)
+            vision_model = next((m['name'] for m in models if 'vision' in m.get('family', '') or 'llava' in m['name'] or 'qwen' in m['name']), None)
             if vision_model:
                 print(f"\nUsing vision model: {vision_model}")
 
@@ -259,19 +349,9 @@ if __name__ == "__main__":
                 doc_info = ollama_service.extract_document_info(vision_model, [dummy_image_path], "Invoice, Statement")
                 print(f"Extracted Info: {doc_info}")
 
-                # Test text and coords extraction (requires a model like qwen2.5-vl)
-                # Ensure qwen2.5-vl is pulled for this to work well
-                qwen_model = next((m['name'] for m in models if 'qwen' in m['name']), None)
-                if qwen_model:
-                    print(f"\nTesting text and coords extraction with {qwen_model}...")
-                    text_coords = ollama_service.extract_text_and_coords(qwen_model, [dummy_image_path])
-                    print(f"Extracted Text and Coords: {json.dumps(text_coords, indent=2)}")
-                else:
-                    print("\nQwen model not found, skipping text and coords extraction test.")
-
             else:
                 print("No suitable vision model found for testing chat functions.")
-        
+
         if os.path.exists(dummy_image_path):
             os.remove(dummy_image_path)
 

@@ -25,7 +25,7 @@ Download and install Ollama from [ollama.com](https://ollama.com/). Make sure th
 
 ### 3. Install a Vision Model
 You need an Ollama vision model for the application to work. The application defaults to `qwen2.5-vl`. You can pull it via the CLI:
-```bash
+```powershell
 ollama pull qwen2.5-vl
 ```
 Or, you can pull other vision models like `llava:latest` or `deepseek-ocr` which can also be selected and pulled directly from within the application's UI.
@@ -38,13 +38,13 @@ cd WinScanOllamaVision
 
 ### 5. Install Python Dependencies
 It's recommended to use a Python virtual environment:
-```bash
+```powershell
 python -m venv venv
-.\venv\Scripts\activate   # On Windows
-source venv/bin/activate # On macOS/Linux
+.\venv\Scripts\Activate.ps1   # PowerShell (Windows)
+# If using cmd.exe: .\venv\Scripts\activate.bat
 ```
 Then install the required packages:
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
@@ -63,7 +63,7 @@ The application automatically creates a `settings.ini` file in the root director
     *   `window_width`, `window_height`: Initial dimensions of the application window.
 
 ### 2. Run the Application
-```bash
+```powershell
 python src/gui.py
 ```
 
@@ -81,7 +81,7 @@ python src/gui.py
 
 ### Running Tests:
 Navigate to the root directory of the project and run:
-```bash
+```powershell
 python -m unittest discover tests
 ```
 This will execute all tests in the `tests/` directory.
