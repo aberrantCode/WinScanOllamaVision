@@ -3,6 +3,7 @@ import os
 import traceback
 from PyQt6.QtWidgets import QApplication
 from gui import StartupWindow
+from appdata_manager import initialize_appdata
 
 # Import style sheet
 from style import stylesheet
@@ -21,7 +22,12 @@ if __name__ == "__main__":
 
     try:
         log_message("Application starting...")
-        
+
+        # Initialize AppData directory (settings and database)
+        log_message("Initializing AppData directory...")
+        settings_path, db_path = initialize_appdata()
+        log_message(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
+
         app = QApplication(sys.argv)
         log_message("QApplication instance created.")
         

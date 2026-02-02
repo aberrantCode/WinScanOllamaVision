@@ -14,13 +14,19 @@ from datetime import datetime
 class MetadataDB:
     """Manages SQLite database for page metadata caching and archival"""
 
-    def __init__(self, db_path: str = "metadata.db"):
+    def __init__(self, db_path: str = None):
         """
         Initialize metadata database connection.
 
         Args:
-            db_path: Path to SQLite database file
+            db_path: Path to SQLite database file. If None, uses AppData directory.
         """
+        # If no db_path specified, use AppData directory
+        if db_path is None:
+            appdata_root = os.getenv('APPDATA', os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming'))
+            appdata_dir = os.path.join(appdata_root, 'WinScanLLM')
+            db_path = os.path.join(appdata_dir, 'metadata.db')
+
         self.db_path = db_path
         self.connection = None
         self._connect()

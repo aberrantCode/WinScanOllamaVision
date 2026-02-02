@@ -57,7 +57,7 @@ class FinalConfirmationDialog(QDialog):
     def __init__(self, pdf_path, source_paths, expected, actual, searchable, parent=None):
         super().__init__(parent)
         self.config_manager = ConfigManager()
-        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
+        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{self.app_name} - Confirm Action")
         icon_path = os.path.join("assets", "icon.png")
         if os.path.exists(icon_path):
@@ -154,7 +154,7 @@ class SettingsWindow(QDialog):
             timeout=timeout
         )
         
-        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
+        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{self.app_name} - Settings")
         icon_path = os.path.join("assets", "icon.png")
         if os.path.exists(icon_path):
@@ -661,7 +661,7 @@ class ConvertPDFsWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config_manager = ConfigManager()
-        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
+        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{self.app_name} - Convert PDFs")
 
         icon_path = os.path.join("assets", "icon.png")
@@ -1002,7 +1002,7 @@ class ConvertImagesWindow(QMainWindow):
         self.field_history = FieldHistory()
         self.metadata_db = MetadataDB()  # Initialize metadata database for caching
 
-        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
+        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{self.app_name} - Convert Images")
         icon_path = os.path.join("assets", "icon.png")
         if os.path.exists(icon_path):
@@ -3943,7 +3943,7 @@ class StartupWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.config_manager = ConfigManager()
-        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanOllamaVision")
+        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(self.app_name)
         
         icon_path = os.path.join("assets", "icon.png")

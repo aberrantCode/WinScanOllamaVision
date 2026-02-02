@@ -4,7 +4,13 @@ import json
 from typing import List, Dict, Any, Optional
 
 class ConfigManager:
-    def __init__(self, config_file='settings.ini'):
+    def __init__(self, config_file=None):
+        # If no config file specified, use AppData directory
+        if config_file is None:
+            appdata_root = os.getenv('APPDATA', os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming'))
+            appdata_dir = os.path.join(appdata_root, 'WinScanLLM')
+            config_file = os.path.join(appdata_dir, 'settings.ini')
+
         self.config_file = config_file
         self.config = configparser.ConfigParser()
         self._load_config()
@@ -109,7 +115,7 @@ class ConfigManager:
         # Default GUI settings (can be expanded later)
         if 'GUI' not in self.config:
             self.config['GUI'] = {
-                'app_name': 'WinScanOllamaVision',
+                'app_name': 'WinScanLLM',
                 'window_width': '1024',
                 'window_height': '768'
             }

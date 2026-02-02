@@ -2,19 +2,34 @@ import ollama
 import json
 import os
 from typing import List, Dict, Optional, Any
+import httpx
 
 class OllamaService:
-    def __init__(self, base_url: str = "http://localhost:11434"):
+    def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
+        """
+        Initialize OllamaService with configurable timeout.
+
+        Args:
+            base_url: Ollama server URL
+            timeout: Request timeout in seconds (default: 300 seconds / 5 minutes)
+        """
         # The SDK uses OLLAMA_HOST environment variable or default localhost:11434
         # We can set the host if needed
         if base_url != "http://localhost:11434":
             os.environ['OLLAMA_HOST'] = base_url
         self.base_url = base_url
+        self.timeout = timeout
+
+        # Create client with timeout configuration
+        self.client = ollama.Client(
+            host=base_url,
+            timeout=httpx.Timeout(timeout)
+        )
 
     def list_models(self) -> List[Dict[str, Any]]:
         """Lists locally available Ollama models."""
         try:
-            response = ollama.list()
+            response = self.client.list()
             return response.get("models", [])
         except Exception as e:
             raise ConnectionError(f"Failed to connect to Ollama server. Is it running? Error: {e}")
@@ -38,7 +53,7 @@ class OllamaService:
         """Pulls an Ollama model. This will block until the download is complete."""
         try:
             # The SDK's pull method handles streaming
-            for progress in ollama.pull(model_name, stream=True):
+            for progress in self.client.pull(model_name, stream=True):
                 if progress_callback and 'status' in progress:
                     status = progress.get('status', '')
                     completed = progress.get('completed', 0)
@@ -72,7 +87,7 @@ class OllamaService:
             The model's response.
         """
         # DEBUG: Show what images are being processed
-        print(f"\n=== DEBUG: Ollama Vision Request (SDK) ===")
+        print(f"\n=== DEBUG: WinScanLLM Vision Request (SDK) ===")
         print(f"Model: {model_name}")
         print(f"Image paths received: {len(image_paths)}")
         for i, path in enumerate(image_paths, 1):
@@ -102,10 +117,12 @@ class OllamaService:
             if format_json:
                 chat_params['format'] = 'json'
 
-            response = ollama.chat(**chat_params)
+            # Use client with configured timeout
+            response = self.client.chat(**chat_params)
 
             print(f"SDK Response received successfully")
             print(f"  Message content length: {len(response['message']['content'])} chars")
+            print(f"  Timeout setting: {self.timeout} seconds")
             print("==========================================\n")
 
             return response.get("message", {})
@@ -145,6 +162,111 @@ class OllamaService:
         print("=================================\n")
 
         return response_message.upper() == "YES"
+
+    def validate_grouping_with_page_number(self, model_name: str, image_paths: List[str], custom_prompt: str = None) -> Dict[str, Any]:
+        """
+        Validates if images belong to same document AND extracts comprehensive metadata from last image.
+
+        Args:
+            model_name: The vision model to use
+            image_paths: List of image paths for the document pages
+            custom_prompt: Optional custom prompt override
+
+        Returns:
+            {
+                'belongs': bool,
+                'page_number': Optional[int],
+                'total_pages': Optional[int],
+                'page_position': Optional[str],  # e.g., "4 of 6"
+                'confidence': str,
+                'company': Optional[str],
+                'document_type': Optional[str],
+                'document_date': Optional[str],
+                'additional': Dict[str, Any]  # Any other extracted info
+            }
+        """
+        if custom_prompt:
+            prompt = custom_prompt
+        else:
+            prompt = """You are an expert document analyst. Examine the provided images.
+
+Task 1: Determine if all pages belong to the *same continuous physical document*.
+Task 2: Extract comprehensive metadata from the LAST image.
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "belongs": "YES" or "NO",
+  "page_number": <integer or null>,
+  "total_pages": <integer or null>,
+  "page_position": <string or null>,
+  "confidence": "high" or "medium" or "low",
+  "company": <string or null>,
+  "document_type": <string or null>,
+  "document_date": <string or null>,
+  "additional": {}
+}
+
+Extraction Rules for LAST image only:
+1. belongs: "YES" if all pages from same document, "NO" otherwise
+2. page_number: Current page number (from text like "Page 3", "3", or position in sequence)
+3. total_pages: Total page count (from text like "Page 3 of 6", "6 pages total", etc.)
+4. page_position: Exact text showing position (e.g., "4 of 6", "Page 3/6", null if not found)
+5. confidence: "high" if clearly visible, "medium" if partially visible, "low" if inferred
+6. company: Organization/company name (from headers, footers, logos)
+7. document_type: Type of document (Invoice, Statement, Report, Letter, etc.)
+8. document_date: Document date in YYYY-MM-DD format (primary date, not print date)
+9. additional: Any other useful metadata (invoice numbers, account numbers, totals, etc.)
+
+Examples:
+- Page with "Page 4 of 6" → {"page_number": 4, "total_pages": 6, "page_position": "4 of 6"}
+- Page with "Invoice" and "Acme Corp" → {"document_type": "Invoice", "company": "Acme Corp"}
+- Use null for any field not found or unclear
+
+Return ONLY the JSON object, no explanations."""
+
+        try:
+            response = self.chat_with_vision_model(model_name, image_paths, prompt, format_json=True)
+            content = response.get("content", "{}")
+
+            # Clean JSON (similar to extract_document_info)
+            content = content.strip()
+            if content.startswith("```"):
+                lines = content.split('\n')
+                content = '\n'.join(line for line in lines if not line.strip().startswith("```"))
+                content = content.strip()
+
+            parsed = json.loads(content)
+
+            # Debug output
+            print(f"\n=== DEBUG: Comprehensive Metadata Extraction ===")
+            print(f"Raw response: {content}")
+            print(f"Parsed: {parsed}")
+            print("==============================================\n")
+
+            return {
+                'belongs': parsed.get('belongs', 'NO').upper() == 'YES',
+                'page_number': parsed.get('page_number'),
+                'total_pages': parsed.get('total_pages'),
+                'page_position': parsed.get('page_position'),
+                'confidence': parsed.get('confidence', 'low'),
+                'company': parsed.get('company'),
+                'document_type': parsed.get('document_type'),
+                'document_date': parsed.get('document_date'),
+                'additional': parsed.get('additional', {})
+            }
+        except Exception as e:
+            print(f"Error in validate_grouping_with_page_number: {e}")
+            return {
+                'belongs': False,
+                'page_number': None,
+                'total_pages': None,
+                'page_position': None,
+                'confidence': 'low',
+                'company': None,
+                'document_type': None,
+                'document_date': None,
+                'additional': {}
+            }
 
     def extract_document_info(self,
                               model_name: str,
@@ -258,6 +380,69 @@ Rules:
             print(f"Error in extract_document_info: {e}")
             # Silently handle extraction errors - return None values
             return {"company": None, "title": None, "date": None}
+
+    def infer_page_order_from_content(self, model_name: str, image_paths: List[str]) -> Dict[str, Any]:
+        """
+        Uses Ollama to infer logical page order from content flow (Phase 5).
+
+        Args:
+            model_name: The vision model to use
+            image_paths: List of image paths for the document pages
+
+        Returns:
+            {
+                'ordered_indices': List[int],
+                'confidence': str
+            }
+        """
+        prompt = f"""Analyze the content flow of these {len(image_paths)} document pages.
+Determine the logical reading order based on:
+- Content continuation (text flow, paragraph breaks)
+- Topic progression
+- Visual layout clues
+
+Respond with ONLY valid JSON:
+{{
+  "ordered_indices": [list of 0-based indices in correct order],
+  "confidence": "high" or "medium" or "low"
+}}
+
+Example for 3 pages: {{"ordered_indices": [1, 0, 2], "confidence": "high"}}
+
+Current order is: [0, 1, 2, ..., {len(image_paths)-1}]
+Provide the CORRECT order as indices."""
+
+        try:
+            response = self.chat_with_vision_model(model_name, image_paths, prompt, format_json=True)
+            content = response.get("content", "{}")
+
+            # Clean JSON
+            content = content.strip()
+            if content.startswith("```"):
+                lines = content.split('\n')
+                content = '\n'.join(line for line in lines if not line.strip().startswith("```"))
+                content = content.strip()
+
+            parsed = json.loads(content)
+            ordered_indices = parsed.get('ordered_indices', list(range(len(image_paths))))
+            confidence = parsed.get('confidence', 'low')
+
+            print(f"\n=== DEBUG: Content-Based Ordering ===")
+            print(f"Raw response: {content}")
+            print(f"Ordered indices: {ordered_indices}")
+            print(f"Confidence: {confidence}")
+            print("====================================\n")
+
+            # Validate indices
+            if (len(ordered_indices) != len(image_paths) or
+                set(ordered_indices) != set(range(len(image_paths)))):
+                print(f"Invalid ordering received: {ordered_indices}")
+                return {'ordered_indices': list(range(len(image_paths))), 'confidence': 'low'}
+
+            return {'ordered_indices': ordered_indices, 'confidence': confidence}
+        except Exception as e:
+            print(f"Error in infer_page_order_from_content: {e}")
+            return {'ordered_indices': list(range(len(image_paths))), 'confidence': 'low'}
 
     def extract_text_and_coords(self,
                                 model_name: str,
