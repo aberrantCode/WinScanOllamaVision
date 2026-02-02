@@ -1038,11 +1038,16 @@ class ConvertImagesWindow(QMainWindow):
         self.page_metadata_list = []  # List[Dict] - metadata for each page including detected page numbers
         self.original_page_order = []  # List[str] - original order backup for reset functionality
 
-        # Zoom functionality
+        # Zoom functionality (Phase 8: Enhanced zoom controls)
         self.zoom_level = 1.0  # 1.0 = 100%, 0.5 = 50%, 2.0 = 200%
         self.zoom_min = 0.25  # Minimum zoom (25%)
         self.zoom_max = 4.0   # Maximum zoom (400%)
         self.zoom_step = 0.25  # Zoom increment (25%)
+        self.zoom_mode = 'custom'  # 'fit_width', 'fit_height', 'fit_window', 'custom'
+        self.zoom_custom_percent = 100  # Custom zoom percentage (25-400)
+
+        # Rotation state (Phase 8)
+        self.rotation_states = {}  # Track rotation per file path
 
         # Store raw Ollama requests and responses for debugging
         self.last_ollama_request = None
@@ -1056,6 +1061,9 @@ class ConvertImagesWindow(QMainWindow):
         self.auto_approval_original_text = ""
 
         self._init_ui()
+
+        # Phase 8: Setup keyboard shortcuts
+        self._setup_keyboard_shortcuts()
 
         # Auto-start import scans after UI is initialized
         QTimer.singleShot(100, self._scan_and_group)
@@ -1239,12 +1247,49 @@ class ConvertImagesWindow(QMainWindow):
         self._setup_loading_ui()
 
     def _setup_zoom_controls(self):
-        """Create zoom control buttons overlaid on large preview"""
-        # Create container for zoom buttons
+        """Create enhanced zoom control toolbar overlaid on large preview (Phase 8)"""
+        from PyQt6.QtWidgets import QComboBox, QSpinBox
+
+        # Create container for zoom controls
         zoom_container = QWidget(self.large_preview_label)
-        zoom_layout = QHBoxLayout(zoom_container)
-        zoom_layout.setContentsMargins(5, 5, 5, 5)
-        zoom_layout.setSpacing(2)
+        zoom_main_layout = QVBoxLayout(zoom_container)
+        zoom_main_layout.setContentsMargins(5, 5, 5, 5)
+        zoom_main_layout.setSpacing(3)
+
+        # Top row: Zoom mode dropdown
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(3)
+
+        self.zoom_mode_combo = QComboBox()
+        self.zoom_mode_combo.addItem("Fit to Width", "fit_width")
+        self.zoom_mode_combo.addItem("Fit to Height", "fit_height")
+        self.zoom_mode_combo.addItem("Fit to Window", "fit_window")
+        self.zoom_mode_combo.addItem("Custom %", "custom")
+        self.zoom_mode_combo.setCurrentIndex(3)  # Default to custom
+        self.zoom_mode_combo.currentIndexChanged.connect(self._on_zoom_mode_changed)
+        self.zoom_mode_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(255, 255, 255, 230);
+                color: #333;
+                border: 1px solid #999;
+                border-radius: 3px;
+                padding: 5px;
+                font-size: 9pt;
+                min-height: 25px;
+            }
+            QComboBox:hover {
+                border: 2px solid #666;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+        """)
+        mode_layout.addWidget(self.zoom_mode_combo)
+        zoom_main_layout.addLayout(mode_layout)
+
+        # Bottom row: Zoom buttons and spinner
+        control_layout = QHBoxLayout()
+        control_layout.setSpacing(2)
 
         # Button style
         button_style = """
@@ -1253,13 +1298,13 @@ class ConvertImagesWindow(QMainWindow):
                 color: #333;
                 border: 1px solid #999;
                 border-radius: 5px;
-                padding: 8px;
-                font-size: 20pt;
+                padding: 6px;
+                font-size: 16pt;
                 font-weight: bold;
-                min-width: 45px;
-                max-width: 45px;
-                min-height: 45px;
-                max-height: 45px;
+                min-width: 35px;
+                max-width: 35px;
+                min-height: 35px;
+                max-height: 35px;
             }
             QPushButton:hover {
                 background-color: rgba(240, 240, 240, 250);
@@ -1276,52 +1321,51 @@ class ConvertImagesWindow(QMainWindow):
         """
 
         # Zoom Out button
-        self.zoom_out_button = QPushButton("−", zoom_container)
+        self.zoom_out_button = QPushButton("−")
         self.zoom_out_button.setStyleSheet(button_style)
-        self.zoom_out_button.setToolTip("Zoom Out")
+        self.zoom_out_button.setToolTip("Zoom Out (Ctrl+-)")
         self.zoom_out_button.clicked.connect(self._zoom_out)
-        zoom_layout.addWidget(self.zoom_out_button)
+        control_layout.addWidget(self.zoom_out_button)
 
-        # Zoom Reset button (shows current zoom percentage)
-        self.zoom_reset_button = QPushButton("100%", zoom_container)
-        zoom_reset_style = """
-            QPushButton {
+        # Zoom percentage spinner
+        self.zoom_percent_spin = QSpinBox()
+        self.zoom_percent_spin.setRange(25, 400)
+        self.zoom_percent_spin.setSingleStep(25)
+        self.zoom_percent_spin.setValue(100)
+        self.zoom_percent_spin.setSuffix("%")
+        self.zoom_percent_spin.valueChanged.connect(self._on_zoom_percent_changed)
+        self.zoom_percent_spin.setStyleSheet("""
+            QSpinBox {
                 background-color: rgba(255, 255, 255, 230);
                 color: #333;
                 border: 1px solid #999;
                 border-radius: 5px;
-                padding: 8px;
-                font-size: 11pt;
+                padding: 5px;
+                font-size: 10pt;
                 font-weight: bold;
-                min-width: 50px;
-                max-width: 50px;
-                min-height: 45px;
-                max-height: 45px;
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 35px;
+                max-height: 35px;
             }
-            QPushButton:hover {
-                background-color: rgba(240, 240, 240, 250);
+            QSpinBox:hover {
                 border: 2px solid #666;
             }
-            QPushButton:pressed {
-                background-color: rgba(220, 220, 220, 250);
-            }
-        """
-        self.zoom_reset_button.setStyleSheet(zoom_reset_style)
-        self.zoom_reset_button.setToolTip("Reset to 100%")
-        self.zoom_reset_button.clicked.connect(self._zoom_reset)
-        zoom_layout.addWidget(self.zoom_reset_button)
+        """)
+        control_layout.addWidget(self.zoom_percent_spin)
 
         # Zoom In button
-        self.zoom_in_button = QPushButton("+", zoom_container)
+        self.zoom_in_button = QPushButton("+")
         self.zoom_in_button.setStyleSheet(button_style)
-        self.zoom_in_button.setToolTip("Zoom In")
+        self.zoom_in_button.setToolTip("Zoom In (Ctrl++)")
         self.zoom_in_button.clicked.connect(self._zoom_in)
-        zoom_layout.addWidget(self.zoom_in_button)
+        control_layout.addWidget(self.zoom_in_button)
+
+        zoom_main_layout.addLayout(control_layout)
 
         # Position zoom controls in bottom-right corner
-        # Width: 45 + 50 + 45 + margins(10) + spacing(4) = 154, round to 160
-        zoom_container.setFixedSize(160, 55)
-        zoom_container.move(self.large_preview_label.width() - 170, self.large_preview_label.height() - 65)
+        zoom_container.setFixedSize(200, 75)
+        zoom_container.move(self.large_preview_label.width() - 210, self.large_preview_label.height() - 85)
         zoom_container.raise_()
         zoom_container.show()
 
@@ -1346,15 +1390,18 @@ class ConvertImagesWindow(QMainWindow):
         self._refresh_preview_zoom()
 
     def _refresh_preview_zoom(self):
-        """Refresh the current preview image with current zoom level"""
+        """Refresh the current preview image with current zoom level (Phase 8: Updated)"""
         if self.current_page_path and os.path.exists(self.current_page_path):
             self._display_page_in_large_preview(self.current_page_path, show_indicator=False)
         # Update button states
         self.zoom_in_button.setEnabled(self.zoom_level < self.zoom_max)
         self.zoom_out_button.setEnabled(self.zoom_level > self.zoom_min)
-        # Update zoom reset button text to show current zoom level
+        # Update zoom percentage spinner
         zoom_pct = int(self.zoom_level * 100)
-        self.zoom_reset_button.setText(f"{zoom_pct}%")
+        if hasattr(self, 'zoom_percent_spin'):
+            self.zoom_percent_spin.blockSignals(True)  # Prevent recursive call
+            self.zoom_percent_spin.setValue(zoom_pct)
+            self.zoom_percent_spin.blockSignals(False)
 
     def eventFilter(self, obj, event):
         """Handle mouse wheel events for zooming"""
@@ -1371,18 +1418,146 @@ class ConvertImagesWindow(QMainWindow):
 
         return super().eventFilter(obj, event)
 
+    def _on_zoom_mode_changed(self):
+        """Handle zoom mode dropdown change (Phase 8)"""
+        self.zoom_mode = self.zoom_mode_combo.currentData()
+        self._apply_zoom_mode()
+
+    def _on_zoom_percent_changed(self, value):
+        """Handle zoom percentage spinner change (Phase 8)"""
+        self.zoom_custom_percent = value
+        if self.zoom_mode == 'custom':
+            self.zoom_level = value / 100.0
+            self._refresh_preview_zoom()
+
+    def _apply_zoom_mode(self):
+        """Apply current zoom mode (fit to width/height/window or custom) (Phase 8)"""
+        if not self.current_page_path or not os.path.exists(self.current_page_path):
+            return
+
+        if self.zoom_mode == 'fit_width':
+            # Calculate zoom to fit width
+            pixmap = QPixmap(self.current_page_path)
+            if not pixmap.isNull():
+                available_width = self.large_preview_label.width() - 20  # padding
+                self.zoom_level = available_width / pixmap.width()
+                self._refresh_preview_zoom()
+        elif self.zoom_mode == 'fit_height':
+            # Calculate zoom to fit height
+            pixmap = QPixmap(self.current_page_path)
+            if not pixmap.isNull():
+                available_height = self.large_preview_label.height() - 20  # padding
+                self.zoom_level = available_height / pixmap.height()
+                self._refresh_preview_zoom()
+        elif self.zoom_mode == 'fit_window':
+            # Calculate zoom to fit entire window
+            pixmap = QPixmap(self.current_page_path)
+            if not pixmap.isNull():
+                available_width = self.large_preview_label.width() - 20
+                available_height = self.large_preview_label.height() - 20
+                zoom_width = available_width / pixmap.width()
+                zoom_height = available_height / pixmap.height()
+                self.zoom_level = min(zoom_width, zoom_height)  # Use smaller to fit both
+                self._refresh_preview_zoom()
+        elif self.zoom_mode == 'custom':
+            # Use custom zoom level from spinner
+            self.zoom_level = self.zoom_custom_percent / 100.0
+            self._refresh_preview_zoom()
+
     def _update_zoom_control_position(self):
-        """Update position of zoom controls to bottom-right corner"""
+        """Update position of zoom controls to bottom-right corner (Phase 8: Updated dimensions)"""
         if hasattr(self, 'zoom_controls') and hasattr(self, 'large_preview_label'):
             # Position in bottom-right corner of preview label
-            x_pos = max(self.large_preview_label.width() - 170, 0)
-            y_pos = max(self.large_preview_label.height() - 65, 0)
+            x_pos = max(self.large_preview_label.width() - 210, 0)
+            y_pos = max(self.large_preview_label.height() - 85, 0)
             self.zoom_controls.move(x_pos, y_pos)
 
     def resizeEvent(self, event):
-        """Handle window resize to reposition zoom controls"""
+        """Handle window resize to reposition zoom controls and re-apply fit modes (Phase 8)"""
         super().resizeEvent(event)
         self._update_zoom_control_position()
+
+        # Re-apply zoom mode if in fit mode (recalculate for new window size)
+        if hasattr(self, 'zoom_mode') and self.zoom_mode in ['fit_width', 'fit_height', 'fit_window']:
+            self._apply_zoom_mode()
+
+    def _setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for zoom and other actions (Phase 8)"""
+        from PyQt6.QtGui import QShortcut, QKeySequence
+
+        # Zoom shortcuts
+        zoom_in_shortcut = QShortcut(QKeySequence("Ctrl++"), self)
+        zoom_in_shortcut.activated.connect(self._zoom_in)
+
+        zoom_out_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)
+        zoom_out_shortcut.activated.connect(self._zoom_out)
+
+        zoom_reset_shortcut = QShortcut(QKeySequence("Ctrl+0"), self)
+        zoom_reset_shortcut.activated.connect(lambda: self._set_zoom_mode_to_fit_window())
+
+    def _set_zoom_mode_to_fit_window(self):
+        """Set zoom mode to fit window (Ctrl+0 shortcut) (Phase 8)"""
+        if hasattr(self, 'zoom_mode_combo'):
+            # Find index of "fit_window" mode
+            for i in range(self.zoom_mode_combo.count()):
+                if self.zoom_mode_combo.itemData(i) == 'fit_window':
+                    self.zoom_mode_combo.setCurrentIndex(i)
+                    break
+
+    # ===== ROTATION METHODS (PHASE 8) =====
+
+    def _rotate_current_page(self, degrees):
+        """Rotate the current page by specified degrees (90, 180, 270) (Phase 8)"""
+        if not self.current_page_path or not os.path.exists(self.current_page_path):
+            return
+
+        try:
+            from PIL import Image
+
+            # Open image
+            img = Image.open(self.current_page_path)
+
+            # Apply rotation (PIL rotates counter-clockwise for positive angles)
+            # We want clockwise rotation, so negate the angle
+            # Actually, for user-friendly rotation: 90 = 90° CW, 270 = 90° CCW
+            # PIL: rotate(angle, expand=True) rotates CCW by angle degrees
+            # To rotate CW by 90°, use rotate(-90) or rotate(270)
+            if degrees == 90:
+                # 90° CW = rotate(270) CCW
+                rotated = img.rotate(-90, expand=True)
+            elif degrees == 180:
+                rotated = img.rotate(180, expand=True)
+            elif degrees == 270:
+                # 270° CW = 90° CCW = rotate(90)
+                rotated = img.rotate(90, expand=True)
+            else:
+                return
+
+            # Save rotated image (overwrite original)
+            rotated.save(self.current_page_path)
+
+            # Update rotation state
+            current_rotation = self.rotation_states.get(self.current_page_path, 0)
+            self.rotation_states[self.current_page_path] = (current_rotation + degrees) % 360
+
+            # Invalidate metadata cache for this file
+            if hasattr(self, 'metadata_db'):
+                self.metadata_db.delete_cached_metadata(self.current_page_path)
+
+            # Refresh preview
+            self._refresh_preview_zoom()
+
+            print(f"[Rotation] Rotated {os.path.basename(self.current_page_path)} by {degrees}°")
+
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Rotation Failed",
+                f"Could not rotate image: {e}"
+            )
+            print(f"[Rotation] Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ===== AUTO-APPROVAL METHODS =====
 
@@ -1689,6 +1864,70 @@ class ConvertImagesWindow(QMainWindow):
         self.abort_button.clicked.connect(self._on_abort_stitching)
         self.abort_button.setVisible(False)
         button_layout.addWidget(self.abort_button)
+
+        button_layout.addSpacing(20)
+
+        # Phase 8: Rotation Controls
+        rotation_label = QLabel("Rotate Page:")
+        rotation_label.setStyleSheet("font-size: 10pt; font-weight: bold; color: #555;")
+        rotation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        button_layout.addWidget(rotation_label)
+
+        # Rotation button grid (2x2)
+        rotation_grid_widget = QWidget()
+        rotation_grid = QGridLayout(rotation_grid_widget)
+        rotation_grid.setSpacing(5)
+        rotation_grid.setContentsMargins(0, 5, 0, 5)
+
+        rotation_button_style = """
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                font-size: 18pt;
+                padding: 10px;
+                border-radius: 5px;
+                min-width: 60px;
+                min-height: 50px;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+            QPushButton:pressed {
+                background-color: #374151;
+            }
+        """
+
+        # 90° CCW (↺)
+        rotate_ccw_button = QPushButton("↺")
+        rotate_ccw_button.setStyleSheet(rotation_button_style)
+        rotate_ccw_button.setToolTip("Rotate 90° Counter-Clockwise")
+        rotate_ccw_button.clicked.connect(lambda: self._rotate_current_page(270))
+        rotation_grid.addWidget(rotate_ccw_button, 0, 0)
+
+        # 90° CW (↻)
+        rotate_cw_button = QPushButton("↻")
+        rotate_cw_button.setStyleSheet(rotation_button_style)
+        rotate_cw_button.setToolTip("Rotate 90° Clockwise")
+        rotate_cw_button.clicked.connect(lambda: self._rotate_current_page(90))
+        rotation_grid.addWidget(rotate_cw_button, 0, 1)
+
+        # 180° (⟲)
+        rotate_180_button = QPushButton("180°")
+        rotate_180_button.setStyleSheet(rotation_button_style)
+        rotate_180_button.setToolTip("Rotate 180°")
+        rotate_180_button.clicked.connect(lambda: self._rotate_current_page(180))
+        rotation_grid.addWidget(rotate_180_button, 1, 0)
+
+        # 270° / Reset
+        rotate_270_button = QPushButton("270°")
+        rotate_270_button.setStyleSheet(rotation_button_style)
+        rotate_270_button.setToolTip("Rotate 270° (90° CCW)")
+        rotate_270_button.clicked.connect(lambda: self._rotate_current_page(270))
+        rotation_grid.addWidget(rotate_270_button, 1, 1)
+
+        button_layout.addWidget(rotation_grid_widget)
+        rotation_grid_widget.setVisible(False)  # Hide until page is loaded
+        self.rotation_controls_widget = rotation_grid_widget
 
         button_layout.addStretch(1)
         self.right_panel_layout.addWidget(button_container)
@@ -2598,6 +2837,10 @@ class ConvertImagesWindow(QMainWindow):
 
         # Display in large preview
         self._display_page_in_large_preview(next_file)
+
+        # Phase 8: Show rotation controls when page is loaded
+        if hasattr(self, 'rotation_controls_widget'):
+            self.rotation_controls_widget.setVisible(True)
 
         # If this is the first page, automatically add it
         if not self.current_group:
@@ -3513,6 +3756,9 @@ Files being sent to Ollama:
         self.start_scan_button.setEnabled(True)
         self.include_button.setVisible(False)
         self.exclude_button.setVisible(False)
+        # Phase 8: Hide rotation controls
+        if hasattr(self, 'rotation_controls_widget'):
+            self.rotation_controls_widget.setVisible(False)
         self.large_preview_label.clear()
         self.large_preview_label.setText("Click 'Start Scanning' to begin\ndocument stitching")
         self.large_preview_label.setStyleSheet("background-color: #f9f9f9; border: 2px dashed #ccc; font-size: 14pt; color: #999;")
