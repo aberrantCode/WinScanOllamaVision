@@ -85,18 +85,23 @@ class FileProcessor:
             
         return grouped_files
     
-    def create_searchable_pdf(self, 
-                              image_paths: List[str], 
-                              output_filename: str, 
+    def create_searchable_pdf(self,
+                              image_paths: List[str],
+                              output_filename: str,
                               extracted_text_coords: Dict[str, Any],
-                              is_searchable: bool = True
+                              is_searchable: bool = True,
+                              rotation_map: Dict[str, int] = None
                               ) -> Optional[str]:
         """
         Creates a PDF from a list of image paths, optionally adding a text layer for searchability.
         extracted_text_coords should be a dict like {"pages": [{"page_number": 1, "elements": [{"text": "...", "bbox": [...]}]}]}
+        rotation_map: Optional dict mapping image_path -> rotation_degrees (Phase 8)
         """
         if not image_paths:
             return None
+
+        if rotation_map is None:
+            rotation_map = {}
 
         output_path = os.path.join(self.organized_folder, output_filename)
         doc = fitz.open() # New PDF document
@@ -104,15 +109,36 @@ class FileProcessor:
         for i, img_path in enumerate(image_paths):
             try:
                 img_page_number = i + 1 # Assuming pages are ordered 1 to N
-                
+
                 # Create a new page the size of the image, ensuring file handle is closed
                 with Image.open(img_path) as img:
+                    # Phase 8: Apply rotation if specified (display-only rotation from database)
+                    rotation_degrees = rotation_map.get(img_path, 0)
+                    if rotation_degrees != 0:
+                        # PIL rotation: positive = counter-clockwise, negative = clockwise
+                        # For 90° CW, we rotate -90° (or 270° CCW)
+                        if rotation_degrees == 90:
+                            img = img.rotate(-90, expand=True)
+                        elif rotation_degrees == 180:
+                            img = img.rotate(180, expand=True)
+                        elif rotation_degrees == 270:
+                            img = img.rotate(90, expand=True)  # 270° CW = 90° CCW
+
                     img_rect = fitz.Rect(0, 0, img.width, img.height)
 
                 page = doc.new_page(-1, width=img_rect.width, height=img_rect.height)
-                
-                # Add the image to the page
-                page.insert_image(img_rect, filename=img_path)
+
+                # Phase 8: If rotation was applied, save rotated image to temp file and insert that
+                if rotation_degrees != 0:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                        temp_path = temp_file.name
+                        img.save(temp_path)
+                    page.insert_image(img_rect, filename=temp_path)
+                    os.remove(temp_path)  # Clean up temp file
+                else:
+                    # Add the image to the page (no rotation)
+                    page.insert_image(img_rect, filename=img_path)
 
                 if is_searchable and extracted_text_coords and "pages" in extracted_text_coords:
                     # Find the corresponding text/coords for this image_path's page number

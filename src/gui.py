@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QSizePolicy, QFileDialog, QProgressBar, QPlainTextEdit,
     QSplitter, QStyle, QGraphicsOpacityEffect, QSpinBox
 )
-from PyQt6.QtGui import QPixmap, QDesktopServices, QMovie, QIcon
+from PyQt6.QtGui import QPixmap, QDesktopServices, QMovie, QIcon, QTransform
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QThread, QTimer, QSize
 from enum import Enum
 
@@ -1507,53 +1507,36 @@ class ConvertImagesWindow(QMainWindow):
     # ===== ROTATION METHODS (PHASE 8) =====
 
     def _rotate_current_page(self, degrees):
-        """Rotate the current page by specified degrees (90, 180, 270) (Phase 8)"""
+        """
+        Rotate the current page by specified degrees (90, 180, 270) (Phase 8).
+        Rotation is display-only and stored in database - source file is NEVER modified.
+        """
         if not self.current_page_path or not os.path.exists(self.current_page_path):
             return
 
         try:
-            from PIL import Image
+            # Get current rotation from database
+            current_rotation = self.metadata_db.get_rotation(self.current_page_path)
 
-            # Open image
-            img = Image.open(self.current_page_path)
+            # Calculate new rotation (cumulative)
+            new_rotation = (current_rotation + degrees) % 360
 
-            # Apply rotation (PIL rotates counter-clockwise for positive angles)
-            # We want clockwise rotation, so negate the angle
-            # Actually, for user-friendly rotation: 90 = 90° CW, 270 = 90° CCW
-            # PIL: rotate(angle, expand=True) rotates CCW by angle degrees
-            # To rotate CW by 90°, use rotate(-90) or rotate(270)
-            if degrees == 90:
-                # 90° CW = rotate(270) CCW
-                rotated = img.rotate(-90, expand=True)
-            elif degrees == 180:
-                rotated = img.rotate(180, expand=True)
-            elif degrees == 270:
-                # 270° CW = 90° CCW = rotate(90)
-                rotated = img.rotate(90, expand=True)
-            else:
-                return
+            # Save rotation to database (NOT to file!)
+            self.metadata_db.save_rotation(self.current_page_path, new_rotation)
 
-            # Save rotated image (overwrite original)
-            rotated.save(self.current_page_path)
+            # Update in-memory state
+            self.rotation_states[self.current_page_path] = new_rotation
 
-            # Update rotation state
-            current_rotation = self.rotation_states.get(self.current_page_path, 0)
-            self.rotation_states[self.current_page_path] = (current_rotation + degrees) % 360
-
-            # Invalidate metadata cache for this file
-            if hasattr(self, 'metadata_db'):
-                self.metadata_db.delete_cached_metadata(self.current_page_path)
-
-            # Refresh preview
+            # Refresh preview with rotation applied
             self._refresh_preview_zoom()
 
-            print(f"[Rotation] Rotated {os.path.basename(self.current_page_path)} by {degrees}°")
+            print(f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation}° (display-only, source file unchanged)")
 
         except Exception as e:
             QMessageBox.warning(
                 self,
                 "Rotation Failed",
-                f"Could not rotate image: {e}"
+                f"Could not save rotation: {e}"
             )
             print(f"[Rotation] Error: {e}")
             import traceback
@@ -3417,7 +3400,7 @@ Files being sent to Ollama:
         self._display_page_in_large_preview(image_path, show_indicator=True)
 
     def _display_page_in_large_preview(self, image_path, show_indicator=True):
-        """Display a page image in the large central preview area with status indicator
+        """Display a page image in the large central preview area with status indicator (Phase 8: With rotation)
 
         Args:
             image_path: Path to the image file
@@ -3428,6 +3411,14 @@ Files being sent to Ollama:
             self.large_preview_label.setText("Error loading image")
             self.large_preview_label.setStyleSheet("background-color: #ffe6e6; border: 2px solid #ccc;")
             return
+
+        # Phase 8: Apply rotation from database (display-only, source file unchanged)
+        rotation_degrees = self.metadata_db.get_rotation(image_path)
+        if rotation_degrees != 0:
+            # Create transform for rotation
+            transform = QTransform()
+            transform.rotate(rotation_degrees)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
 
         # Apply zoom level to scaling
         target_size = self.large_preview_label.size()
@@ -3661,6 +3652,14 @@ Files being sent to Ollama:
         label.setGeometry(0, 0, 180, 180)
         label.setFrameShape(QFrame.Shape.Box)
         pixmap = QPixmap(image_path)
+
+        # Phase 8: Apply rotation from database (display-only)
+        rotation_degrees = self.metadata_db.get_rotation(image_path)
+        if rotation_degrees != 0:
+            transform = QTransform()
+            transform.rotate(rotation_degrees)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
         scaled_pixmap = pixmap.scaledToHeight(180, Qt.TransformationMode.SmoothTransformation)
         label.setPixmap(scaled_pixmap)
         label.setStyleSheet("border: 2px solid #ccc;")
@@ -4001,12 +4000,20 @@ Files being sent to Ollama:
 
             output_filename = f"{safe_company} - {safe_title} - {safe_date}.pdf"
 
+            # Phase 8: Build rotation map from database for PDF generation
+            rotation_map = {}
+            for img_path in self.current_group:
+                rotation_degrees = self.metadata_db.get_rotation(img_path)
+                if rotation_degrees != 0:
+                    rotation_map[img_path] = rotation_degrees
+
             # Create PDF (saved in output folder) - non-searchable for now
             self.created_pdf_path = self.file_processor.create_searchable_pdf(
                 self.current_group,
                 output_filename,
                 extracted_text_coords={},  # No OCR text for now
-                is_searchable=False  # Create image-only PDF
+                is_searchable=False,  # Create image-only PDF
+                rotation_map=rotation_map  # Phase 8: Apply rotations from database
             )
 
             self.status_label.setText(f"✓ PDF created: {os.path.basename(self.created_pdf_path)}")

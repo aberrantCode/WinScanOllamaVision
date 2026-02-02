@@ -207,31 +207,29 @@ def test_rotation_method_exists():
         return False
 
 
-def test_rotation_functionality():
-    """Test rotation functionality with a test image"""
-    print("\n[TEST] Rotation functionality")
+def test_rotation_database_storage():
+    """Test that rotation is stored in database and not modifying source file"""
+    print("\n[TEST] Rotation database storage")
 
     test_image_path = None
     try:
-        # Create a test image first (before QApplication)
+        # Create a test image
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
             test_image_path = f.name
 
-        # Create a simple test image (100x50 rectangle)
+        # Create a simple test image (100x50 rectangle) and save original size
         img = Image.new('RGB', (100, 50), color='red')
         img.save(test_image_path)
+        original_size = img.size  # (100, 50)
 
-        # Now create app and window
+        # Create app and window
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv)
 
         from gui import ConvertImagesWindow
 
-        # Create window but immediately stop the auto-scan timer
         window = ConvertImagesWindow()
-        if hasattr(window, 'loading_spinner_timer') and window.loading_spinner_timer:
-            window.loading_spinner_timer.stop()
 
         # Set as current page
         window.current_page_path = test_image_path
@@ -239,24 +237,27 @@ def test_rotation_functionality():
         # Test 90° rotation
         window._rotate_current_page(90)
 
-        # Verify image was rotated (dimensions should be swapped)
-        rotated_img = Image.open(test_image_path)
-        assert rotated_img.size == (50, 100), \
-            f"After 90° rotation, size should be (50, 100), got {rotated_img.size}"
+        # Verify source file was NOT modified (Phase 8 fix)
+        source_img = Image.open(test_image_path)
+        assert source_img.size == original_size, \
+            f"Source file should NOT be modified! Expected {original_size}, got {source_img.size}"
 
-        # Verify rotation state was updated
-        assert test_image_path in window.rotation_states, \
-            "Rotation state should be tracked"
-        assert window.rotation_states[test_image_path] == 90, \
-            f"Rotation state should be 90°, got {window.rotation_states[test_image_path]}°"
+        # Verify rotation was saved to database
+        rotation_from_db = window.metadata_db.get_rotation(test_image_path)
+        assert rotation_from_db == 90, \
+            f"Rotation should be 90° in database, got {rotation_from_db}°"
 
-        print("  [OK] Rotation functionality works correctly")
+        # Verify rotation state in memory
+        assert window.rotation_states.get(test_image_path, 0) == 90, \
+            f"Rotation state in memory should be 90°"
+
+        print("  [OK] Rotation stored in database, source file unchanged")
 
         window.close()
         return True
 
     except Exception as e:
-        print(f"  [FAIL] Rotation functionality test failed: {e}")
+        print(f"  [FAIL] Rotation database storage test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -374,8 +375,7 @@ def run_all_tests():
         ("Rotation Controls", test_rotation_controls_exist),
         ("Zoom Mode Handlers", test_zoom_mode_change_handler),
         ("Rotation Method", test_rotation_method_exists),
-        # Skip rotation functionality test for now (causes issues with auto-scan)
-        # ("Rotation Functionality", test_rotation_functionality),
+        ("Rotation Database Storage", test_rotation_database_storage),  # Phase 8 fix
         ("Keyboard Shortcuts", test_keyboard_shortcuts_setup),
         ("Zoom Control Positioning", test_zoom_control_positioning),
         ("Resize Event", test_resize_event_handles_fit_modes),

@@ -150,12 +150,18 @@ class MetadataDB:
             self.connection.commit()
             current_version = 1
 
-        # Future migrations will be added here
-        # if current_version < 2:
-        #     # Run migration 2
-        #     cursor.execute("ALTER TABLE ...")
-        #     cursor.execute("INSERT INTO schema_version (version, description) VALUES (2, 'Description')")
-        #     self.connection.commit()
+        # Migration 2: Add rotation_degrees column (Phase 8)
+        if current_version < 2:
+            cursor.execute("""
+                ALTER TABLE active_metadata
+                ADD COLUMN rotation_degrees INTEGER DEFAULT 0
+            """)
+            cursor.execute("""
+                INSERT INTO schema_version (version, description)
+                VALUES (2, 'Phase 8: Add rotation_degrees column for display-only rotation')
+            """)
+            self.connection.commit()
+            current_version = 2
 
     def get_schema_version(self) -> int:
         """Get current database schema version"""
@@ -448,6 +454,63 @@ class MetadataDB:
 
         shutil.copy2(self.db_path, backup_path)
         return backup_path
+
+    def save_rotation(self, file_path: str, rotation_degrees: int) -> None:
+        """
+        Save rotation angle for a file (Phase 8).
+        Rotation is display-only and never modifies the source file.
+
+        Args:
+            file_path: Absolute path to the image file
+            rotation_degrees: Rotation angle (0, 90, 180, 270)
+        """
+        cursor = self.connection.cursor()
+
+        # Normalize rotation to 0-359 range
+        rotation_degrees = rotation_degrees % 360
+
+        # Update or insert rotation
+        cursor.execute("""
+            INSERT INTO active_metadata (file_path, file_hash, file_size, file_mtime, rotation_degrees)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(file_path) DO UPDATE SET
+                rotation_degrees = ?,
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            file_path,
+            self.compute_file_hash(file_path),
+            os.path.getsize(file_path),
+            os.path.getmtime(file_path),
+            rotation_degrees,
+            rotation_degrees
+        ))
+
+        self.connection.commit()
+
+    def get_rotation(self, file_path: str) -> int:
+        """
+        Get stored rotation angle for a file (Phase 8).
+
+        Args:
+            file_path: Absolute path to the image file
+
+        Returns:
+            Rotation angle in degrees (0, 90, 180, or 270), or 0 if not found
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT rotation_degrees
+            FROM active_metadata
+            WHERE file_path = ?
+        """, (file_path,))
+
+        result = cursor.fetchone()
+
+        if result and result[0] is not None:
+            return result[0]
+
+        return 0  # Default: no rotation
 
     def close(self):
         """Close database connection"""
