@@ -223,21 +223,21 @@ class EnhancedSettingsWindow(QDialog):
 
         layout.addWidget(provider_group)
 
-        # Provider-Specific Settings (stacked)
-        self.provider_stack = QWidget()
-        self.provider_stack_layout = QVBoxLayout(self.provider_stack)
+        # Provider-Specific Settings (use QStackedWidget for proper switching)
+        from PyQt6.QtWidgets import QStackedWidget
+        self.provider_stack = QStackedWidget()
 
         # Ollama Settings
         self.ollama_settings_widget = self._create_ollama_settings()
-        self.provider_stack_layout.addWidget(self.ollama_settings_widget)
+        self.provider_stack.addWidget(self.ollama_settings_widget)
 
         # Claude CLI Settings
         self.claude_settings_widget = self._create_claude_cli_settings()
-        self.provider_stack_layout.addWidget(self.claude_settings_widget)
+        self.provider_stack.addWidget(self.claude_settings_widget)
 
         # Gemini CLI Settings
         self.gemini_settings_widget = self._create_gemini_cli_settings()
-        self.provider_stack_layout.addWidget(self.gemini_settings_widget)
+        self.provider_stack.addWidget(self.gemini_settings_widget)
 
         layout.addWidget(self.provider_stack)
 
@@ -292,15 +292,17 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
 
         layout.addWidget(prompts_group)
 
-        # Update visibility based on active provider
+        layout.addStretch()
+
+        # Update visibility based on active provider (must be after tab is fully built)
         self._on_provider_changed()
 
-        layout.addStretch()
         return widget
 
     def _create_ollama_settings(self) -> QWidget:
         """Ollama-specific settings panel"""
         widget = QGroupBox("Ollama Settings")
+        widget.setVisible(True)  # Ensure initially visible
         layout = QGridLayout(widget)
 
         layout.addWidget(QLabel("Model:"), 0, 0)
@@ -635,9 +637,13 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
         """Update visible provider settings panel"""
         provider = self.provider_combo.currentData()
 
-        self.ollama_settings_widget.setVisible(provider == "ollama")
-        self.claude_settings_widget.setVisible(provider == "claude_cli")
-        self.gemini_settings_widget.setVisible(provider == "gemini_cli")
+        # Use QStackedWidget's setCurrentWidget for proper switching
+        if provider == "ollama":
+            self.provider_stack.setCurrentWidget(self.ollama_settings_widget)
+        elif provider == "claude_cli":
+            self.provider_stack.setCurrentWidget(self.claude_settings_widget)
+        elif provider == "gemini_cli":
+            self.provider_stack.setCurrentWidget(self.gemini_settings_widget)
 
     def _on_auto_approval_toggled(self, state):
         """Show/hide approval delay controls"""
