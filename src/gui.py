@@ -23,6 +23,9 @@ from file_processor import FileProcessor
 from field_history import FieldHistory
 from metadata_db import MetadataDB
 from settings_window_enhanced import EnhancedSettingsWindow
+from bundle_widgets import BundleSuggestionsView
+from bundling_service import BundlingService
+from analysis_db import AnalysisDB
 
 class OllamaWorker(QThread):
     finished = pyqtSignal(object)
@@ -650,6 +653,7 @@ class PagePreviewWidget(QWidget):
         return self.checkbox.isChecked()
 
 class WorkflowStep(Enum):
+    BUNDLE_SUGGESTIONS = 0  # Step 0: AI Bundle Suggestions (Phase 7)
     STITCHING = 1  # Step 1: Document Stitching
     ANALYSIS = 2   # Step 2: Document Analysis (Metadata Extraction)
     ORDERING = 3   # Step 3: Order Pages
@@ -1003,6 +1007,10 @@ class ConvertImagesWindow(QMainWindow):
         self.field_history = FieldHistory()
         self.metadata_db = MetadataDB()  # Initialize metadata database for caching
 
+        # Phase 7: Bundle suggestion services
+        self.analysis_db = AnalysisDB()
+        self.bundling_service = BundlingService(self.analysis_db)
+
         self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{self.app_name} - Convert Images")
         icon_path = os.path.join("assets", "icon.png")
@@ -1014,7 +1022,7 @@ class ConvertImagesWindow(QMainWindow):
         self.setGeometry(100, 100, width, height)
 
         # Workflow state
-        self.current_step = WorkflowStep.STITCHING
+        self.current_step = WorkflowStep.BUNDLE_SUGGESTIONS  # Phase 7: Start with bundle suggestions
 
         # Document data
         self.all_files = []  # All PNG files to process
@@ -1110,7 +1118,7 @@ class ConvertImagesWindow(QMainWindow):
 
         step_header_layout.addStretch(1)
 
-        self.step_indicator_label = QLabel("Step 1 of 4")
+        self.step_indicator_label = QLabel("Step 1 of 5")
         self.step_indicator_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #666;")
         step_header_layout.addWidget(self.step_indicator_label)
 
@@ -1131,6 +1139,16 @@ class ConvertImagesWindow(QMainWindow):
         self.thumbnail_scroll.setWidget(self.thumbnail_container)
 
         self.main_layout.addWidget(self.thumbnail_scroll)
+
+        # ===== PHASE 7: Bundle Suggestions View =====
+        self.bundle_suggestions_view = BundleSuggestionsView()
+        self.bundle_suggestions_view.bundle_accepted.connect(self._on_bundle_accepted)
+        self.bundle_suggestions_view.bundle_modified.connect(self._on_bundle_modified)
+        self.bundle_suggestions_view.bundle_rejected.connect(self._on_bundle_rejected)
+        self.bundle_suggestions_view.accept_all_high.connect(self._on_accept_all_high_confidence)
+        self.bundle_suggestions_view.skip_to_manual.connect(self._on_skip_to_manual_workflow)
+        self.bundle_suggestions_view.setVisible(False)  # Hidden by default
+        self.main_layout.addWidget(self.bundle_suggestions_view)
 
         # ===== MAIN CONTENT AREA (dynamic based on step) =====
         self.content_layout = QHBoxLayout()
@@ -1481,7 +1499,7 @@ class ConvertImagesWindow(QMainWindow):
         """Show full-window loading animation while importing scans"""
         # Update header
         self.step_title_label.setText("Importing Scans")
-        self.step_indicator_label.setText("Step 1 of 4")
+        self.step_indicator_label.setText("Step 1 of 5")
 
         # Clear all panels
         self._clear_panel(self.left_panel_layout)
@@ -1576,7 +1594,7 @@ class ConvertImagesWindow(QMainWindow):
 
         # Update header
         self.step_title_label.setText("Document Stitching")
-        self.step_indicator_label.setText("Step 1 of 4")
+        self.step_indicator_label.setText("Step 1 of 5")
         self.header_back_button.setVisible(False)  # Hide back button in Step 1
 
         # Clear side panels
@@ -1691,7 +1709,7 @@ class ConvertImagesWindow(QMainWindow):
 
         # Update header
         self.step_title_label.setText("Document Analysis")
-        self.step_indicator_label.setText("Step 2 of 4")
+        self.step_indicator_label.setText("Step 2 of 5")
         self.header_back_button.setVisible(True)  # Show back button in Step 2
 
         # Show side panels (may have been hidden by loading UI)
@@ -1810,7 +1828,7 @@ class ConvertImagesWindow(QMainWindow):
 
         # Update header
         self.step_title_label.setText("Order Pages")
-        self.step_indicator_label.setText("Step 3 of 4")
+        self.step_indicator_label.setText("Step 3 of 5")
         self.header_back_button.setVisible(True)  # Show back button in Step 3
 
         # Show side panels
@@ -2167,7 +2185,7 @@ class ConvertImagesWindow(QMainWindow):
 
         # Update header
         self.step_title_label.setText("Document Finalization")
-        self.step_indicator_label.setText("Step 4 of 4")
+        self.step_indicator_label.setText("Step 4 of 5")
         self.header_back_button.setVisible(True)  # Show back button in Step 4
 
         # Show side panels (may have been hidden by loading UI)
@@ -2535,13 +2553,12 @@ class ConvertImagesWindow(QMainWindow):
             self.current_group = []
             self.completed_groups = []
 
-            # Transition from loading UI to Step 1 UI
+            # Phase 7: Setup Step 1 UI first (needed for layout structure)
             self._setup_step1_ui()
 
-            self.status_label.setText(f"Found {len(self.all_files)} file(s). Starting document stitching...")
-
-            # Start with first file
-            self._load_next_page_for_stitching()
+            # Phase 7: Start with bundle suggestions (Step 0)
+            self.status_label.setText(f"Found {len(self.all_files)} file(s). Generating bundle suggestions...")
+            self._load_and_show_bundle_suggestions()
 
         except Exception as e:
             QMessageBox.critical(self, "Error Scanning", f"An error occurred: {e}")
@@ -3939,6 +3956,231 @@ Files being sent to Ollama:
     # MORE DEPRECATED METHODS FROM OLD WORKFLOW - REMOVED
     # (_on_info_extracted, _approve_and_process, _on_text_coords_extracted, _show_final_confirmation)
     # All replaced by Step 2 and Step 3 handlers in the new 3-step workflow
+
+    # ===== PHASE 7: Bundle Suggestion Methods =====
+
+    def _load_and_show_bundle_suggestions(self):
+        """Generate and display bundle suggestions (Step 0)"""
+        try:
+            # Hide regular workflow UI
+            if hasattr(self, 'content_layout') and self.content_layout.parentWidget():
+                self.content_layout.parentWidget().setVisible(False)
+            if hasattr(self, 'thumbnail_scroll'):
+                self.thumbnail_scroll.setVisible(False)
+
+            # Update step indicator
+            self.step_title_label.setText("AI Bundle Suggestions")
+            self.step_indicator_label.setText("Step 0 of 5")
+
+            # Generate bundle suggestions using BundlingService
+            print(f"[Bundle Suggestions] Generating recommendations for {len(self.all_files)} files...")
+            bundles = self.bundling_service.generate_bundle_recommendations(self.all_files)
+
+            if bundles and len(bundles) > 0:
+                # Show bundle suggestions view
+                self.bundle_suggestions_view.set_bundles(bundles)
+                self.bundle_suggestions_view.setVisible(True)
+                print(f"[Bundle Suggestions] Showing {len(bundles)} suggestions")
+                self.status_label.setText(f"Found {len(bundles)} bundle suggestion(s). Review and accept/modify/reject each.")
+            else:
+                # No bundles found, skip to manual workflow
+                print("[Bundle Suggestions] No bundles generated, skipping to manual workflow")
+                self.status_label.setText("No bundle suggestions generated. Proceeding to manual stitching...")
+                QTimer.singleShot(1000, self._on_skip_to_manual_workflow)
+
+        except Exception as e:
+            print(f"[Bundle Suggestions] Error generating suggestions: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fall back to manual workflow
+            QMessageBox.warning(
+                self,
+                "Bundle Suggestions Failed",
+                f"Could not generate bundle suggestions: {e}\n\nProceeding to manual workflow."
+            )
+            self._on_skip_to_manual_workflow()
+
+    # ===== PHASE 7: Bundle Suggestion Handlers =====
+
+    def _on_bundle_accepted(self, bundle_data):
+        """Handle bundle acceptance - add to completed groups"""
+        print(f"[Bundle] Accepted: {bundle_data.get('document_type')} - {bundle_data.get('company')}")
+        file_paths = bundle_data.get('file_paths', [])
+        if file_paths:
+            self.completed_groups.append(file_paths)
+            group_key = f"group_{len(self.completed_groups)}"
+            self.extracted_metadata[group_key] = {
+                'company': bundle_data.get('company'),
+                'title': bundle_data.get('document_type'),
+                'date': bundle_data.get('document_date')
+            }
+            QMessageBox.information(
+                self, "Bundle Accepted",
+                f"Accepted {len(file_paths)} page(s) for '{bundle_data.get('document_type')}'.\n\n"
+                "Regenerating suggestions for remaining pages..."
+            )
+
+            # Regenerate bundle suggestions for remaining pages
+            bundled_files = set()
+            for group in self.completed_groups:
+                bundled_files.update(group)
+            remaining_files = [f for f in self.all_files if f not in bundled_files]
+
+            if remaining_files:
+                # Regenerate suggestions for remaining files
+                bundles = self.bundling_service.generate_bundle_recommendations(remaining_files)
+                if bundles and len(bundles) > 0:
+                    self.bundle_suggestions_view.set_bundles(bundles)
+                    self.status_label.setText(f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s).")
+                else:
+                    # No more bundles, ask if user wants to process manually
+                    self._check_remaining_pages_after_bundles()
+            else:
+                # All files bundled
+                self._check_remaining_pages_after_bundles()
+
+    def _on_bundle_modified(self, bundle_data):
+        """Handle bundle modification - load into stitching workflow"""
+        print(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
+        file_paths = bundle_data.get('file_paths', [])
+        if file_paths:
+            self.all_files = file_paths
+            self.current_file_index = 0
+            self.current_group = list(file_paths)
+            self.extracted_metadata['suggestion'] = {
+                'company': bundle_data.get('company'),
+                'title': bundle_data.get('document_type'),
+                'date': bundle_data.get('document_date')
+            }
+            self.current_step = WorkflowStep.STITCHING
+            self._on_skip_to_manual_workflow()
+
+    def _on_bundle_rejected(self, bundle_data):
+        """Handle bundle rejection"""
+        print(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
+        QMessageBox.information(
+            self, "Bundle Rejected",
+            f"Rejected bundle for '{bundle_data.get('document_type')}'."
+        )
+
+    def _on_accept_all_high_confidence(self):
+        """Accept all high confidence bundles automatically"""
+        high_confidence_bundles = self.bundle_suggestions_view.get_high_confidence_bundles()
+        if not high_confidence_bundles:
+            QMessageBox.information(
+                self, "No High Confidence Bundles",
+                "There are no high confidence bundles (>= 80%) to accept."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, "Accept All High Confidence",
+            f"Accept {len(high_confidence_bundles)} high confidence bundle(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            for bundle in high_confidence_bundles:
+                file_paths = bundle.get('file_paths', [])
+                if file_paths:
+                    self.completed_groups.append(file_paths)
+                    group_key = f"group_{len(self.completed_groups)}"
+                    self.extracted_metadata[group_key] = {
+                        'company': bundle.get('company'),
+                        'title': bundle.get('document_type'),
+                        'date': bundle.get('document_date')
+                    }
+            QMessageBox.information(
+                self, "Bundles Accepted",
+                f"Accepted {len(high_confidence_bundles)} high confidence bundle(s)."
+            )
+
+            # Check if there are remaining pages to process
+            self._check_remaining_pages_after_bundles()
+
+    def _check_remaining_pages_after_bundles(self):
+        """Check if there are pages left to process after accepting bundles"""
+        # Get all pages that were bundled
+        bundled_files = set()
+        for group in self.completed_groups:
+            bundled_files.update(group)
+
+        # Check if all files were bundled
+        remaining_files = [f for f in self.all_files if f not in bundled_files]
+
+        if remaining_files:
+            reply = QMessageBox.question(
+                self,
+                "Remaining Pages",
+                f"There are {len(remaining_files)} page(s) remaining that were not bundled.\n\n"
+                "Would you like to process them manually?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                # Load remaining files for manual processing
+                self.all_files = remaining_files
+                self.current_file_index = 0
+                self._on_skip_to_manual_workflow()
+            else:
+                # Skip to finalization
+                if self.completed_groups:
+                    self._transition_to_finalization()
+                else:
+                    self.status_label.setText("No documents to finalize.")
+        else:
+            # All pages bundled, go to finalization
+            if self.completed_groups:
+                QMessageBox.information(
+                    self,
+                    "All Pages Bundled",
+                    "All pages have been bundled! Proceeding to finalization."
+                )
+                self._transition_to_finalization()
+            else:
+                self.status_label.setText("No documents to finalize.")
+
+    def _transition_to_finalization(self):
+        """Transition to finalization step after bundle acceptance"""
+        # Hide bundle suggestions
+        self.bundle_suggestions_view.setVisible(False)
+
+        # Update step indicator
+        self.current_step = WorkflowStep.FINALIZATION
+        self.step_title_label.setText("Document Finalization")
+        self.step_indicator_label.setText("Step 4 of 5")
+
+        # Show regular workflow UI for finalization
+        if hasattr(self, 'content_layout') and self.content_layout.parentWidget():
+            self.content_layout.parentWidget().setVisible(True)
+
+        # Move to finalization step (this method should exist from earlier phases)
+        self._show_finalization_step()
+
+    def _on_skip_to_manual_workflow(self):
+        """Skip bundle suggestions and go to manual stitching"""
+        print("[Bundle] Skipping to manual workflow")
+
+        # Hide bundle suggestions view
+        self.bundle_suggestions_view.setVisible(False)
+
+        # Show regular workflow UI
+        if hasattr(self, 'content_layout') and self.content_layout.parentWidget():
+            self.content_layout.parentWidget().setVisible(True)
+        if hasattr(self, 'thumbnail_scroll'):
+            self.thumbnail_scroll.setVisible(True)
+
+        # Transition to stitching step
+        self.current_step = WorkflowStep.STITCHING
+        self.step_title_label.setText("Document Stitching")
+        self.step_indicator_label.setText("Step 1 of 5")  # Phase 7: Updated to reflect bundle suggestions
+
+        # Load first page for manual stitching
+        if self.all_files and self.current_file_index < len(self.all_files):
+            self._load_next_page_for_stitching()
+        else:
+            self.status_label.setText("Ready to begin stitching...")
+
 
 class StartupWindow(QWidget):
     def __init__(self):
