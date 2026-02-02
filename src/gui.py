@@ -3,7 +3,7 @@ import os
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QLineEdit, QScrollArea, QFrame,
-    QMessageBox, QDialog, QDialogButtonBox, QListWidget, QCheckBox,
+    QMessageBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem, QCheckBox,
     QGridLayout, QSizePolicy, QFileDialog, QProgressBar, QPlainTextEdit,
     QSplitter, QStyle, QGraphicsOpacityEffect, QSpinBox
 )
@@ -21,6 +21,7 @@ from config_manager import ConfigManager
 from ollama_service import OllamaService
 from file_processor import FileProcessor
 from field_history import FieldHistory
+from metadata_db import MetadataDB
 
 class OllamaWorker(QThread):
     finished = pyqtSignal(object)
@@ -147,7 +148,11 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config_manager = ConfigManager()
-        self.ollama_service = OllamaService(base_url=self.config_manager.get_setting('Ollama', 'base_url'))
+        timeout = float(self.config_manager.get_setting('Ollama', 'timeout', '300'))
+        self.ollama_service = OllamaService(
+            base_url=self.config_manager.get_setting('Ollama', 'base_url'),
+            timeout=timeout
+        )
         
         self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
         self.setWindowTitle(f"{self.app_name} - Settings")
@@ -646,20 +651,26 @@ class PagePreviewWidget(QWidget):
 class WorkflowStep(Enum):
     STITCHING = 1  # Step 1: Document Stitching
     ANALYSIS = 2   # Step 2: Document Analysis (Metadata Extraction)
-    FINALIZATION = 3  # Step 3: Document Finalization
+    ORDERING = 3   # Step 3: Order Pages
+    FINALIZATION = 4  # Step 4: Document Finalization
 
-class ProcessingWindow(QMainWindow):
+class ConvertImagesWindow(QMainWindow):
     processing_finished = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self.config_manager = ConfigManager()
-        self.ollama_service = OllamaService(base_url=self.config_manager.get_setting('Ollama', 'base_url'))
+        timeout = float(self.config_manager.get_setting('Ollama', 'timeout', '300'))
+        self.ollama_service = OllamaService(
+            base_url=self.config_manager.get_setting('Ollama', 'base_url'),
+            timeout=timeout
+        )
         self.file_processor = FileProcessor(self.config_manager)
         self.field_history = FieldHistory()
+        self.metadata_db = MetadataDB()  # Initialize metadata database for caching
 
         self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
-        self.setWindowTitle(f"{self.app_name} - Processing")
+        self.setWindowTitle(f"{self.app_name} - Convert Images")
         icon_path = os.path.join("assets", "icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -680,6 +691,16 @@ class ProcessingWindow(QMainWindow):
 
         # Metadata
         self.extracted_metadata = {}
+
+        # Page ordering data (Phase 1)
+        self.page_metadata_list = []  # List[Dict] - metadata for each page including detected page numbers
+        self.original_page_order = []  # List[str] - original order backup for reset functionality
+
+        # Zoom functionality
+        self.zoom_level = 1.0  # 1.0 = 100%, 0.5 = 50%, 2.0 = 200%
+        self.zoom_min = 0.25  # Minimum zoom (25%)
+        self.zoom_max = 4.0   # Maximum zoom (400%)
+        self.zoom_step = 0.25  # Zoom increment (25%)
 
         # Store raw Ollama requests and responses for debugging
         self.last_ollama_request = None
@@ -709,19 +730,63 @@ class ProcessingWindow(QMainWindow):
         self.step_title_label.setStyleSheet("font-size: 18pt; font-weight: bold; color: #0078D7;")
         step_header_layout.addWidget(self.step_title_label)
 
+        step_header_layout.addSpacing(15)
+
+        # Auto-approval toggle button (play/pause icon)
+        self.auto_approval_toggle = QPushButton()
+        self._update_auto_approval_toggle_icon()  # Set initial icon based on current setting
+        self.auto_approval_toggle.setStyleSheet(
+            "QPushButton { "
+            "background-color: transparent; "
+            "border: none; "
+            "padding: 5px; "
+            "font-size: 14pt; "
+            "}"
+            "QPushButton:hover { "
+            "background-color: #f0f0f0; "
+            "border-radius: 3px; "
+            "}"
+        )
+        self.auto_approval_toggle.setFixedSize(32, 32)
+        self.auto_approval_toggle.clicked.connect(self._on_toggle_auto_approval)
+        step_header_layout.addWidget(self.auto_approval_toggle)
+
+        step_header_layout.addSpacing(10)
+
+        # Header back button (icon only, subtle)
+        self.header_back_button = QPushButton()
+        self.header_back_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        self.header_back_button.setStyleSheet(
+            "QPushButton { "
+            "background-color: transparent; "
+            "border: 1px solid #ccc; "
+            "border-radius: 3px; "
+            "padding: 5px; "
+            "}"
+            "QPushButton:hover { "
+            "background-color: #f0f0f0; "
+            "border: 1px solid #999; "
+            "}"
+        )
+        self.header_back_button.setFixedSize(32, 32)
+        self.header_back_button.setToolTip("Go back to previous step")
+        self.header_back_button.setVisible(False)  # Hidden by default (Step 1 has no previous step)
+        self.header_back_button.clicked.connect(self._on_header_back_clicked)
+        step_header_layout.addWidget(self.header_back_button)
+
         step_header_layout.addStretch(1)
 
-        self.step_indicator_label = QLabel("Step 1 of 3")
+        self.step_indicator_label = QLabel("Step 1 of 4")
         self.step_indicator_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #666;")
         step_header_layout.addWidget(self.step_indicator_label)
 
         self.main_layout.addLayout(step_header_layout)
         self.main_layout.addSpacing(10)
 
-        # ===== THUMBNAIL STRIP (200px high, horizontal) =====
+        # ===== THUMBNAIL STRIP (220px high, horizontal) =====
         self.thumbnail_scroll = QScrollArea()
         self.thumbnail_scroll.setWidgetResizable(True)
-        self.thumbnail_scroll.setFixedHeight(200)
+        self.thumbnail_scroll.setFixedHeight(220)
         self.thumbnail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.thumbnail_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
@@ -742,14 +807,30 @@ class ProcessingWindow(QMainWindow):
         self.left_panel_layout.setContentsMargins(5, 5, 5, 5)
         self.content_layout.addWidget(self.left_panel)
 
-        # CENTER: Large Page Preview
+        # CENTER: Large Page Preview with Zoom Controls
+        # Create a container for the preview and zoom buttons
+        preview_container = QWidget()
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(0)
+
         self.large_preview_label = QLabel()
         self.large_preview_label.setFrameShape(QFrame.Shape.Box)
         self.large_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.large_preview_label.setStyleSheet("background-color: #f0f0f0; border: 2px solid #ccc;")
         self.large_preview_label.setMinimumSize(400, 500)
         self.large_preview_label.setScaledContents(False)
-        self.content_layout.addWidget(self.large_preview_label, stretch=1)
+
+        # Install event filter for mouse wheel zoom
+        self.large_preview_label.installEventFilter(self)
+        self.large_preview_label.setMouseTracking(True)
+
+        preview_layout.addWidget(self.large_preview_label)
+
+        # Create zoom control buttons (overlaid on top-right)
+        self._setup_zoom_controls()
+
+        self.content_layout.addWidget(preview_container, stretch=1)
 
         # RIGHT PANEL (changes per step)
         self.right_panel = QWidget()
@@ -805,7 +886,191 @@ class ProcessingWindow(QMainWindow):
         # Initialize with loading UI (will transition to Step 1 after scan completes)
         self._setup_loading_ui()
 
+    def _setup_zoom_controls(self):
+        """Create zoom control buttons overlaid on large preview"""
+        # Create container for zoom buttons
+        zoom_container = QWidget(self.large_preview_label)
+        zoom_layout = QHBoxLayout(zoom_container)
+        zoom_layout.setContentsMargins(5, 5, 5, 5)
+        zoom_layout.setSpacing(2)
+
+        # Button style
+        button_style = """
+            QPushButton {
+                background-color: rgba(255, 255, 255, 230);
+                color: #333;
+                border: 1px solid #999;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 20pt;
+                font-weight: bold;
+                min-width: 45px;
+                max-width: 45px;
+                min-height: 45px;
+                max-height: 45px;
+            }
+            QPushButton:hover {
+                background-color: rgba(240, 240, 240, 250);
+                border: 2px solid #666;
+            }
+            QPushButton:pressed {
+                background-color: rgba(220, 220, 220, 250);
+            }
+            QPushButton:disabled {
+                background-color: rgba(200, 200, 200, 150);
+                color: #999;
+                border: 1px solid #ccc;
+            }
+        """
+
+        # Zoom Out button
+        self.zoom_out_button = QPushButton("−", zoom_container)
+        self.zoom_out_button.setStyleSheet(button_style)
+        self.zoom_out_button.setToolTip("Zoom Out")
+        self.zoom_out_button.clicked.connect(self._zoom_out)
+        zoom_layout.addWidget(self.zoom_out_button)
+
+        # Zoom Reset button (shows current zoom percentage)
+        self.zoom_reset_button = QPushButton("100%", zoom_container)
+        zoom_reset_style = """
+            QPushButton {
+                background-color: rgba(255, 255, 255, 230);
+                color: #333;
+                border: 1px solid #999;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 11pt;
+                font-weight: bold;
+                min-width: 50px;
+                max-width: 50px;
+                min-height: 45px;
+                max-height: 45px;
+            }
+            QPushButton:hover {
+                background-color: rgba(240, 240, 240, 250);
+                border: 2px solid #666;
+            }
+            QPushButton:pressed {
+                background-color: rgba(220, 220, 220, 250);
+            }
+        """
+        self.zoom_reset_button.setStyleSheet(zoom_reset_style)
+        self.zoom_reset_button.setToolTip("Reset to 100%")
+        self.zoom_reset_button.clicked.connect(self._zoom_reset)
+        zoom_layout.addWidget(self.zoom_reset_button)
+
+        # Zoom In button
+        self.zoom_in_button = QPushButton("+", zoom_container)
+        self.zoom_in_button.setStyleSheet(button_style)
+        self.zoom_in_button.setToolTip("Zoom In")
+        self.zoom_in_button.clicked.connect(self._zoom_in)
+        zoom_layout.addWidget(self.zoom_in_button)
+
+        # Position zoom controls in bottom-right corner
+        # Width: 45 + 50 + 45 + margins(10) + spacing(4) = 154, round to 160
+        zoom_container.setFixedSize(160, 55)
+        zoom_container.move(self.large_preview_label.width() - 170, self.large_preview_label.height() - 65)
+        zoom_container.raise_()
+        zoom_container.show()
+
+        # Store reference for repositioning on resize
+        self.zoom_controls = zoom_container
+
+    def _zoom_in(self):
+        """Zoom in by one step"""
+        if self.zoom_level < self.zoom_max:
+            self.zoom_level = min(self.zoom_level + self.zoom_step, self.zoom_max)
+            self._refresh_preview_zoom()
+
+    def _zoom_out(self):
+        """Zoom out by one step"""
+        if self.zoom_level > self.zoom_min:
+            self.zoom_level = max(self.zoom_level - self.zoom_step, self.zoom_min)
+            self._refresh_preview_zoom()
+
+    def _zoom_reset(self):
+        """Reset zoom to 100%"""
+        self.zoom_level = 1.0
+        self._refresh_preview_zoom()
+
+    def _refresh_preview_zoom(self):
+        """Refresh the current preview image with current zoom level"""
+        if self.current_page_path and os.path.exists(self.current_page_path):
+            self._display_page_in_large_preview(self.current_page_path, show_indicator=False)
+        # Update button states
+        self.zoom_in_button.setEnabled(self.zoom_level < self.zoom_max)
+        self.zoom_out_button.setEnabled(self.zoom_level > self.zoom_min)
+        # Update zoom reset button text to show current zoom level
+        zoom_pct = int(self.zoom_level * 100)
+        self.zoom_reset_button.setText(f"{zoom_pct}%")
+
+    def eventFilter(self, obj, event):
+        """Handle mouse wheel events for zooming"""
+        if obj == self.large_preview_label and event.type() == event.Type.Wheel:
+            # Get wheel delta (positive = zoom in, negative = zoom out)
+            delta = event.angleDelta().y()
+
+            if delta > 0:
+                self._zoom_in()
+            elif delta < 0:
+                self._zoom_out()
+
+            return True  # Event handled
+
+        return super().eventFilter(obj, event)
+
+    def _update_zoom_control_position(self):
+        """Update position of zoom controls to bottom-right corner"""
+        if hasattr(self, 'zoom_controls') and hasattr(self, 'large_preview_label'):
+            # Position in bottom-right corner of preview label
+            x_pos = max(self.large_preview_label.width() - 170, 0)
+            y_pos = max(self.large_preview_label.height() - 65, 0)
+            self.zoom_controls.move(x_pos, y_pos)
+
+    def resizeEvent(self, event):
+        """Handle window resize to reposition zoom controls"""
+        super().resizeEvent(event)
+        self._update_zoom_control_position()
+
     # ===== AUTO-APPROVAL METHODS =====
+
+    def _update_auto_approval_toggle_icon(self):
+        """Update the auto-approval toggle button icon based on current setting"""
+        auto_approval_enabled = self.config_manager.get_setting("AutoApproval", "enable_automatic_approvals", "false")
+        if auto_approval_enabled.lower() == "true":
+            # Enabled - show pause/stop icon (can be stopped)
+            self.auto_approval_toggle.setText("⏸")
+            self.auto_approval_toggle.setToolTip("Auto-approval ENABLED\nClick to disable")
+        else:
+            # Disabled - show play icon (can be started)
+            self.auto_approval_toggle.setText("▶")
+            self.auto_approval_toggle.setToolTip("Auto-approval DISABLED\nClick to enable")
+
+    def _on_toggle_auto_approval(self):
+        """Toggle auto-approval setting and persist to config"""
+        auto_approval_enabled = self.config_manager.get_setting("AutoApproval", "enable_automatic_approvals", "false")
+
+        # Toggle the setting
+        new_value = "false" if auto_approval_enabled.lower() == "true" else "true"
+        self.config_manager.set_setting("AutoApproval", "enable_automatic_approvals", new_value)
+
+        # Handle active countdown based on new state
+        if new_value == "false":
+            # Toggled OFF - stop any running auto-approval countdown but preserve button for potential restart
+            self._stop_auto_approval(clear_button=False)
+        else:
+            # Toggled ON - restart countdown if there's a pending button
+            if hasattr(self, 'auto_approval_button') and self.auto_approval_button:
+                # There was a button waiting for auto-approval - restart the countdown
+                if hasattr(self, 'auto_approval_original_text'):
+                    self._start_auto_approval(self.auto_approval_button, self.auto_approval_original_text)
+
+        # Update the icon
+        self._update_auto_approval_toggle_icon()
+
+        # Update the checkbox in the main window if it exists
+        if hasattr(self, 'auto_approval_checkbox'):
+            self.auto_approval_checkbox.setChecked(new_value == "true")
 
     def _start_auto_approval(self, button, button_text):
         """Start auto-approval countdown timer"""
@@ -847,8 +1112,12 @@ class ProcessingWindow(QMainWindow):
             if button_to_click:
                 button_to_click.click()
 
-    def _stop_auto_approval(self):
-        """Stop and cleanup auto-approval timer"""
+    def _stop_auto_approval(self, clear_button=True):
+        """Stop and cleanup auto-approval timer
+
+        Args:
+            clear_button: If True, clear button reference. If False, preserve for potential restart.
+        """
         if self.auto_approval_timer and self.auto_approval_timer.isActive():
             self.auto_approval_timer.stop()
             self.auto_approval_timer = None
@@ -857,7 +1126,10 @@ class ProcessingWindow(QMainWindow):
         if self.auto_approval_button and hasattr(self, 'auto_approval_original_text'):
             self.auto_approval_button.setText(self.auto_approval_original_text)
 
-        self.auto_approval_button = None
+        if clear_button:
+            self.auto_approval_button = None
+            self.auto_approval_original_text = None
+
         self.auto_approval_countdown = 0
 
     def closeEvent(self, event):
@@ -875,7 +1147,7 @@ class ProcessingWindow(QMainWindow):
         """Show full-window loading animation while importing scans"""
         # Update header
         self.step_title_label.setText("Importing Scans")
-        self.step_indicator_label.setText("Step 1 of 3")
+        self.step_indicator_label.setText("Step 1 of 4")
 
         # Clear all panels
         self._clear_panel(self.left_panel_layout)
@@ -970,7 +1242,8 @@ class ProcessingWindow(QMainWindow):
 
         # Update header
         self.step_title_label.setText("Document Stitching")
-        self.step_indicator_label.setText("Step 1 of 3")
+        self.step_indicator_label.setText("Step 1 of 4")
+        self.header_back_button.setVisible(False)  # Hide back button in Step 1
 
         # Clear side panels
         self._clear_panel(self.left_panel_layout)
@@ -1084,7 +1357,8 @@ class ProcessingWindow(QMainWindow):
 
         # Update header
         self.step_title_label.setText("Document Analysis")
-        self.step_indicator_label.setText("Step 2 of 3")
+        self.step_indicator_label.setText("Step 2 of 4")
+        self.header_back_button.setVisible(True)  # Show back button in Step 2
 
         # Show side panels (may have been hidden by loading UI)
         self.left_panel.setVisible(True)
@@ -1194,13 +1468,373 @@ class ProcessingWindow(QMainWindow):
         # Start automatic metadata extraction
         self._start_metadata_extraction()
 
+    # ===== STEP 3: ORDER PAGES (Phase 4) =====
+
     def _setup_step3_ui(self):
-        """Step 3: Document Finalization - PDF review and confirmation"""
+        """Step 3: Order Pages - automatic reordering with manual override"""
+        self.current_step = WorkflowStep.ORDERING
+
+        # Update header
+        self.step_title_label.setText("Order Pages")
+        self.step_indicator_label.setText("Step 3 of 4")
+        self.header_back_button.setVisible(True)  # Show back button in Step 3
+
+        # Show side panels
+        self.left_panel.setVisible(True)
+        self.right_panel.setVisible(True)
+
+        # Clear panels
+        self._clear_panel(self.left_panel_layout)
+        self._clear_panel(self.right_panel_layout)
+
+        # === LEFT PANEL: Page Order List (250px) ===
+        self.left_panel.setFixedWidth(250)
+
+        order_title = QLabel("Page Order:")
+        order_title.setStyleSheet("font-weight: bold; font-size: 11pt;")
+        self.left_panel_layout.addWidget(order_title)
+
+        # List widget showing page order (drag-and-drop enabled)
+        self.page_order_list = QListWidget()
+        self.page_order_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.page_order_list.itemSelectionChanged.connect(self._on_order_list_selection_changed)
+        self.page_order_list.model().rowsMoved.connect(self._on_order_list_reordered)
+        self.left_panel_layout.addWidget(self.page_order_list)
+
+        # Reset button
+        reset_button = QPushButton("Reset to Original Order")
+        reset_button.setStyleSheet(
+            "QPushButton { background-color: #8A8A8A; color: white; "
+            "font-size: 9pt; padding: 8px; border-radius: 5px; }"
+        )
+        reset_button.clicked.connect(self._reset_page_order)
+        self.left_panel_layout.addWidget(reset_button)
+
+        # === RIGHT PANEL: Reordering Controls (220px) ===
+        self.right_panel.setFixedWidth(220)
+
+        button_container = QWidget()
+        button_layout = QVBoxLayout(button_container)
+        button_layout.addStretch(1)
+
+        # Manual reorder section
+        manual_label = QLabel("Manual Reorder:")
+        manual_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        button_layout.addWidget(manual_label)
+
+        # Up/Down buttons
+        move_up_button = QPushButton("↑ Move Up")
+        move_up_button.clicked.connect(lambda: self._move_page(-1))
+        button_layout.addWidget(move_up_button)
+
+        move_down_button = QPushButton("↓ Move Down")
+        move_down_button.clicked.connect(lambda: self._move_page(1))
+        button_layout.addWidget(move_down_button)
+
+        button_layout.addSpacing(10)
+
+        # Approve button
+        self.approve_order_button = QPushButton("✓ Approve Order")
+        self.approve_order_button.setStyleSheet(
+            "QPushButton { background-color: #107C10; color: white; "
+            "font-size: 12pt; padding: 15px; border-radius: 5px; }"
+        )
+        self.approve_order_button.clicked.connect(self._on_approve_page_order)
+        button_layout.addWidget(self.approve_order_button)
+
+        button_layout.addStretch(1)
+        self.right_panel_layout.addWidget(button_container)
+
+        # Initialize and auto-reorder
+        self._initialize_page_order()
+        self._auto_reorder_pages()
+
+    def _initialize_page_order(self):
+        """Initialize page order list from current_group and metadata"""
+        # Save original order
+        self.original_page_order = self.current_group.copy()
+
+        # Populate list widget
+        self.page_order_list.clear()
+        for i, page_path in enumerate(self.current_group):
+            metadata = next((m for m in self.page_metadata_list if m['image_path'] == page_path), None)
+            page_num = metadata.get('detected_page_number') if metadata else None
+            confidence = metadata.get('confidence', 'low') if metadata else 'low'
+
+            filename = os.path.basename(page_path)[:20]
+            if page_num:
+                confidence_icon = {'high': '✓', 'medium': '~', 'low': '?'}.get(confidence, '?')
+                item_text = f"{i+1}. Page {page_num} {confidence_icon} - {filename}"
+            else:
+                item_text = f"{i+1}. [No page #] - {filename}"
+
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.ItemDataRole.UserRole, page_path)
+            self.page_order_list.addItem(item)
+
+        if self.current_group:
+            self._display_page_in_large_preview(self.current_group[0], show_indicator=False)
+
+    def _auto_reorder_pages(self):
+        """Automatically reorder pages based on detected page numbers"""
+        pages_with_numbers = [m for m in self.page_metadata_list if m.get('detected_page_number') is not None]
+
+        if not pages_with_numbers:
+            self._offer_content_based_ordering()
+            return
+
+        # Check for duplicates
+        page_numbers = [m['detected_page_number'] for m in pages_with_numbers]
+        if len(page_numbers) != len(set(page_numbers)):
+            duplicates = [num for num in set(page_numbers) if page_numbers.count(num) > 1]
+            QMessageBox.warning(
+                self, "Duplicate Page Numbers",
+                f"Duplicate page numbers detected: {duplicates}\n\nPlease review and reorder manually."
+            )
+
+        # Sort pages by detected page number
+        try:
+            sortable = []
+            for m in self.page_metadata_list:
+                page_num = m.get('detected_page_number')
+                if page_num is not None:
+                    sortable.append((page_num, m['original_index'], m))
+                else:
+                    sortable.append((float('inf'), m['original_index'], m))
+
+            sortable.sort(key=lambda x: (x[0], x[1]))
+            self.current_group = [m['image_path'] for _, _, m in sortable]
+
+            self._refresh_page_order_list()
+            self.status_label.setText(
+                f"✓ Pages auto-reordered. {len(pages_with_numbers)}/{len(self.page_metadata_list)} pages had numbers."
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Reordering Error", f"Failed to auto-reorder pages: {e}")
+
+    def _refresh_page_order_list(self):
+        """Refresh the page order list widget from current_group"""
+        self.page_order_list.clear()
+        for i, page_path in enumerate(self.current_group):
+            metadata = next((m for m in self.page_metadata_list if m['image_path'] == page_path), None)
+            page_num = metadata.get('detected_page_number') if metadata else None
+            confidence = metadata.get('confidence', 'low') if metadata else 'low'
+
+            filename = os.path.basename(page_path)[:20]
+            if page_num:
+                confidence_icon = {'high': '✓', 'medium': '~', 'low': '?'}.get(confidence, '?')
+                item_text = f"{i+1}. Page {page_num} {confidence_icon} - {filename}"
+            else:
+                item_text = f"{i+1}. [No page #] - {filename}"
+
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.ItemDataRole.UserRole, page_path)
+            self.page_order_list.addItem(item)
+
+    def _move_page(self, direction):
+        """Move selected page up (-1) or down (+1)"""
+        current_row = self.page_order_list.currentRow()
+        if current_row < 0:
+            QMessageBox.information(self, "No Selection", "Please select a page to move.")
+            return
+
+        new_row = current_row + direction
+        if new_row < 0 or new_row >= self.page_order_list.count():
+            return
+
+        # Move in list widget
+        item = self.page_order_list.takeItem(current_row)
+        self.page_order_list.insertItem(new_row, item)
+        self.page_order_list.setCurrentRow(new_row)
+
+        # Update current_group
+        self.current_group.insert(new_row, self.current_group.pop(current_row))
+        self._refresh_page_order_list()
+        self.page_order_list.setCurrentRow(new_row)
+
+    def _on_order_list_reordered(self, parent, start, end, destination, row):
+        """Handle drag-and-drop reordering"""
+        new_order = []
+        for i in range(self.page_order_list.count()):
+            item = self.page_order_list.item(i)
+            page_path = item.data(Qt.ItemDataRole.UserRole)
+            new_order.append(page_path)
+
+        self.current_group = new_order
+        self._refresh_page_order_list()
+
+    def _on_order_list_selection_changed(self):
+        """Update preview when list selection changes"""
+        current_item = self.page_order_list.currentItem()
+        if current_item:
+            page_path = current_item.data(Qt.ItemDataRole.UserRole)
+            self._display_page_in_large_preview(page_path, show_indicator=False)
+
+    def _reset_page_order(self):
+        """Reset to original stitching order"""
+        reply = QMessageBox.question(
+            self, "Reset Order",
+            "Reset to original page order from stitching step?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.current_group = self.original_page_order.copy()
+            self._refresh_page_order_list()
+            self.status_label.setText("Page order reset to original.")
+
+    def _on_approve_page_order(self):
+        """User approves page order - move to Step 4"""
+        if not self.current_group:
+            QMessageBox.warning(self, "No Pages", "No pages to finalize.")
+            return
+
+        self.status_label.setText(f"Page order approved. {len(self.current_group)} pages ready for PDF.")
+        self._setup_step4_ui()
+
+    def _on_back_to_step2(self):
+        """Go back to Step 2 (Analysis)"""
+        # Cancel any running Ollama request
+        if hasattr(self, 'worker_thread') and self.worker_thread.isRunning():
+            self.worker_thread.terminate()
+            self.worker_thread.wait()
+            self._stop_spinner()
+
+        self._setup_step2_ui()
+
+    def _on_back_to_step1(self):
+        """Go back to Step 1 (Stitching) from Step 2"""
+        # Cancel any running Ollama request
+        if hasattr(self, 'worker_thread') and self.worker_thread.isRunning():
+            self.worker_thread.terminate()
+            self.worker_thread.wait()
+            self._stop_spinner()
+
+        # Confirm with user since this might lose metadata edits
+        reply = QMessageBox.question(
+            self, "Return to Stitching?",
+            "Going back will discard any metadata edits. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Clear metadata
+            self.extracted_metadata = {}
+
+            # Reset to Step 1
+            self._setup_step1_ui()
+
+            # Restore current group state (show all included pages)
+            for page_path in self.current_group:
+                self._update_thumbnail_state(page_path, 'included')
+
+            # Display first page
+            if self.current_group:
+                self._display_page_in_large_preview(self.current_group[0])
+
+            # Update buttons for review state
+            self.start_scan_button.setVisible(False)
+            self.exclude_button.setVisible(True)
+            self.exclude_button.setText("Finish Group")
+
+            self.status_label.setText(
+                f"Returned to stitching. Group has {len(self.current_group)} page(s). "
+                f"Click 'Finish Group' to proceed or modify pages."
+            )
+
+    def _on_back_to_step3(self):
+        """Go back to Step 3 (Order Pages) from Step 4"""
+        # Cancel any running Ollama request
+        if hasattr(self, 'worker_thread') and self.worker_thread.isRunning():
+            self.worker_thread.terminate()
+            self.worker_thread.wait()
+            self._stop_spinner()
+
+        # Delete the preview PDF if it exists
+        if hasattr(self, 'created_pdf_path') and os.path.exists(self.created_pdf_path):
+            try:
+                os.remove(self.created_pdf_path)
+                print(f"Deleted preview PDF: {self.created_pdf_path}")
+            except Exception as e:
+                print(f"Warning: Could not delete preview PDF: {e}")
+
+        # Return to Step 3
+        self._setup_step3_ui()
+
+    def _offer_content_based_ordering(self):
+        """Offer to use Ollama for content-based ordering (Phase 5)"""
+        reply = QMessageBox.question(
+            self, "Content-Based Ordering",
+            "No page numbers detected. Would you like Ollama to analyze content flow and suggest page order?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._start_content_based_ordering()
+
+    def _start_content_based_ordering(self):
+        """Start Ollama worker for content-based ordering"""
+        selected_model = self.config_manager.get_setting('Ollama', 'model')
+
+        self._start_spinner()
+        self.status_label.setText(f"Analyzing content flow with {selected_model}...")
+
+        self.worker_thread = OllamaWorker(
+            self.ollama_service.infer_page_order_from_content,
+            selected_model,
+            self.current_group
+        )
+        self.worker_thread.finished.connect(self._on_content_ordering_result)
+        self.worker_thread.progress.connect(self._on_worker_progress)
+        self.worker_thread.start()
+
+    def _on_content_ordering_result(self, result):
+        """Handle content-based ordering result"""
+        self._stop_spinner()
+
+        # Safety check: ensure we're still in Step 3 (Ordering)
+        if not hasattr(self, 'current_step') or self.current_step != WorkflowStep.ORDERING:
+            print("⚠ Content ordering completed but UI has moved to a different step")
+            return
+
+        if isinstance(result, Exception):
+            QMessageBox.warning(
+                self, "Ordering Failed",
+                f"Content-based ordering failed: {result}\n\nPlease reorder manually."
+            )
+            return
+
+        ordered_indices = result.get('ordered_indices', [])
+        confidence = result.get('confidence', 'low')
+
+        try:
+            original_group = self.current_group.copy()
+            self.current_group = [original_group[i] for i in ordered_indices]
+
+            self._refresh_page_order_list()
+
+            # Safety check: ensure status_label still exists
+            if hasattr(self, 'status_label') and self.status_label:
+                try:
+                    self.status_label.setText(
+                        f"✓ Pages reordered by content analysis (confidence: {confidence}). Review and approve."
+                    )
+                except RuntimeError:
+                    print("⚠ Status label no longer exists")
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Ordering Error",
+                f"Failed to apply content-based ordering: {e}"
+            )
+
+    # ===== STEP 4: DOCUMENT FINALIZATION =====
+
+    def _setup_step4_ui(self):
+        """Step 4: Document Finalization - PDF review and confirmation"""
         self.current_step = WorkflowStep.FINALIZATION
 
         # Update header
         self.step_title_label.setText("Document Finalization")
-        self.step_indicator_label.setText("Step 3 of 3")
+        self.step_indicator_label.setText("Step 4 of 4")
+        self.header_back_button.setVisible(True)  # Show back button in Step 4
 
         # Show side panels (may have been hidden by loading UI)
         self.left_panel.setVisible(True)
@@ -1475,7 +2109,8 @@ class ProcessingWindow(QMainWindow):
     # The 3-step workflow has replaced these methods with:
     # - Step 1 handlers (_load_next_page_for_stitching, _on_include_page, _on_exclude_page)
     # - Step 2 handlers (_start_metadata_extraction, _on_metadata_extracted, _on_continue_to_step3)
-    # - Step 3 handlers (_create_pdf_for_preview, _finalize_document)
+    # - Step 3 handlers (_setup_step3_ui, _initialize_page_order, _auto_reorder_pages, etc.)
+    # - Step 4 handlers (_create_pdf_for_preview, _finalize_document)
 
     def _check_ollama_connection(self):
         """Verify Ollama is accessible before processing"""
@@ -1583,6 +2218,19 @@ class ProcessingWindow(QMainWindow):
 
     def _load_next_page_for_stitching(self):
         """Load next page and display it for user review/Ollama validation"""
+        # Find next unprocessed file (skip files already in thumbnail strip)
+        while self.current_file_index < len(self.all_files):
+            next_file = self.all_files[self.current_file_index]
+
+            # Check if this file has already been processed (in page_states)
+            if next_file in self.page_states:
+                print(f"⚠ Skipping already processed file: {os.path.basename(next_file)}")
+                self.current_file_index += 1
+                continue
+
+            # Found an unprocessed file
+            break
+
         # Check if we're done with all files
         if self.current_file_index >= len(self.all_files):
             # No more files - finalize current group if any
@@ -1593,7 +2241,7 @@ class ProcessingWindow(QMainWindow):
                 self._reset_to_start()
             return
 
-        # Get next file
+        # Get next unprocessed file
         next_file = self.all_files[self.current_file_index]
         self.current_page_path = next_file
 
@@ -1660,31 +2308,134 @@ Files being sent to Ollama:
 {file_list}"""
         self.last_ollama_response_type = "Page Validation"
 
+        # Check metadata cache first (avoid unnecessary Ollama calls)
+        cached_metadata = self.metadata_db.get_metadata(next_file)
+
+        if cached_metadata and cached_metadata.get('belongs_to_same_doc') is not None:
+            # Use cached metadata instead of calling Ollama
+            print(f"✓ Using cached metadata for {os.path.basename(next_file)}")
+
+            # Convert cached data to expected format
+            result = {
+                'belongs': cached_metadata.get('belongs_to_same_doc', False),
+                'page_number': cached_metadata.get('page_number'),
+                'total_pages': cached_metadata.get('total_pages'),
+                'page_position': cached_metadata.get('page_position'),
+                'confidence': cached_metadata.get('confidence', 'low'),
+                'company': cached_metadata.get('company'),
+                'document_type': cached_metadata.get('document_type'),
+                'document_date': cached_metadata.get('document_date'),
+                'additional': {}
+            }
+
+            # Process cached result immediately
+            self._on_page_validation_result(result, next_file)
+            return
+
+        # No cache or stale cache - call Ollama
+        print(f"⟳ Fetching fresh metadata for {os.path.basename(next_file)}")
+
         # Start spinner animation
         if hasattr(self, 'step1_spinner_timer'):
             self.step1_spinner_timer.start(100)  # 100ms interval
 
-        self.worker_thread = OllamaWorker(self.ollama_service.validate_grouping, selected_model, files_to_validate, pages_prompt)
-        self.worker_thread.finished.connect(lambda result: self._on_page_validation_result(result, next_file))
+        # Phase 2: Use new method that detects comprehensive metadata
+        import time
+        start_time = time.time()
+
+        self.worker_thread = OllamaWorker(self.ollama_service.validate_grouping_with_page_number, selected_model, files_to_validate, pages_prompt)
+        self.worker_thread.finished.connect(lambda result: self._on_page_validation_result(result, next_file, start_time=start_time))
         self.worker_thread.progress.connect(self._on_worker_progress)
         self.worker_thread.start()
 
-    def _on_page_validation_result(self, result, evaluated_file):
-        """Handle Ollama's response about whether page belongs - no modal dialogs"""
+    def _on_page_validation_result(self, result, evaluated_file, start_time=None):
+        """Handle Ollama's response - now includes comprehensive metadata (Phase 3 + Caching)"""
         self._stop_spinner()
 
         # Stop spinner animation
         if hasattr(self, 'step1_spinner_timer'):
             self.step1_spinner_timer.stop()
 
-        # Hide cancel request button, keep abort visible
-        self.cancel_request_button.setVisible(False)
+        # Safety check: ensure we're still in Step 1 (Stitching)
+        if not hasattr(self, 'current_step') or self.current_step != WorkflowStep.STITCHING:
+            print("⚠ Page validation completed but UI has moved to a different step")
+            return
 
-        # Store response for debugging
+        # Hide cancel request button, keep abort visible
+        if hasattr(self, 'cancel_request_button') and self.cancel_request_button:
+            try:
+                self.cancel_request_button.setVisible(False)
+            except RuntimeError:
+                print("⚠ Step 1 UI no longer exists")
+                return
+
+        # Extract validation result and comprehensive metadata
         if isinstance(result, Exception):
             self.last_ollama_response = f"ERROR: {str(result)}"
+            belongs = False
+            page_number = None
+            total_pages = None
+            page_position = None
+            confidence = 'low'
+            company = None
+            document_type = None
+            document_date = None
+            additional = {}
         else:
-            self.last_ollama_response = f"Result: {'YES (Include)' if result else 'NO (Exclude)'}\nBoolean value: {result}"
+            belongs = result.get('belongs', False) if isinstance(result, dict) else result
+            page_number = result.get('page_number') if isinstance(result, dict) else None
+            total_pages = result.get('total_pages') if isinstance(result, dict) else None
+            page_position = result.get('page_position') if isinstance(result, dict) else None
+            confidence = result.get('confidence', 'low') if isinstance(result, dict) else 'low'
+            company = result.get('company') if isinstance(result, dict) else None
+            document_type = result.get('document_type') if isinstance(result, dict) else None
+            document_date = result.get('document_date') if isinstance(result, dict) else None
+            additional = result.get('additional', {}) if isinstance(result, dict) else {}
+
+            # Build response summary
+            response_parts = [f"Result: {'YES' if belongs else 'NO'}"]
+            if page_number:
+                response_parts.append(f"Page: {page_number}")
+            if page_position:
+                response_parts.append(f"Position: {page_position}")
+            if company:
+                response_parts.append(f"Company: {company}")
+            if document_type:
+                response_parts.append(f"Type: {document_type}")
+            self.last_ollama_response = "\n".join(response_parts)
+
+        # Save metadata to cache database (for future runs)
+        if not isinstance(result, Exception) and start_time is not None:
+            import time
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            selected_model = self.config_manager.get_setting('Ollama', 'model')
+
+            try:
+                self.metadata_db.save_metadata(
+                    evaluated_file,
+                    result,
+                    model_used=selected_model,
+                    processing_time_ms=processing_time_ms
+                )
+                print(f"✓ Cached metadata for {os.path.basename(evaluated_file)} ({processing_time_ms}ms)")
+            except Exception as e:
+                print(f"⚠ Failed to cache metadata: {e}")
+
+        # Store page metadata for ordering step
+        metadata = {
+            'image_path': evaluated_file,
+            'detected_page_number': page_number,
+            'total_pages': total_pages,
+            'page_position': page_position,
+            'confidence': confidence,
+            'company': company,
+            'document_type': document_type,
+            'document_date': document_date,
+            'additional': additional,
+            'original_index': len(self.page_metadata_list),
+            'from_cache': start_time is None  # True if from cache, False if from Ollama
+        }
+        self.page_metadata_list.append(metadata)
 
         if isinstance(result, Exception):
             # On error, mark as excluded but let user override
@@ -1692,13 +2443,18 @@ Files being sent to Ollama:
             self._display_page_in_large_preview(evaluated_file)
             self._update_step1_buttons_for_state('excluded')
 
-            self.status_label.setText(
-                f"⚠ Validation error. Page marked as excluded. "
-                f"Group has {len(self.current_group)} page(s). Use buttons to override."
-            )
+            # Safety check: ensure status_label still exists
+            if hasattr(self, 'status_label') and self.status_label:
+                try:
+                    self.status_label.setText(
+                        f"⚠ Validation error. Page marked as excluded. "
+                        f"Group has {len(self.current_group)} page(s). Use buttons to override."
+                    )
+                except RuntimeError:
+                    print("⚠ Status label no longer exists")
             return
 
-        if result:
+        if belongs:
             # Ollama says YES - auto-include
             self.current_group.append(evaluated_file)
             self.current_file_index += 1
@@ -1707,34 +2463,55 @@ Files being sent to Ollama:
             self._update_step1_buttons_for_state('included')
 
             files_remaining = len(self.all_files) - self.current_file_index
-            self.status_label.setText(
-                f"✓ Page included automatically. Group has {len(self.current_group)} page(s). "
-                f"({files_remaining} remaining)"
-            )
+            page_info = f" [Page {page_number}]" if page_number else ""
+
+            # Safety check: ensure status_label still exists
+            if hasattr(self, 'status_label') and self.status_label:
+                try:
+                    self.status_label.setText(
+                        f"✓ Page included automatically{page_info}. Group has {len(self.current_group)} page(s). "
+                        f"({files_remaining} remaining)"
+                    )
+                except RuntimeError:
+                    print("⚠ Status label no longer exists")
 
             # Auto-load next page
             if self.current_file_index < len(self.all_files):
                 self._load_next_page_for_stitching()
             else:
-                self.status_label.setText(
-                    f"All pages processed. Group has {len(self.current_group)} page(s). "
-                    f"Click Exclude to finish stitching."
-                )
+                # Safety check: ensure status_label still exists
+                if hasattr(self, 'status_label') and self.status_label:
+                    try:
+                        self.status_label.setText(
+                            f"All pages processed. Group has {len(self.current_group)} page(s). "
+                            f"Click Exclude to finish stitching."
+                        )
+                    except RuntimeError:
+                        print("⚠ Status label no longer exists")
         else:
             # Ollama says NO - mark as excluded visually, let user decide
             self._update_thumbnail_state(evaluated_file, 'excluded')
             self._display_page_in_large_preview(evaluated_file)
             self._update_step1_buttons_for_state('excluded')
 
-            self.status_label.setText(
-                f"✗ Ollama suggests excluding this page. "
-                f"Current group: {len(self.current_group)} page(s). "
-                f"Use buttons to Include, Skip, or Finish Group."
-            )
+            # Safety check: ensure status_label still exists
+            if hasattr(self, 'status_label') and self.status_label:
+                try:
+                    self.status_label.setText(
+                        f"✗ Ollama suggests excluding this page. "
+                        f"Current group: {len(self.current_group)} page(s). "
+                        f"Use buttons to Include, Skip, or Finish Group."
+                    )
+                except RuntimeError:
+                    print("⚠ Status label no longer exists")
 
             # Start auto-approval on Approve button if group is not empty
             if len(self.current_group) > 0:
-                self._start_auto_approval(self.exclude_button, "Approve")
+                if hasattr(self, 'exclude_button') and self.exclude_button:
+                    try:
+                        self._start_auto_approval(self.exclude_button, "Approve")
+                    except RuntimeError:
+                        print("⚠ Exclude button no longer exists")
 
     def _on_include_current_page(self):
         """User clicked Include button - change excluded page to included or include new page"""
@@ -1937,6 +2714,114 @@ Files being sent to Ollama:
         if reply == QMessageBox.StandardButton.Yes:
             self.close()
 
+    def _on_header_back_clicked(self):
+        """Header back button clicked - route to appropriate back handler based on current step"""
+        if not hasattr(self, 'current_step'):
+            return
+
+        # Route to appropriate back handler based on current step
+        if self.current_step == WorkflowStep.ANALYSIS:
+            self._on_back_to_step1()
+        elif self.current_step == WorkflowStep.ORDERING:
+            self._on_back_to_step2()
+        elif self.current_step == WorkflowStep.FINALIZATION:
+            self._on_back_to_step3()
+
+    def _on_cache_indicator_label_clicked(self, event):
+        """Handle clicks on cache indicator label"""
+        # Only process clicks if it's showing CACHE (not OLLAMA)
+        if hasattr(self, 'cache_indicator_label') and self.cache_indicator_label.text() == "CACHE":
+            self._on_cache_indicator_clicked()
+
+    def _on_cache_indicator_clicked(self):
+        """User clicked cache indicator - clear cache and request fresh metadata from Ollama"""
+        if self.current_step != WorkflowStep.STITCHING:
+            return
+
+        # Find the currently displayed page
+        if not hasattr(self, 'current_page_path') or not self.current_page_path:
+            return
+
+        current_page = self.current_page_path
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self, "Refresh Metadata",
+            f"Clear cached metadata for this page and request fresh analysis from Ollama?\n\n{os.path.basename(current_page)}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Delete cached metadata from database
+        try:
+            # Use the metadata_db to clear this file's cache
+            if hasattr(self, 'metadata_db'):
+                # Clear from database
+                cursor = self.metadata_db.conn.cursor()
+                cursor.execute("DELETE FROM active_metadata WHERE file_path = ?", (current_page,))
+                self.metadata_db.conn.commit()
+                print(f"✓ Cleared cached metadata for {os.path.basename(current_page)}")
+        except Exception as e:
+            print(f"⚠ Error clearing cache: {e}")
+
+        # Remove from page_metadata_list
+        self.page_metadata_list = [m for m in self.page_metadata_list if m['image_path'] != current_page]
+
+        # Remove from page_states
+        if current_page in self.page_states:
+            del self.page_states[current_page]
+
+        # Remove from current_group if it was included
+        if current_page in self.current_group:
+            self.current_group.remove(current_page)
+
+        # Update thumbnail to pending state
+        self._update_thumbnail_state(current_page, 'pending')
+
+        # Request fresh metadata from Ollama
+        self.status_label.setText(f"Requesting fresh analysis from Ollama for {os.path.basename(current_page)}...")
+        self._load_next_page_for_stitching()
+
+    def _on_status_indicator_clicked(self, image_path, current_state):
+        """User clicked status indicator - toggle between included/excluded"""
+        if self.current_step != WorkflowStep.STITCHING:
+            return
+
+        # Toggle state
+        if current_state == 'included':
+            # Switch to excluded
+            self._update_thumbnail_state(image_path, 'excluded')
+            self.page_states[image_path] = 'excluded'
+
+            # Remove from current_group
+            if image_path in self.current_group:
+                self.current_group.remove(image_path)
+
+            # Update status
+            self.status_label.setText(
+                f"✗ Page excluded. Group has {len(self.current_group)} page(s). "
+                f"Click status indicator to include again."
+            )
+        elif current_state == 'excluded':
+            # Switch to included
+            self._update_thumbnail_state(image_path, 'included')
+            self.page_states[image_path] = 'included'
+
+            # Add to current_group if not already there
+            if image_path not in self.current_group:
+                self.current_group.append(image_path)
+
+            # Update status
+            self.status_label.setText(
+                f"✓ Page included. Group has {len(self.current_group)} page(s). "
+                f"Click status indicator to exclude again."
+            )
+
+        # Refresh the preview to update the indicator
+        self._display_page_in_large_preview(image_path, show_indicator=True)
+
     def _display_page_in_large_preview(self, image_path, show_indicator=True):
         """Display a page image in the large central preview area with status indicator
 
@@ -1950,9 +2835,13 @@ Files being sent to Ollama:
             self.large_preview_label.setStyleSheet("background-color: #ffe6e6; border: 2px solid #ccc;")
             return
 
-        # Scale to fit preview area while maintaining aspect ratio
+        # Apply zoom level to scaling
+        target_size = self.large_preview_label.size()
+        zoomed_size = target_size * self.zoom_level
+
+        # Scale to fit preview area while maintaining aspect ratio and respecting zoom
         scaled_pixmap = pixmap.scaled(
-            self.large_preview_label.size(),
+            zoomed_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
@@ -1981,6 +2870,10 @@ Files being sent to Ollama:
                     "font-size: 32pt; font-weight: bold; border-radius: 25px; "
                     "padding: 5px; }"
                 )
+                # Make clickable (toggle to excluded)
+                self.preview_overlay.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.preview_overlay.setToolTip("Included - Click to exclude")
+                self.preview_overlay.mousePressEvent = lambda event: self._on_status_indicator_clicked(image_path, 'included')
             elif state == 'excluded':
                 self.preview_overlay.setText("✗")
                 self.preview_overlay.setStyleSheet(
@@ -1988,6 +2881,10 @@ Files being sent to Ollama:
                     "font-size: 32pt; font-weight: bold; border-radius: 25px; "
                     "padding: 5px; }"
                 )
+                # Make clickable (toggle to included)
+                self.preview_overlay.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.preview_overlay.setToolTip("Excluded - Click to include")
+                self.preview_overlay.mousePressEvent = lambda event: self._on_status_indicator_clicked(image_path, 'excluded')
             else:  # pending
                 self.preview_overlay.setText("?")
                 self.preview_overlay.setStyleSheet(
@@ -1995,12 +2892,73 @@ Files being sent to Ollama:
                     "font-size: 32pt; font-weight: bold; border-radius: 25px; "
                     "padding: 5px; }"
                 )
+                # Not clickable when pending
+                self.preview_overlay.setCursor(Qt.CursorShape.ArrowCursor)
+                self.preview_overlay.setToolTip("Pending...")
+                self.preview_overlay.mousePressEvent = None
 
             self.preview_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.preview_overlay.show()
             self.preview_overlay.raise_()  # Bring to front
+
+            # Add cache/AI indicator label to the left of status overlay
+            # Find metadata for this image to determine if it came from cache
+            page_meta = next((m for m in self.page_metadata_list if m['image_path'] == image_path), None)
+            from_cache = page_meta.get('from_cache', False) if page_meta else False
+
+            # Create cache indicator label if it doesn't exist
+            if not hasattr(self, 'cache_indicator_label'):
+                self.cache_indicator_label = QLabel(self.large_preview_label)
+                self.cache_indicator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                # Click handler will check if it's cached when clicked
+                self.cache_indicator_label.mousePressEvent = self._on_cache_indicator_label_clicked
+
+            # Position to the left of status overlay
+            self.cache_indicator_label.setGeometry(
+                self.large_preview_label.width() - 130, 10, 60, 30
+            )
+
+            # Set text and styling based on cache status
+            if from_cache:
+                self.cache_indicator_label.setText("CACHE")
+                self.cache_indicator_label.setStyleSheet(
+                    "QLabel { "
+                    "background-color: rgba(100, 150, 255, 200); "
+                    "color: white; "
+                    "border: 2px solid rgba(50, 100, 200, 250); "
+                    "border-radius: 5px; "
+                    "padding: 5px; "
+                    "font-size: 10pt; "
+                    "font-weight: bold; "
+                    "}"
+                )
+                self.cache_indicator_label.setToolTip("Decision from CACHE - Click to refresh from Ollama")
+                self.cache_indicator_label.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.cache_indicator_label.setText("OLLAMA")
+                self.cache_indicator_label.setStyleSheet(
+                    "QLabel { "
+                    "background-color: rgba(100, 200, 100, 200); "
+                    "color: white; "
+                    "border: 2px solid rgba(50, 150, 50, 250); "
+                    "border-radius: 5px; "
+                    "padding: 5px; "
+                    "font-size: 10pt; "
+                    "font-weight: bold; "
+                    "}"
+                )
+                self.cache_indicator_label.setToolTip("Decision from OLLAMA (real-time)")
+                self.cache_indicator_label.setCursor(Qt.CursorShape.ArrowCursor)
+
+            self.cache_indicator_label.show()
+            self.cache_indicator_label.raise_()
         elif hasattr(self, 'preview_overlay'):
             self.preview_overlay.hide()
+            if hasattr(self, 'cache_indicator_label'):
+                self.cache_indicator_label.hide()
+
+        # Update zoom control position after displaying image
+        self._update_zoom_control_position()
 
         # Update thumbnail selection border in Step 1
         if self.current_step == WorkflowStep.STITCHING:
@@ -2008,6 +2966,18 @@ Files being sent to Ollama:
 
     def _add_thumbnail(self, image_path, state='included'):
         """Add a thumbnail to the thumbnail strip with status indicator"""
+        # Check if this image is already in the thumbnail strip
+        if image_path in self.page_states:
+            print(f"⚠ Skipping duplicate thumbnail: {os.path.basename(image_path)} (already in strip)")
+            return
+
+        # Check if thumbnail already exists in layout
+        for i in range(self.thumbnail_layout.count()):
+            widget = self.thumbnail_layout.itemAt(i).widget()
+            if widget and widget.property("image_path") == image_path:
+                print(f"⚠ Thumbnail already exists in layout: {os.path.basename(image_path)}")
+                return
+
         self.page_states[image_path] = state
         thumbnail = self._create_thumbnail_widget(image_path, state)
         self.thumbnail_layout.addWidget(thumbnail)
@@ -2292,7 +3262,18 @@ Files being sent to Ollama:
     def _on_metadata_extracted(self, result):
         """Handle metadata extraction result"""
         self._stop_spinner()
-        self.cancel_ollama_button.setEnabled(False)
+
+        # Safety check: ensure UI elements still exist (user may have navigated away)
+        if not hasattr(self, 'cancel_ollama_button') or not self.cancel_ollama_button:
+            print("⚠ Metadata extraction completed but UI has changed - ignoring result")
+            return
+
+        # Try to access button, but handle gracefully if deleted
+        try:
+            self.cancel_ollama_button.setEnabled(False)
+        except RuntimeError:
+            print("⚠ Metadata extraction completed but Step 2 UI no longer exists")
+            return
 
         if isinstance(result, Exception):
             QMessageBox.warning(
@@ -2300,30 +3281,54 @@ Files being sent to Ollama:
                 f"Ollama failed to extract metadata.\n\nError: {result}\n\n"
                 f"Please fill in the fields manually."
             )
-            self.continue_button.setEnabled(True)
+            # Safety check before accessing UI elements
+            if hasattr(self, 'continue_button') and self.continue_button:
+                try:
+                    self.continue_button.setEnabled(True)
+                except RuntimeError:
+                    pass
             self.status_label.setText("Metadata extraction failed. Fill manually.")
             return
 
-        # Populate fields
+        # Populate fields (with safety checks)
         self.extracted_metadata = result
-        self.company_edit.setCurrentText(result.get('company', '') or '')
-        self.title_edit.setCurrentText(result.get('title', '') or '')
-        self.date_edit.setText(result.get('date', '') or '')
+
+        try:
+            if hasattr(self, 'company_edit') and self.company_edit:
+                self.company_edit.setCurrentText(result.get('company', '') or '')
+            if hasattr(self, 'title_edit') and self.title_edit:
+                self.title_edit.setCurrentText(result.get('title', '') or '')
+            if hasattr(self, 'date_edit') and self.date_edit:
+                self.date_edit.setText(result.get('date', '') or '')
+        except RuntimeError as e:
+            print(f"⚠ UI elements deleted during metadata update: {e}")
+            return
 
         # Store raw response for debugging
         self.last_ollama_response = str(result)
         self.last_ollama_response_type = "Metadata Extraction"
 
-        # Hide cancel button and enable continue button
-        self.cancel_ollama_button.setVisible(False)
-        self.continue_button.setEnabled(True)
+        # Hide cancel button and enable continue button (with safety checks)
+        try:
+            if hasattr(self, 'cancel_ollama_button') and self.cancel_ollama_button:
+                self.cancel_ollama_button.setVisible(False)
+            if hasattr(self, 'continue_button') and self.continue_button:
+                self.continue_button.setEnabled(True)
+        except RuntimeError as e:
+            print(f"⚠ Button access failed: {e}")
+            return
+
         self.status_label.setText("✓ Metadata extracted successfully. Review and click Approve.")
 
         # Start auto-approval if all required fields have values
         company = result.get('company')
         title = result.get('title')
         if company and title:  # Both company and title are non-null
-            self._start_auto_approval(self.continue_button, "Approve")
+            try:
+                if hasattr(self, 'continue_button') and self.continue_button:
+                    self._start_auto_approval(self.continue_button, "Approve")
+            except RuntimeError:
+                pass  # UI changed, skip auto-approval
 
     def _on_continue_to_step3(self):
         """User clicked Continue - move to Step 3 (Finalization)"""
@@ -2350,9 +3355,9 @@ Files being sent to Ollama:
             'date': self.date_edit.text().strip() or 'NoDate'
         }
 
-        self.status_label.setText("Moving to document finalization...")
+        self.status_label.setText("Moving to page ordering...")
 
-        # Transition to Step 3
+        # Transition to Step 3 (Order Pages)
         self._setup_step3_ui()
 
     def _on_cancel_ollama(self):
@@ -2413,8 +3418,8 @@ Files being sent to Ollama:
             if self.current_group:
                 self._display_page_in_large_preview(self.current_group[0])
 
-            # Update Step 3 UI with file information
-            self._update_step3_file_info()
+            # Update Step 4 UI with file information
+            self._update_step4_file_info()
 
             # Start auto-approval on Accept & Delete Sources button
             self._start_auto_approval(self.accept_delete_button, "✓ Accept & Delete Sources")
@@ -2423,8 +3428,8 @@ Files being sent to Ollama:
             QMessageBox.critical(self, "PDF Creation Error", f"Failed to create PDF.\n\nError: {e}")
             self.status_label.setText(f"Error creating PDF: {e}")
 
-    def _update_step3_file_info(self):
-        """Update Step 3 left panel with file information and hyperlinks"""
+    def _update_step4_file_info(self):
+        """Update Step 4 left panel with file information and hyperlinks"""
         if not hasattr(self, 'created_pdf_path') or not os.path.exists(self.created_pdf_path):
             return
 
@@ -2515,12 +3520,36 @@ Files being sent to Ollama:
         self._stop_auto_approval()
 
     def _finalize_document(self, delete_sources):
-        """Finalize document - handle PDF and source files"""
+        """Finalize document - handle PDF, archive metadata, and source files"""
         if not hasattr(self, 'created_pdf_path'):
             QMessageBox.warning(self, "Error", "No PDF created yet.")
             return
 
         try:
+            # Archive metadata to database before cleanup
+            try:
+                document_metadata = {
+                    'company': self.extracted_metadata.get('company'),
+                    'title': self.extracted_metadata.get('title'),
+                    'date': self.extracted_metadata.get('date'),
+                    'additional': {}
+                }
+
+                self.metadata_db.archive_document(
+                    pdf_path=self.created_pdf_path,
+                    source_files=self.current_group,
+                    document_metadata=document_metadata
+                )
+
+                print(f"✓ Archived metadata for {os.path.basename(self.created_pdf_path)}")
+                print(f"  - {len(self.current_group)} source files")
+                print(f"  - Company: {document_metadata.get('company')}")
+                print(f"  - Type: {document_metadata.get('title')}")
+
+            except Exception as e:
+                print(f"⚠ Failed to archive metadata: {e}")
+                # Don't fail the whole operation if archival fails
+
             # Reset UI state before processing
             self._reset_ui_state()
 
@@ -2661,28 +3690,35 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
-        process_button = QPushButton("Process Scans")
+        process_button = QPushButton("Convert Scans")
         process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         process_button.setMinimumHeight(60)
         process_button.setStyleSheet("QPushButton { background-color: #005A9E; color: white; border-radius: 5px; padding: 10px; }")
         process_button.clicked.connect(self.show_processing_window)
         button_layout.addWidget(process_button)
 
-        self.extract_button = QPushButton("Extract from PDF")
+        self.extract_button = QPushButton("Convert PDFs")
         self.extract_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.extract_button.setMinimumHeight(60)
-        self.extract_button.setEnabled(False)
+        self.extract_button.setEnabled(True)
         self.extract_button.setStyleSheet("QPushButton { background-color: #005A9E; color: white; border-radius: 5px; padding: 10px; }")
         self.extract_button.clicked.connect(self._process_pdfs)
         button_layout.addWidget(self.extract_button)
 
-        settings_button = QPushButton("Settings")
+        settings_button = QPushButton("Change Settings")
         settings_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         settings_button.setMinimumHeight(60)
         settings_button.setStyleSheet("QPushButton { background-color: #005A9E; color: white; border-radius: 5px; padding: 10px; }")
         settings_button.clicked.connect(self.show_settings_window)
         button_layout.addWidget(settings_button)
-        
+
+        quit_button = QPushButton("Quit")
+        quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        quit_button.setMinimumHeight(60)
+        quit_button.setStyleSheet("QPushButton { background-color: #8B0000; color: white; border-radius: 5px; padding: 10px; }")
+        quit_button.clicked.connect(self.quit_application)
+        button_layout.addWidget(quit_button)
+
         button_layout.addStretch()
         content_layout.addLayout(button_layout)
 
@@ -2767,7 +3803,7 @@ class StartupWindow(QWidget):
 
     def show_processing_window(self):
         if not self.processing_window or not self.processing_window.isVisible():
-            self.processing_window = ProcessingWindow()
+            self.processing_window = ConvertImagesWindow()
             self.processing_window.processing_finished.connect(self.on_processing_finished)
         self.hide()
         self.processing_window.show()
@@ -2775,6 +3811,19 @@ class StartupWindow(QWidget):
     def show_settings_window(self):
         settings_window = SettingsWindow(self)
         settings_window.exec()
+
+    def quit_application(self):
+        """Handle Quit button click with confirmation"""
+        reply = QMessageBox.question(
+            self,
+            'Quit Application',
+            'Are you sure you want to quit?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            QApplication.quit()
 
     def on_processing_finished(self):
         if self.processing_window:
