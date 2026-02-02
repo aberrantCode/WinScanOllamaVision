@@ -22,6 +22,7 @@ from ollama_service import OllamaService
 from file_processor import FileProcessor
 from field_history import FieldHistory
 from metadata_db import MetadataDB
+from settings_window_enhanced import EnhancedSettingsWindow
 
 class OllamaWorker(QThread):
     finished = pyqtSignal(object)
@@ -4092,7 +4093,7 @@ class StartupWindow(QWidget):
         self.processing_window.show()
 
     def show_settings_window(self):
-        settings_window = SettingsWindow(self)
+        settings_window = EnhancedSettingsWindow(self)
         settings_window.exec()
 
     def quit_application(self):
