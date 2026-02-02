@@ -654,6 +654,339 @@ class WorkflowStep(Enum):
     ORDERING = 3   # Step 3: Order Pages
     FINALIZATION = 4  # Step 4: Document Finalization
 
+
+class ConvertPDFsWindow(QMainWindow):
+    """Window for extracting pages from PDFs for re-bundling"""
+
+    def __init__(self):
+        super().__init__()
+        self.config_manager = ConfigManager()
+        self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScan")
+        self.setWindowTitle(f"{self.app_name} - Convert PDFs")
+
+        icon_path = os.path.join("assets", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        self.setGeometry(100, 100, 900, 700)
+
+        # State
+        self.current_step = 1
+        self.pdf_files = []
+        self.selected_pdfs = []
+        self.extraction_results = []
+
+        self._init_ui()
+        self._load_pdfs()
+
+    def _init_ui(self):
+        """Initialize the UI with 3-step workflow"""
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+
+        # Title
+        title = QLabel("Convert PDFs to Images")
+        title.setStyleSheet("font-size: 18pt; font-weight: bold; padding: 10px;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(title)
+
+        # Step indicator
+        self.step_label = QLabel("Step 1: Select PDFs")
+        self.step_label.setStyleSheet("font-size: 14pt; padding: 5px;")
+        self.step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.step_label)
+
+        # Content area (stacked)
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        main_layout.addWidget(self.content_widget)
+
+        # Button area
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self.back_button = QPushButton("Back")
+        self.back_button.clicked.connect(self._go_back)
+        self.back_button.setEnabled(False)
+        button_layout.addWidget(self.back_button)
+
+        self.next_button = QPushButton("Extract Pages")
+        self.next_button.clicked.connect(self._go_next)
+        button_layout.addWidget(self.next_button)
+
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close)
+        button_layout.addWidget(self.close_button)
+
+        main_layout.addLayout(button_layout)
+
+        self._show_step_1()
+
+    def _load_pdfs(self):
+        """Load PDF files from scan folder"""
+        scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
+        if not os.path.isdir(scan_folder):
+            return
+
+        self.pdf_files = [
+            os.path.join(scan_folder, f)
+            for f in os.listdir(scan_folder)
+            if f.lower().endswith('.pdf')
+        ]
+
+    def _clear_content(self):
+        """Clear current content"""
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _show_step_1(self):
+        """Step 1: PDF Selection with checkboxes"""
+        self._clear_content()
+        self.step_label.setText("Step 1: Select PDFs to Extract")
+
+        if not self.pdf_files:
+            no_pdfs_label = QLabel("No PDF files found in scan folder")
+            no_pdfs_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.content_layout.addWidget(no_pdfs_label)
+            self.next_button.setEnabled(False)
+            return
+
+        # Scrollable list of PDFs with checkboxes
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+
+        self.pdf_checkboxes = []
+
+        for pdf_path in self.pdf_files:
+            pdf_name = os.path.basename(pdf_path)
+
+            # Get PDF info
+            try:
+                doc = fitz.open(pdf_path)
+                page_count = len(doc)
+                doc.close()
+                info_text = f"{pdf_name} ({page_count} pages)"
+            except:
+                info_text = f"{pdf_name} (unable to read)"
+
+            checkbox = QCheckBox(info_text)
+            checkbox.setProperty("pdf_path", pdf_path)
+            checkbox.stateChanged.connect(self._update_selection)
+            scroll_layout.addWidget(checkbox)
+            self.pdf_checkboxes.append(checkbox)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        self.content_layout.addWidget(scroll)
+
+        # Select/Deselect all
+        select_layout = QHBoxLayout()
+        select_all = QPushButton("Select All")
+        select_all.clicked.connect(lambda: self._select_all(True))
+        deselect_all = QPushButton("Deselect All")
+        deselect_all.clicked.connect(lambda: self._select_all(False))
+        select_layout.addWidget(select_all)
+        select_layout.addWidget(deselect_all)
+        select_layout.addStretch()
+        self.content_layout.addLayout(select_layout)
+
+        self.next_button.setText("Extract Pages")
+        self.back_button.setEnabled(False)
+
+    def _select_all(self, checked):
+        """Select or deselect all PDFs"""
+        for checkbox in self.pdf_checkboxes:
+            checkbox.setChecked(checked)
+
+    def _update_selection(self):
+        """Update selected PDFs list"""
+        self.selected_pdfs = [
+            cb.property("pdf_path")
+            for cb in self.pdf_checkboxes
+            if cb.isChecked()
+        ]
+        self.next_button.setEnabled(len(self.selected_pdfs) > 0)
+
+    def _show_step_2(self):
+        """Step 2: Extraction Progress"""
+        self._clear_content()
+        self.step_label.setText("Step 2: Extracting Pages...")
+
+        self.progress_label = QLabel("Preparing extraction...")
+        self.progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.content_layout.addWidget(self.progress_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.content_layout.addWidget(self.progress_bar)
+
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.content_layout.addWidget(self.log_text)
+
+        self.next_button.setEnabled(False)
+        self.back_button.setEnabled(False)
+        self.close_button.setEnabled(False)
+
+        # Start extraction in background
+        QTimer.singleShot(100, self._extract_pdfs)
+
+    def _extract_pdfs(self):
+        """Extract pages from selected PDFs"""
+        scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
+        total_pdfs = len(self.selected_pdfs)
+        self.extraction_results = []
+
+        for idx, pdf_path in enumerate(self.selected_pdfs):
+            pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            self.progress_label.setText(f"Extracting {pdf_name}... ({idx+1}/{total_pdfs})")
+            self.progress_bar.setValue(int((idx / total_pdfs) * 100))
+            QApplication.processEvents()
+
+            try:
+                doc = fitz.open(pdf_path)
+                page_count = len(doc)
+
+                self.log_text.appendPlainText(f"\nExtracting {pdf_name} ({page_count} pages)...")
+
+                extracted_pages = []
+                for page_num in range(page_count):
+                    page = doc[page_num]
+
+                    # Render at 300 DPI
+                    zoom = 300 / 72
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat)
+
+                    # Save as PNG
+                    output_name = f"{pdf_name}_page_{page_num+1:03d}.png"
+                    output_path = os.path.join(scan_folder, output_name)
+                    pix.save(output_path)
+
+                    extracted_pages.append(output_path)
+                    self.log_text.appendPlainText(f"  Page {page_num+1} -> {output_name}")
+                    QApplication.processEvents()
+
+                doc.close()
+
+                self.extraction_results.append({
+                    'pdf_name': pdf_name,
+                    'page_count': page_count,
+                    'extracted_pages': extracted_pages,
+                    'success': True
+                })
+
+                self.log_text.appendPlainText(f"✓ Completed {pdf_name}")
+
+            except Exception as e:
+                self.log_text.appendPlainText(f"✗ Error extracting {pdf_name}: {e}")
+                self.extraction_results.append({
+                    'pdf_name': pdf_name,
+                    'success': False,
+                    'error': str(e)
+                })
+
+        self.progress_bar.setValue(100)
+        self.progress_label.setText("Extraction Complete!")
+        self.log_text.appendPlainText("\nAll extractions finished.")
+
+        self.next_button.setText("Continue")
+        self.next_button.setEnabled(True)
+        self.close_button.setEnabled(True)
+
+    def _show_step_3(self):
+        """Step 3: Completion Summary"""
+        self._clear_content()
+        self.step_label.setText("Step 3: Extraction Summary")
+
+        # Summary
+        summary_text = QLabel()
+        successful = sum(1 for r in self.extraction_results if r['success'])
+        failed = len(self.extraction_results) - successful
+        total_pages = sum(r.get('page_count', 0) for r in self.extraction_results if r['success'])
+
+        summary_html = f"""
+        <h3>Extraction Complete</h3>
+        <p><b>PDFs Processed:</b> {len(self.extraction_results)}</p>
+        <p><b>Successful:</b> {successful}</p>
+        <p><b>Failed:</b> {failed}</p>
+        <p><b>Total Pages Extracted:</b> {total_pages}</p>
+        """
+        summary_text.setText(summary_html)
+        summary_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.content_layout.addWidget(summary_text)
+
+        # Details
+        details_label = QLabel("<b>Details:</b>")
+        self.content_layout.addWidget(details_label)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+
+        for result in self.extraction_results:
+            if result['success']:
+                text = f"✓ {result['pdf_name']}: {result['page_count']} pages extracted"
+            else:
+                text = f"✗ {result['pdf_name']}: {result.get('error', 'Unknown error')}"
+
+            label = QLabel(text)
+            scroll_layout.addWidget(label)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        self.content_layout.addWidget(scroll)
+
+        # Action buttons
+        action_layout = QHBoxLayout()
+
+        send_button = QPushButton("Send to Convert Scans")
+        send_button.clicked.connect(self._send_to_conversion)
+        action_layout.addWidget(send_button)
+
+        action_layout.addStretch()
+        self.content_layout.addLayout(action_layout)
+
+        self.next_button.setVisible(False)
+        self.back_button.setEnabled(False)
+
+    def _send_to_conversion(self):
+        """Open ConvertImagesWindow with extracted images"""
+        QMessageBox.information(
+            self,
+            "Open Convert Scans",
+            "Close this window and click 'Convert Scans' to process the extracted images."
+        )
+        self.close()
+
+    def _go_next(self):
+        """Navigate to next step"""
+        if self.current_step == 1:
+            if not self.selected_pdfs:
+                QMessageBox.warning(self, "No PDFs Selected", "Please select at least one PDF to extract.")
+                return
+            self.current_step = 2
+            self._show_step_2()
+        elif self.current_step == 2:
+            self.current_step = 3
+            self._show_step_3()
+
+    def _go_back(self):
+        """Navigate to previous step"""
+        if self.current_step > 1:
+            self.current_step -= 1
+            if self.current_step == 1:
+                self._show_step_1()
+            elif self.current_step == 2:
+                self._show_step_2()
+
+
 class ConvertImagesWindow(QMainWindow):
     processing_finished = pyqtSignal()
 
@@ -3746,60 +4079,10 @@ class StartupWindow(QWidget):
         self.extract_button.setEnabled(len(pdf_files) > 0)
 
     def _process_pdfs(self):
-        scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
-        if not os.path.isdir(scan_folder):
-            QMessageBox.critical(self, "Error", "Scan folder not found.")
-            return
-
-        pdf_files = [os.path.join(scan_folder, f) for f in os.listdir(scan_folder) if f.lower().endswith('.pdf')]
-        if not pdf_files:
-            QMessageBox.information(self, "No PDFs Found", "No PDF files found in the scan folder.")
-            return
-
-        total_pdfs = len(pdf_files)
-        processed_count = 0
-        errors = []
-
-        for pdf_path in pdf_files:
-            try:
-                doc = fitz.open(pdf_path)
-                num_pages = doc.page_count
-                
-                png_paths = []
-                for page_num in range(num_pages):
-                    page = doc.load_page(page_num)
-                    pix = page.get_pixmap()
-                    
-                    base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-                    output_path = os.path.join(scan_folder, f"{base_name}_page_{page_num + 1}.png")
-                    
-                    pix.save(output_path)
-                    png_paths.append(output_path)
-                
-                doc.close()
-
-                if len(png_paths) == num_pages:
-                    reply = QMessageBox.question(self, 'Confirm Deletion', 
-                                                 f"Successfully extracted {num_pages} pages from {os.path.basename(pdf_path)}. Delete the original PDF?",
-                                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
-                                                 QMessageBox.StandardButton.No)
-                    if reply == QMessageBox.StandardButton.Yes:
-                        os.remove(pdf_path)
-                    processed_count += 1
-                else:
-                    errors.append(f"Mismatch in page count for {os.path.basename(pdf_path)}.")
-
-            except Exception as e:
-                errors.append(f"Failed to process {os.path.basename(pdf_path)}: {e}")
-
-        summary_message = f"Processed {processed_count}/{total_pdfs} PDF files."
-        if errors:
-            summary_message += "\n\nErrors:\n" + "\n".join(errors)
-            QMessageBox.warning(self, "Processing Complete with Errors", summary_message)
-        else:
-            QMessageBox.information(self, "Processing Complete", summary_message)
-
-        self._check_for_pdfs()
+        """Open the Convert PDFs window"""
+        convert_pdfs_window = ConvertPDFsWindow()
+        convert_pdfs_window.show()
+        convert_pdfs_window.exec()
 
     def show_processing_window(self):
         if not self.processing_window or not self.processing_window.isVisible():
