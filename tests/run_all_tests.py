@@ -26,7 +26,7 @@ def print_header():
     """Print test suite header"""
     print("\n" + "="*70)
     print("=" + " "*68 + "=")
-    print("=" + "  WINSCAN OLLAMA VISION - COMPREHENSIVE TEST SUITE  ".center(68) + "=")
+    print("=" + "  WINSCANLLM - COMPREHENSIVE TEST SUITE  ".center(68) + "=")
     print("=" + "  Phases 1-3: Foundation, Providers, and Services  ".center(68) + "=")
     print("=" + " "*68 + "=")
     print("="*70)

@@ -1,5 +1,7 @@
 # WinScan Ollama Vision - Comprehensive Enhancement Plan
 
+> **Historical Note:** This document preserves the original plan created before the application was renamed to "WinScanLLM". The original name is maintained here for historical accuracy.
+
 ## Executive Summary
 
 Transform the document scanning application with AI-powered automatic bundling, multi-provider LLM support, PDF extraction for re-bundling, and a modern UI redesign. The implementation maintains backward compatibility while adding powerful new features centered around pre-analysis and intelligent document grouping.

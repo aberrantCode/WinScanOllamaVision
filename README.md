@@ -33,7 +33,7 @@ Or, you can pull other vision models like `llava:latest` or `deepseek-ocr` which
 ### 4. Clone the Repository
 ```bash
 git clone https://github.com/aberrantCode/WinScanLLM.git
-cd WinScanOllamaVision
+cd WinScanLLM
 ```
 
 ### 5. Install Python Dependencies

@@ -218,7 +218,7 @@ python gui.py
 
 **Manual Checks:**
 - [ ] Application window opens
-- [ ] Title shows "WinScanOllamaVision" or configured name
+- [ ] Title shows "WinScanLLM" or configured name
 - [ ] 4 buttons visible:
   - [ ] "Convert Scans"
   - [ ] "Convert PDFs"
