@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QDesktopServices, QMovie, QIcon, QTransform
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QThread, QTimer, QSize
 from enum import Enum
+from typing import List, Dict, Optional
 
 try:
     import fitz
@@ -755,6 +756,783 @@ class ConvertPDFsWindow(QMainWindow):
                 self._show_step_2()
 
 
+class ImageGalleryWidget(QWidget):
+    """
+    Phase 3: Image Gallery (Left Panel)
+    Shows all available images with search, sort, checkboxes, and status badges.
+    """
+    image_selected = pyqtSignal(str)  # file_path
+    image_toggled = pyqtSignal(str, bool)  # file_path, checked
+
+    def __init__(self, analysis_db: 'AnalysisDB' = None, parent=None):
+        super().__init__(parent)
+        self.analysis_db = analysis_db
+        self.all_images = []  # List[Dict] - full image metadata
+        self.filtered_images = []  # List[Dict] - after search/sort
+        self.checked_files = set()  # Set[str] - file paths that are checked
+        self.current_file = None  # Currently selected file path
+        self._init_ui()
+
+    def _init_ui(self):
+        """Initialize the image gallery UI"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(10)
+
+        # Title
+        title_label = QLabel("Available Pages")
+        title_label.setStyleSheet("font-size: 12pt; font-weight: bold; color: #111827;")
+        layout.addWidget(title_label)
+
+        # Search box
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search by filename...")
+        self.search_box.textChanged.connect(self._on_search_changed)
+        self.search_box.setStyleSheet("""
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+                background-color: white;
+                font-size: 10pt;
+            }
+            QLineEdit:focus {
+                border: 1px solid #2563EB;
+            }
+        """)
+        layout.addWidget(self.search_box)
+
+        # Sort dropdown
+        sort_layout = QHBoxLayout()
+        sort_label = QLabel("Sort:")
+        sort_label.setStyleSheet("font-size: 9pt; color: #6B7280;")
+        sort_layout.addWidget(sort_label)
+
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Date", "Name", "Type"])
+        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        self.sort_combo.setStyleSheet("""
+            QComboBox {
+                padding: 4px;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+                background-color: white;
+                font-size: 9pt;
+            }
+            QComboBox:hover {
+                border: 1px solid #2563EB;
+            }
+        """)
+        sort_layout.addWidget(self.sort_combo, 1)
+        layout.addLayout(sort_layout)
+
+        # Image list (QListWidget with custom items)
+        self.image_list = QListWidget()
+        self.image_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+                background-color: white;
+                outline: none;
+            }
+            QListWidget::item {
+                border-bottom: 1px solid #E5E7EB;
+                padding: 5px;
+            }
+            QListWidget::item:selected {
+                background-color: #DBEAFE;
+                border: 2px solid #2563EB;
+            }
+            QListWidget::item:hover {
+                background-color: #F3F4F6;
+            }
+        """)
+        self.image_list.itemClicked.connect(self._on_item_clicked)
+        layout.addWidget(self.image_list)
+
+        # Count label
+        self.count_label = QLabel("Showing: 0 of 0")
+        self.count_label.setStyleSheet("font-size: 9pt; color: #6B7280;")
+        self.count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.count_label)
+
+        # Bulk action buttons
+        bulk_layout = QHBoxLayout()
+
+        self.select_all_button = QPushButton("Select All")
+        self.select_all_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """)
+        self.select_all_button.clicked.connect(self._on_select_all)
+        bulk_layout.addWidget(self.select_all_button)
+
+        self.clear_selection_button = QPushButton("Clear Selection")
+        self.clear_selection_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+        """)
+        self.clear_selection_button.clicked.connect(self._on_clear_selection)
+        bulk_layout.addWidget(self.clear_selection_button)
+
+        layout.addLayout(bulk_layout)
+
+        # Status badge legend
+        layout.addSpacing(10)
+        legend_label = QLabel("<b>Status:</b>")
+        legend_label.setStyleSheet("font-size: 9pt; color: #374151;")
+        layout.addWidget(legend_label)
+
+        badge_layout = QVBoxLayout()
+        badge_layout.setSpacing(3)
+
+        analyzed_label = QLabel("🟢 Analyzed")
+        analyzed_label.setStyleSheet("font-size: 9pt; color: #374151;")
+        badge_layout.addWidget(analyzed_label)
+
+        unanalyzed_label = QLabel("⭘ Unanalyzed")
+        unanalyzed_label.setStyleSheet("font-size: 9pt; color: #374151;")
+        badge_layout.addWidget(unanalyzed_label)
+
+        failed_label = QLabel("🔴 Failed")
+        failed_label.setStyleSheet("font-size: 9pt; color: #374151;")
+        badge_layout.addWidget(failed_label)
+
+        layout.addLayout(badge_layout)
+        layout.addStretch(1)
+
+    def set_images(self, image_paths: List[str]):
+        """
+        Set the list of images to display in the gallery.
+
+        Args:
+            image_paths: List of file paths
+        """
+        self.all_images = []
+
+        for path in image_paths:
+            # Get analysis status from database
+            status = 'unanalyzed'
+            analysis_info = None
+
+            if self.analysis_db:
+                analysis_info = self.analysis_db.get_analysis(path)
+                if analysis_info:
+                    status = 'analyzed'
+
+            # Extract filename and basic info
+            filename = os.path.basename(path)
+
+            # Get file modification time for sorting
+            try:
+                mod_time = os.path.getmtime(path)
+            except:
+                mod_time = 0
+
+            image_data = {
+                'file_path': path,
+                'filename': filename,
+                'status': status,
+                'mod_time': mod_time,
+                'document_type': analysis_info.get('document_type', '') if analysis_info else '',
+                'analysis_info': analysis_info
+            }
+
+            self.all_images.append(image_data)
+
+        # Apply initial sort and filter
+        self._apply_filters()
+
+    def _apply_filters(self):
+        """Apply search and sort filters to the image list"""
+        # Start with all images
+        filtered = list(self.all_images)
+
+        # Apply search filter
+        search_text = self.search_box.text().lower()
+        if search_text:
+            filtered = [img for img in filtered if search_text in img['filename'].lower()]
+
+        # Apply sort
+        sort_mode = self.sort_combo.currentText()
+        if sort_mode == "Date":
+            filtered.sort(key=lambda x: x['mod_time'], reverse=True)
+        elif sort_mode == "Name":
+            filtered.sort(key=lambda x: x['filename'])
+        elif sort_mode == "Type":
+            filtered.sort(key=lambda x: x['document_type'] or '')
+
+        self.filtered_images = filtered
+        self._refresh_list()
+
+    def _refresh_list(self):
+        """Refresh the QListWidget with current filtered images"""
+        self.image_list.clear()
+
+        for img_data in self.filtered_images:
+            item = QListWidgetItem()
+
+            # Create custom widget for the list item
+            item_widget = self._create_list_item_widget(img_data)
+
+            item.setSizeHint(item_widget.sizeHint())
+            self.image_list.addItem(item)
+            self.image_list.setItemWidget(item, item_widget)
+
+            # Store file path in item data
+            item.setData(Qt.ItemDataRole.UserRole, img_data['file_path'])
+
+        # Update count label
+        total = len(self.all_images)
+        showing = len(self.filtered_images)
+        self.count_label.setText(f"Showing: {showing} of {total}")
+
+        # Restore selection highlight
+        if self.current_file:
+            self._highlight_current()
+
+    def _create_list_item_widget(self, img_data: Dict) -> QWidget:
+        """
+        Create a custom widget for a list item showing checkbox, thumbnail, filename, and status.
+
+        Args:
+            img_data: Dictionary with image metadata
+
+        Returns:
+            QWidget containing the item UI
+        """
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)
+
+        # Checkbox
+        checkbox = QCheckBox()
+        checkbox.setChecked(img_data['file_path'] in self.checked_files)
+        checkbox.stateChanged.connect(
+            lambda state, path=img_data['file_path']: self._on_checkbox_changed(path, state)
+        )
+        checkbox.setStyleSheet("""
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+        """)
+        layout.addWidget(checkbox)
+
+        # Thumbnail (80x100px)
+        thumbnail_label = QLabel()
+        try:
+            pixmap = QPixmap(img_data['file_path'])
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(60, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                thumbnail_label.setPixmap(scaled)
+            else:
+                thumbnail_label.setText("No\nPreview")
+                thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        except:
+            thumbnail_label.setText("Error")
+            thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        thumbnail_label.setFixedSize(60, 80)
+        thumbnail_label.setStyleSheet("border: 1px solid #E5E7EB; background-color: #F9FAFB;")
+        layout.addWidget(thumbnail_label)
+
+        # Right side: filename and status
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(3)
+
+        # Filename
+        filename_label = QLabel(img_data['filename'])
+        filename_label.setStyleSheet("font-size: 9pt; font-weight: bold; color: #111827;")
+        filename_label.setWordWrap(True)
+        right_layout.addWidget(filename_label)
+
+        # Status badge
+        status = img_data['status']
+        if status == 'analyzed':
+            badge_text = "🟢 Analyzed"
+            badge_color = "#059669"
+        elif status == 'failed':
+            badge_text = "🔴 Failed"
+            badge_color = "#DC2626"
+        else:
+            badge_text = "⭘ Unanalyzed"
+            badge_color = "#6B7280"
+
+        status_label = QLabel(badge_text)
+        status_label.setStyleSheet(f"font-size: 8pt; color: {badge_color};")
+        right_layout.addWidget(status_label)
+
+        right_layout.addStretch(1)
+        layout.addLayout(right_layout, 1)
+
+        return widget
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        """Handle clicking on an image item"""
+        file_path = item.data(Qt.ItemDataRole.UserRole)
+        if file_path:
+            self.current_file = file_path
+            self.image_selected.emit(file_path)
+
+    def _on_checkbox_changed(self, file_path: str, state: int):
+        """Handle checkbox state change"""
+        checked = (state == Qt.CheckState.Checked.value)
+
+        if checked:
+            self.checked_files.add(file_path)
+        else:
+            self.checked_files.discard(file_path)
+
+        self.image_toggled.emit(file_path, checked)
+
+    def _on_search_changed(self, text: str):
+        """Handle search text change"""
+        self._apply_filters()
+
+    def _on_sort_changed(self, sort_mode: str):
+        """Handle sort mode change"""
+        self._apply_filters()
+
+    def _on_select_all(self):
+        """Select all visible images"""
+        for img_data in self.filtered_images:
+            self.checked_files.add(img_data['file_path'])
+        self._refresh_list()
+
+        # Emit signals for all checked files
+        for img_data in self.filtered_images:
+            self.image_toggled.emit(img_data['file_path'], True)
+
+    def _on_clear_selection(self):
+        """Clear all selections"""
+        # Store files that were checked
+        previously_checked = list(self.checked_files)
+
+        self.checked_files.clear()
+        self._refresh_list()
+
+        # Emit signals for all unchecked files
+        for file_path in previously_checked:
+            self.image_toggled.emit(file_path, False)
+
+    def _highlight_current(self):
+        """Highlight the currently selected item"""
+        for i in range(self.image_list.count()):
+            item = self.image_list.item(i)
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            if file_path == self.current_file:
+                self.image_list.setCurrentItem(item)
+                break
+
+    def set_current_file(self, file_path: str):
+        """Set the currently selected file (for external updates)"""
+        self.current_file = file_path
+        self._highlight_current()
+
+    def get_checked_files(self) -> List[str]:
+        """Get list of checked file paths"""
+        return list(self.checked_files)
+
+    def set_checked_files(self, file_paths: List[str]):
+        """Set which files are checked"""
+        self.checked_files = set(file_paths)
+        self._refresh_list()
+
+
+class MetadataDisplayWidget(QWidget):
+    """
+    Phase 4: Metadata Display Widget (Right Panel)
+    Shows AI analysis results, current bundle, and action buttons.
+    """
+    re_analyze_requested = pyqtSignal(str)  # file_path
+    thumbnail_clicked = pyqtSignal(str)  # file_path from bundle thumbnail
+
+    def __init__(self, analysis_db: 'AnalysisDB' = None, parent=None):
+        super().__init__(parent)
+        self.analysis_db = analysis_db
+        self.current_file_path = None
+        self.current_bundle_files = []  # List of file paths in current bundle
+        self._init_ui()
+
+    def _init_ui(self):
+        """Initialize the metadata display UI"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12)
+
+        # Create scroll area for metadata content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+        """)
+
+        # Container widget for scrollable content
+        scroll_content = QWidget()
+        self.content_layout = QVBoxLayout(scroll_content)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(12)
+
+        # === AI ANALYSIS CARD ===
+        self.analysis_card = self._create_analysis_card()
+        self.content_layout.addWidget(self.analysis_card)
+
+        # === CURRENT BUNDLE SECTION ===
+        self.bundle_card = self._create_bundle_card()
+        self.content_layout.addWidget(self.bundle_card)
+
+        self.content_layout.addStretch(1)
+
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area)
+
+    def _create_analysis_card(self) -> QWidget:
+        """Create the AI Analysis card"""
+        card = QWidget()
+        card.setStyleSheet("""
+            QWidget {
+                background-color: #F9FAFB;
+                border-radius: 6px;
+                border: 1px solid #E5E7EB;
+            }
+        """)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # Section title
+        title_label = QLabel("AI Analysis")
+        title_label.setStyleSheet("font-size: 12pt; font-weight: bold; color: #111827; background: transparent; border: none;")
+        layout.addWidget(title_label)
+
+        # Confidence badge
+        self.confidence_badge = QLabel("⭘ No Analysis")
+        self.confidence_badge.setStyleSheet("""
+            font-size: 10pt;
+            font-weight: bold;
+            color: #6B7280;
+            background: transparent;
+            border: none;
+            padding: 4px;
+        """)
+        layout.addWidget(self.confidence_badge)
+
+        # Metadata fields container
+        self.metadata_container = QWidget()
+        self.metadata_container.setStyleSheet("background: transparent; border: none;")
+        self.metadata_layout = QVBoxLayout(self.metadata_container)
+        self.metadata_layout.setContentsMargins(0, 8, 0, 0)
+        self.metadata_layout.setSpacing(6)
+
+        # Document Type
+        self.doc_type_label = QLabel("Document Type: --")
+        self.doc_type_label.setStyleSheet("font-size: 10pt; color: #374151; background: transparent; border: none;")
+        self.metadata_layout.addWidget(self.doc_type_label)
+
+        # Company
+        self.company_label = QLabel("Company: --")
+        self.company_label.setStyleSheet("font-size: 10pt; color: #374151; background: transparent; border: none;")
+        self.metadata_layout.addWidget(self.company_label)
+
+        # Date
+        self.date_label = QLabel("Date: --")
+        self.date_label.setStyleSheet("font-size: 10pt; color: #374151; background: transparent; border: none;")
+        self.metadata_layout.addWidget(self.date_label)
+
+        # Page number
+        self.page_label = QLabel("Page: --")
+        self.page_label.setStyleSheet("font-size: 10pt; color: #374151; background: transparent; border: none;")
+        self.metadata_layout.addWidget(self.page_label)
+
+        # Rotation status
+        self.rotation_label = QLabel("Rotation: --")
+        self.rotation_label.setStyleSheet("font-size: 10pt; color: #374151; background: transparent; border: none;")
+        self.metadata_layout.addWidget(self.rotation_label)
+
+        layout.addWidget(self.metadata_container)
+
+        # Re-analyze button
+        self.reanalyze_button = QPushButton("↻ Re-analyze")
+        self.reanalyze_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+        """)
+        self.reanalyze_button.clicked.connect(self._on_reanalyze_clicked)
+        layout.addWidget(self.reanalyze_button)
+
+        return card
+
+    def _create_bundle_card(self) -> QWidget:
+        """Create the Current Bundle card"""
+        card = QWidget()
+        card.setStyleSheet("""
+            QWidget {
+                background-color: #F9FAFB;
+                border-radius: 6px;
+                border: 1px solid #E5E7EB;
+            }
+        """)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # Section title
+        title_label = QLabel("Current Bundle")
+        title_label.setStyleSheet("font-size: 12pt; font-weight: bold; color: #111827; background: transparent; border: none;")
+        layout.addWidget(title_label)
+
+        # Bundle count label
+        self.bundle_count_label = QLabel("0 pages included")
+        self.bundle_count_label.setStyleSheet("font-size: 10pt; color: #6B7280; background: transparent; border: none;")
+        layout.addWidget(self.bundle_count_label)
+
+        # Scroll area for bundle thumbnails
+        bundle_scroll = QScrollArea()
+        bundle_scroll.setWidgetResizable(True)
+        bundle_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        bundle_scroll.setMaximumHeight(300)
+        bundle_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+        """)
+
+        # Container for thumbnails
+        self.bundle_thumbnails_container = QWidget()
+        self.bundle_thumbnails_container.setStyleSheet("background: transparent; border: none;")
+        self.bundle_thumbnails_layout = QVBoxLayout(self.bundle_thumbnails_container)
+        self.bundle_thumbnails_layout.setContentsMargins(0, 0, 0, 0)
+        self.bundle_thumbnails_layout.setSpacing(8)
+        self.bundle_thumbnails_layout.addStretch(1)
+
+        bundle_scroll.setWidget(self.bundle_thumbnails_container)
+        layout.addWidget(bundle_scroll)
+
+        return card
+
+    def _create_bundle_thumbnail_widget(self, file_path: str) -> QWidget:
+        """Create a thumbnail widget for a bundle file"""
+        widget = QWidget()
+        widget.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+            }
+            QWidget:hover {
+                background-color: #F3F4F6;
+                border: 1px solid #2563EB;
+            }
+        """)
+        widget.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Make widget clickable
+        widget.mousePressEvent = lambda event: self.thumbnail_clicked.emit(file_path)
+
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)
+
+        # Thumbnail
+        thumbnail_label = QLabel()
+        try:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(50, 70, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                thumbnail_label.setPixmap(scaled)
+            else:
+                thumbnail_label.setText("No\nPreview")
+                thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        except:
+            thumbnail_label.setText("Error")
+            thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        thumbnail_label.setFixedSize(50, 70)
+        thumbnail_label.setStyleSheet("border: 1px solid #E5E7EB; background-color: #F9FAFB;")
+        layout.addWidget(thumbnail_label)
+
+        # Filename
+        filename_label = QLabel(os.path.basename(file_path))
+        filename_label.setStyleSheet("font-size: 9pt; color: #111827; background: transparent; border: none;")
+        filename_label.setWordWrap(True)
+        layout.addWidget(filename_label, 1)
+
+        return widget
+
+    def set_current_file(self, file_path: str):
+        """
+        Update the display with metadata for the current file.
+
+        Args:
+            file_path: Path to the current file
+        """
+        self.current_file_path = file_path
+
+        if not self.analysis_db:
+            self._show_no_analysis()
+            return
+
+        # Get analysis from database
+        analysis = self.analysis_db.get_analysis(file_path)
+
+        if not analysis:
+            self._show_no_analysis()
+            return
+
+        # Update confidence badge
+        confidence_score = analysis.get('confidence_score')
+        if confidence_score is not None:
+            confidence_pct = int(confidence_score * 100)
+
+            # Color-code based on confidence
+            if confidence_score >= 0.8:
+                badge_color = "#059669"  # Green
+                badge_icon = "🟢"
+                confidence_level = "HIGH CONFIDENCE"
+            elif confidence_score >= 0.5:
+                badge_color = "#F59E0B"  # Yellow
+                badge_icon = "🟡"
+                confidence_level = "MEDIUM CONFIDENCE"
+            else:
+                badge_color = "#DC2626"  # Red
+                badge_icon = "🔴"
+                confidence_level = "LOW CONFIDENCE"
+
+            self.confidence_badge.setText(f"{badge_icon} {confidence_level} ({confidence_pct}%)")
+            self.confidence_badge.setStyleSheet(f"""
+                font-size: 10pt;
+                font-weight: bold;
+                color: {badge_color};
+                background: transparent;
+                border: none;
+                padding: 4px;
+            """)
+        else:
+            self.confidence_badge.setText("⭘ Confidence: Unknown")
+            self.confidence_badge.setStyleSheet("""
+                font-size: 10pt;
+                font-weight: bold;
+                color: #6B7280;
+                background: transparent;
+                border: none;
+                padding: 4px;
+            """)
+
+        # Update metadata fields
+        doc_type = analysis.get('document_type', '--')
+        self.doc_type_label.setText(f"Document Type: {doc_type}")
+
+        company = analysis.get('company', '--')
+        self.company_label.setText(f"Company: {company}")
+
+        doc_date = analysis.get('document_date', '--')
+        self.date_label.setText(f"Date: {doc_date}")
+
+        # Page number
+        page_num = analysis.get('page_number')
+        total_pages = analysis.get('total_pages')
+        if page_num and total_pages:
+            self.page_label.setText(f"Page: {page_num} of {total_pages}")
+        elif page_num:
+            self.page_label.setText(f"Page: {page_num}")
+        else:
+            self.page_label.setText("Page: --")
+
+        # Rotation status
+        rotation_needed = analysis.get('rotation_needed', False)
+        suggested_rotation = analysis.get('suggested_rotation', 0)
+        if rotation_needed and suggested_rotation:
+            self.rotation_label.setText(f"Rotation: {suggested_rotation}° suggested")
+            self.rotation_label.setStyleSheet("font-size: 10pt; color: #F59E0B; background: transparent; border: none;")
+        else:
+            self.rotation_label.setText("Rotation: None needed ✓")
+            self.rotation_label.setStyleSheet("font-size: 10pt; color: #059669; background: transparent; border: none;")
+
+    def _show_no_analysis(self):
+        """Show placeholder when no analysis data is available"""
+        self.confidence_badge.setText("⭘ No Analysis Data")
+        self.confidence_badge.setStyleSheet("""
+            font-size: 10pt;
+            font-weight: bold;
+            color: #6B7280;
+            background: transparent;
+            border: none;
+            padding: 4px;
+        """)
+
+        self.doc_type_label.setText("Document Type: --")
+        self.company_label.setText("Company: --")
+        self.date_label.setText("Date: --")
+        self.page_label.setText("Page: --")
+        self.rotation_label.setText("Rotation: --")
+        self.rotation_label.setStyleSheet("font-size: 10pt; color: #374151; background: transparent; border: none;")
+
+    def set_bundle_files(self, file_paths: List[str]):
+        """
+        Update the bundle display with the current bundle files.
+
+        Args:
+            file_paths: List of file paths in the current bundle
+        """
+        self.current_bundle_files = file_paths
+
+        # Update count label
+        count = len(file_paths)
+        self.bundle_count_label.setText(f"{count} page{'s' if count != 1 else ''} included")
+
+        # Clear existing thumbnails
+        while self.bundle_thumbnails_layout.count() > 1:  # Keep the stretch
+            item = self.bundle_thumbnails_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Add new thumbnails
+        for file_path in file_paths:
+            thumbnail_widget = self._create_bundle_thumbnail_widget(file_path)
+            self.bundle_thumbnails_layout.insertWidget(self.bundle_thumbnails_layout.count() - 1, thumbnail_widget)
+
+    def _on_reanalyze_clicked(self):
+        """Handle re-analyze button click"""
+        if self.current_file_path:
+            self.re_analyze_requested.emit(self.current_file_path)
+
+
 class ConvertImagesWindow(QMainWindow):
     processing_finished = pyqtSignal()
 
@@ -782,6 +1560,9 @@ class ConvertImagesWindow(QMainWindow):
         width = int(self.config_manager.get_setting('GUI', 'window_width', '1024'))
         height = int(self.config_manager.get_setting('GUI', 'window_height', '768'))
         self.setGeometry(100, 100, width, height)
+
+        # Phase 2: Set minimum window size for three-column layout
+        self.setMinimumSize(1200, 700)
 
         # Workflow state
         self.current_step = WorkflowStep.BUNDLE_SUGGESTIONS  # Phase 7: Start with bundle suggestions
@@ -921,26 +1702,44 @@ class ConvertImagesWindow(QMainWindow):
         self.main_layout.addWidget(self.bundle_suggestions_view)
 
         # ===== MAIN CONTENT AREA (dynamic based on step) =====
-        self.content_layout = QHBoxLayout()
+        # Phase 2: Use QSplitter for resizable three-column layout
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)  # Prevent panels from collapsing completely
+        self.content_splitter.setHandleWidth(8)  # Space between panels
+        self.content_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #E5E7EB;
+            }
+            QSplitter::handle:hover {
+                background-color: #D1D5DB;
+            }
+        """)
 
         # LEFT PANEL (changes per step)
         self.left_panel = QWidget()
         self.left_panel_layout = QVBoxLayout(self.left_panel)
         self.left_panel_layout.setContentsMargins(5, 5, 5, 5)
-        self.content_layout.addWidget(self.left_panel)
+        self.content_splitter.addWidget(self.left_panel)
 
         # CENTER: Large Page Preview with Zoom Controls
         # Create a container for the preview and zoom buttons
         preview_container = QWidget()
+        preview_container.setStyleSheet("""
+            QWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+            }
+        """)
         preview_layout = QVBoxLayout(preview_container)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setContentsMargins(12, 12, 12, 12)
         preview_layout.setSpacing(0)
 
         self.large_preview_label = QLabel()
         self.large_preview_label.setFrameShape(QFrame.Shape.Box)
         self.large_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.large_preview_label.setStyleSheet("background-color: #f0f0f0; border: 2px solid #ccc;")
-        self.large_preview_label.setMinimumSize(400, 500)
+        self.large_preview_label.setStyleSheet("background-color: #F9FAFB; border: 1px solid #E5E7EB;")
+        self.large_preview_label.setMinimumSize(600, 500)  # Phase 2: Increased min width to 600px
         self.large_preview_label.setScaledContents(False)
 
         # Install event filter for mouse wheel zoom
@@ -952,15 +1751,26 @@ class ConvertImagesWindow(QMainWindow):
         # Create zoom control buttons (overlaid on top-right)
         self._setup_zoom_controls()
 
-        self.content_layout.addWidget(preview_container, stretch=1)
+        self.content_splitter.addWidget(preview_container)
 
         # RIGHT PANEL (changes per step)
         self.right_panel = QWidget()
         self.right_panel_layout = QVBoxLayout(self.right_panel)
         self.right_panel_layout.setContentsMargins(5, 5, 5, 5)
-        self.content_layout.addWidget(self.right_panel)
+        self.content_splitter.addWidget(self.right_panel)
 
-        self.main_layout.addLayout(self.content_layout)
+        # Phase 2: Set splitter proportions (left: 250, center: flexible, right: 350)
+        # Initial sizes will be set based on window width
+        self.content_splitter.setStretchFactor(0, 0)  # Left panel: no stretch
+        self.content_splitter.setStretchFactor(1, 1)  # Center panel: takes remaining space
+        self.content_splitter.setStretchFactor(2, 0)  # Right panel: no stretch
+
+        # Set initial sizes for panels (will be applied after window is shown)
+        # Left: 250px, Center: remaining, Right: 350px
+        QTimer.singleShot(0, self._apply_initial_splitter_sizes)
+
+        # Add splitter to main layout
+        self.main_layout.addWidget(self.content_splitter)
 
         # ===== STATUS BAR (persistent) =====
         status_bar_layout = QHBoxLayout()
@@ -1415,6 +2225,17 @@ class ConvertImagesWindow(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
+    def _apply_initial_splitter_sizes(self):
+        """Apply initial sizes to splitter panels (Phase 2)"""
+        # Calculate sizes: left=250, right=350, center=remaining
+        total_width = self.width()
+        left_width = 250
+        right_width = 350
+        center_width = max(600, total_width - left_width - right_width - 16)  # 16 for handle widths
+
+        # Set sizes
+        self.content_splitter.setSizes([left_width, center_width, right_width])
+
     def _setup_loading_ui(self):
         """Show full-window loading animation while importing scans"""
         # Update header
@@ -1488,7 +2309,9 @@ class ConvertImagesWindow(QMainWindow):
             self.loading_spinner_index = (self.loading_spinner_index + 1) % len(self.loading_spinner_frames)
 
     def _setup_step1_ui(self):
-        """Step 1: Document Stitching - page-by-page inclusion with spinner and buttons"""
+        """Step 1: Document Stitching - page-by-page inclusion with spinner and buttons
+        Phase 2: Three-column layout with left (250px), center (fluid, min 600px), right (350px)
+        """
         self.current_step = WorkflowStep.STITCHING
         self.current_ollama_prompt = None  # Store current prompt for tooltip/clipboard
         self.page_states = {}  # Track included/excluded state for each page
@@ -1521,18 +2344,72 @@ class ConvertImagesWindow(QMainWindow):
         self._clear_panel(self.left_panel_layout)
         self._clear_panel(self.right_panel_layout)
 
-        # LEFT PANEL: Hide it for Step 1
-        self.left_panel.setVisible(False)
+        # Phase 2: Configure three-column layout
+        # LEFT PANEL: Fixed 250px width
+        self.left_panel.setVisible(True)
+        self.left_panel.setFixedWidth(250)
+        self.left_panel.setStyleSheet("""
+            QWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+            }
+        """)
+        self.left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_panel_layout.setSpacing(0)
 
-        # RIGHT PANEL: Show for buttons
+        # LEFT PANEL: Phase 3 - Image Gallery Widget
+        self.image_gallery = ImageGalleryWidget(analysis_db=self.analysis_db, parent=self.left_panel)
+        self.image_gallery.image_selected.connect(self._on_gallery_image_selected)
+        self.image_gallery.image_toggled.connect(self._on_gallery_image_toggled)
+        self.image_gallery.setStyleSheet("background: transparent; border: none;")
+        self.left_panel_layout.addWidget(self.image_gallery)
+
+        # Populate image gallery with current files
+        if hasattr(self, 'all_files') and self.all_files:
+            self.image_gallery.set_images(self.all_files)
+            # Set checked files based on current_group
+            if hasattr(self, 'current_group') and self.current_group:
+                self.image_gallery.set_checked_files(self.current_group)
+
+        # CENTER PANEL: Already configured in _init_ui with minimum width 600px
+
+        # RIGHT PANEL: Fixed 350px width
         self.right_panel.setVisible(True)
+        self.right_panel.setFixedWidth(350)
+        self.right_panel.setStyleSheet("""
+            QWidget {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+            }
+        """)
+        self.right_panel_layout.setContentsMargins(12, 12, 12, 12)
+        self.right_panel_layout.setSpacing(8)
 
-        # RIGHT PANEL: Dynamic Include/Exclude/Abort buttons
-        self.right_panel.setFixedWidth(200)
+        # RIGHT PANEL: Phase 4 - Metadata Display Widget
+        self.metadata_display = MetadataDisplayWidget(analysis_db=self.analysis_db, parent=self.right_panel)
+        self.metadata_display.re_analyze_requested.connect(self._on_metadata_reanalyze)
+        self.metadata_display.thumbnail_clicked.connect(self._on_bundle_thumbnail_clicked)
+        self.metadata_display.setStyleSheet("background: transparent; border: none;")
+        self.right_panel_layout.addWidget(self.metadata_display)
+
+        # Update metadata display if we have a current page
+        if hasattr(self, 'current_page_path') and self.current_page_path:
+            self.metadata_display.set_current_file(self.current_page_path)
+        if hasattr(self, 'current_group') and self.current_group:
+            self.metadata_display.set_bundle_files(self.current_group)
+
+        # Actions section below metadata display
+        actions_label = QLabel("Actions")
+        actions_label.setStyleSheet("font-size: 12pt; font-weight: bold; color: #111827; background: transparent; border: none;")
+        self.right_panel_layout.addWidget(actions_label)
 
         button_container = QWidget()
+        button_container.setStyleSheet("background: transparent; border: none;")
         button_layout = QVBoxLayout(button_container)
-        button_layout.addStretch(1)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(10)
 
         # Cancel Request button (cancels current Ollama operation) - TOP POSITION
         self.cancel_request_button = QPushButton("Cancel\nRequest")
@@ -2597,6 +3474,11 @@ class ConvertImagesWindow(QMainWindow):
             # Add to thumbnail strip (first page is auto-included)
             self._add_thumbnail(next_file, 'included')
 
+            # Phase 4: Update metadata display
+            if hasattr(self, 'metadata_display'):
+                self.metadata_display.set_current_file(next_file)
+                self.metadata_display.set_bundle_files(self.current_group)
+
             files_remaining = len(self.all_files) - self.current_file_index
             self.status_label.setText(f"Started new group. Page 1 added. ({files_remaining} files remaining)")
 
@@ -2882,6 +3764,10 @@ Files being sent to Ollama:
             if self.current_page_path not in self.current_group:
                 self.current_group.append(self.current_page_path)
 
+            # Phase 4: Update metadata display
+            if hasattr(self, 'metadata_display'):
+                self.metadata_display.set_bundle_files(self.current_group)
+
             self.status_label.setText(f"Page marked as included. Group has {len(self.current_group)} page(s).")
 
             # Load next page to continue
@@ -2896,6 +3782,10 @@ Files being sent to Ollama:
             self._update_thumbnail_state(self.current_page_path, 'included')
             self._display_page_in_large_preview(self.current_page_path)
 
+            # Phase 4: Update metadata display
+            if hasattr(self, 'metadata_display'):
+                self.metadata_display.set_bundle_files(self.current_group)
+
             files_remaining = len(self.all_files) - self.current_file_index
             self.status_label.setText(f"✓ Page included. Group has {len(self.current_group)} page(s). ({files_remaining} remaining)")
 
@@ -2905,6 +3795,74 @@ Files being sent to Ollama:
             else:
                 # No more files - need to explicitly end stitching
                 self.status_label.setText("All pages processed. Click Exclude to finish stitching.")
+
+    def _on_gallery_image_selected(self, file_path: str):
+        """Handle image selection from gallery (Phase 3)"""
+        # Display the selected image in the center preview
+        self.current_page_path = file_path
+        self._display_page_in_large_preview(file_path)
+
+        # Update the current index
+        if file_path in self.all_files:
+            self.current_file_index = self.all_files.index(file_path)
+
+        # Update the image gallery to highlight this file
+        if hasattr(self, 'image_gallery'):
+            self.image_gallery.set_current_file(file_path)
+
+        # Phase 4: Update metadata display with current file
+        if hasattr(self, 'metadata_display'):
+            self.metadata_display.set_current_file(file_path)
+
+        self.status_label.setText(f"Viewing: {os.path.basename(file_path)}")
+
+    def _on_gallery_image_toggled(self, file_path: str, checked: bool):
+        """Handle image checkbox toggle from gallery (Phase 3)"""
+        if checked:
+            # Add to current group if not already present
+            if file_path not in self.current_group:
+                self.current_group.append(file_path)
+                self._update_thumbnail_state(file_path, 'included')
+                self.status_label.setText(f"✓ {os.path.basename(file_path)} added to group. Group has {len(self.current_group)} page(s).")
+        else:
+            # Remove from current group
+            if file_path in self.current_group:
+                self.current_group.remove(file_path)
+                self._update_thumbnail_state(file_path, 'excluded')
+                self.status_label.setText(f"✗ {os.path.basename(file_path)} removed from group. Group has {len(self.current_group)} page(s).")
+
+        # Phase 4: Update metadata display with current bundle
+        if hasattr(self, 'metadata_display'):
+            self.metadata_display.set_bundle_files(self.current_group)
+
+    def _on_metadata_reanalyze(self, file_path: str):
+        """Handle re-analyze request from metadata display (Phase 4)"""
+        # TODO: Implement re-analysis functionality
+        # This would trigger a new analysis for the specific file
+        self.status_label.setText(f"Re-analysis requested for {os.path.basename(file_path)}")
+        QMessageBox.information(
+            self,
+            "Re-analyze",
+            f"Re-analysis functionality will be implemented in a future phase.\n\nFile: {os.path.basename(file_path)}"
+        )
+
+    def _on_bundle_thumbnail_clicked(self, file_path: str):
+        """Handle clicking on a bundle thumbnail (Phase 4)"""
+        # Jump to the clicked page in the gallery and display it
+        if file_path in self.all_files:
+            self.current_file_index = self.all_files.index(file_path)
+            self.current_page_path = file_path
+            self._display_page_in_large_preview(file_path)
+
+            # Update gallery selection
+            if hasattr(self, 'image_gallery'):
+                self.image_gallery.set_current_file(file_path)
+
+            # Update metadata display
+            if hasattr(self, 'metadata_display'):
+                self.metadata_display.set_current_file(file_path)
+
+            self.status_label.setText(f"Viewing: {os.path.basename(file_path)}")
 
     def _on_finish_group(self):
         """User clicked Finish Group button - finalize current group and move to Step 2"""
@@ -2949,6 +3907,10 @@ Files being sent to Ollama:
         # Remove from group if it was added
         if self.current_page_path in self.current_group:
             self.current_group.remove(self.current_page_path)
+
+        # Phase 4: Update metadata display
+        if hasattr(self, 'metadata_display'):
+            self.metadata_display.set_bundle_files(self.current_group)
 
         # Update buttons based on new state
         self._update_step1_buttons_for_state('excluded')
@@ -3197,6 +4159,10 @@ Files being sent to Ollama:
 
         self.large_preview_label.setPixmap(scaled_pixmap)
         self.large_preview_label.setStyleSheet("background-color: #ffffff; border: 2px solid #2563EB;")
+
+        # Phase 4: Update metadata display when displaying a page
+        if hasattr(self, 'metadata_display') and self.current_step == WorkflowStep.STITCHING:
+            self.metadata_display.set_current_file(image_path)
 
         # Add or update status overlay indicator
         if show_indicator and self.current_step == WorkflowStep.STITCHING:
