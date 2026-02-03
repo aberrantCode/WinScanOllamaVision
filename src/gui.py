@@ -6098,6 +6098,7 @@ class StartupWindow(QWidget):
         def log(msg):
             with open("app.log", "a") as f:
                 f.write(f"{msg}\n")
+                f.flush()  # Ensure log is written immediately
 
         analysis_db = AnalysisDB()
 
@@ -6136,7 +6137,9 @@ class StartupWindow(QWidget):
         # Show welcome dialog if many unanalyzed files
         if unanalyzed_count > 0:
             log(f"[DEBUG] Showing dialog for {unanalyzed_count} unanalyzed files")
+            log(f"[DEBUG] Window visible: {self.isVisible()}, Window active: {self.isActiveWindow()}")
             try:
+                log(f"[DEBUG] ENTERED TRY BLOCK")
                 # Estimate time (rough estimate: 3 seconds per page)
                 estimated_minutes = (unanalyzed_count * 3) // 60
                 time_estimate = f"{estimated_minutes} minutes" if estimated_minutes > 0 else "less than a minute"
