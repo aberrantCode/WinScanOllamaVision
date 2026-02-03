@@ -847,11 +847,24 @@ class FileDetailsDialog(QDialog):
         confidence = self.file_data.get('confidence_score')
         processing_time = self.file_data.get('processing_time_ms', 0)
 
-        analysis_info = f"""<b>Analysis Information:</b><br>
+        # Build confidence string
+        if confidence is not None:
+            confidence_str = f"{confidence*100:.0f}%"
+        else:
+            confidence_str = "N/A"
+
+        # Check if this is a failed file
+        if self.file_data.get('status') == 'Failed':
+            error_msg = self.file_data.get('error_message', 'Unknown error')
+            analysis_info = f"""<b>Analysis Information:</b><br>
+• Failed: {analyzed_at}<br>
+• Error: {error_msg}<br>"""
+        else:
+            analysis_info = f"""<b>Analysis Information:</b><br>
 • Analyzed: {analyzed_at}<br>
 • Provider: {provider} ({model})<br>
 • Processing Time: {processing_time/1000:.2f} seconds<br>
-• Confidence: {confidence*100:.0f}% if confidence else 'N/A'"""
+• Confidence: {confidence_str}"""
 
         info_label = QLabel(analysis_info)
         info_label.setWordWrap(True)

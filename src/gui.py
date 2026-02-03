@@ -5866,8 +5866,17 @@ class StartupWindow(QWidget):
 
     def show_analysis_status(self):
         """Show the Analysis Status window"""
+        # Mark that user is viewing the status window
+        self._user_viewing_status = True
+
         status_window = AnalysisStatusWindow(self, self.analysis_service)
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        # When window closes, reset flag
+        def on_close():
+            self._user_viewing_status = False
+        status_window.finished.connect(on_close)
+
         status_window.show()
 
         # Keep reference to prevent garbage collection
@@ -5969,8 +5978,11 @@ class StartupWindow(QWidget):
         # Update scanner stats
         self._update_scanner_stats()
 
-        # Auto-dismiss after 5 seconds
-        QTimer.singleShot(5000, self.progress_banner.hide)
+        # Auto-dismiss after 5 seconds (unless user is viewing the status window)
+        def maybe_hide_banner():
+            if not hasattr(self, '_user_viewing_status') or not self._user_viewing_status:
+                self.progress_banner.hide()
+        QTimer.singleShot(5000, maybe_hide_banner)
 
         self.analysis_worker = None
 
