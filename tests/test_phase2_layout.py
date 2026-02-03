@@ -20,6 +20,12 @@ def test_three_column_layout():
     """Test that three-column layout is properly configured"""
     app = QApplication(sys.argv)
     window = ConvertImagesWindow()
+    window.show()
+    app.processEvents()  # Process pending events
+
+    # Manually trigger splitter sizing for test
+    window._apply_initial_splitter_sizes()
+    app.processEvents()  # Process any layout changes
 
     # Verify minimum window size
     min_size = window.minimumSize()
@@ -55,6 +61,11 @@ def test_three_column_layout():
     # Verify panels are not collapsible
     assert not window.content_splitter.childrenCollapsible(), "Panels should not be collapsible"
     print("✓ Panels are not collapsible")
+
+    # Verify fixed widths are set
+    assert window.left_panel.width() == 250, f"Left panel fixed width should be 250, got {window.left_panel.width()}"
+    assert window.right_panel.width() == 350, f"Right panel fixed width should be 350, got {window.right_panel.width()}"
+    print(f"✓ Fixed widths set: left={window.left_panel.width()}px, right={window.right_panel.width()}px")
 
     print("\n✅ All Phase 2 layout tests passed!")
     print("\nNote: Run main.py to visually verify the three-column layout.")

@@ -1717,8 +1717,11 @@ class ConvertImagesWindow(QMainWindow):
 
         # LEFT PANEL (changes per step)
         self.left_panel = QWidget()
+        self.left_panel.setFixedWidth(250)  # Phase 2: Fixed width
         self.left_panel_layout = QVBoxLayout(self.left_panel)
         self.left_panel_layout.setContentsMargins(5, 5, 5, 5)
+        # Add spacer to ensure panel has content
+        self.left_panel_layout.addStretch()
         self.content_splitter.addWidget(self.left_panel)
 
         # CENTER: Large Page Preview with Zoom Controls
@@ -1755,19 +1758,28 @@ class ConvertImagesWindow(QMainWindow):
 
         # RIGHT PANEL (changes per step)
         self.right_panel = QWidget()
+        self.right_panel.setFixedWidth(350)  # Phase 2: Fixed width
         self.right_panel_layout = QVBoxLayout(self.right_panel)
         self.right_panel_layout.setContentsMargins(5, 5, 5, 5)
+        # Add spacer to ensure panel has content
+        self.right_panel_layout.addStretch()
         self.content_splitter.addWidget(self.right_panel)
+
+        # Phase 2: Explicitly prevent each widget from collapsing (must be done after widgets added)
+        self.content_splitter.setCollapsible(0, False)  # Left panel
+        self.content_splitter.setCollapsible(1, False)  # Center panel
+        self.content_splitter.setCollapsible(2, False)  # Right panel
 
         # Phase 2: Set splitter proportions (left: 250, center: flexible, right: 350)
         # Initial sizes will be set based on window width
-        self.content_splitter.setStretchFactor(0, 0)  # Left panel: no stretch
-        self.content_splitter.setStretchFactor(1, 1)  # Center panel: takes remaining space
-        self.content_splitter.setStretchFactor(2, 0)  # Right panel: no stretch
+        # Use minimum stretch for fixed panels, higher for flexible center
+        self.content_splitter.setStretchFactor(0, 1)  # Left panel: minimal stretch
+        self.content_splitter.setStretchFactor(1, 3)  # Center panel: takes most extra space
+        self.content_splitter.setStretchFactor(2, 1)  # Right panel: minimal stretch
 
         # Set initial sizes for panels (will be applied after window is shown)
         # Left: 250px, Center: remaining, Right: 350px
-        QTimer.singleShot(0, self._apply_initial_splitter_sizes)
+        QTimer.singleShot(100, self._apply_initial_splitter_sizes)
 
         # Add splitter to main layout
         self.main_layout.addWidget(self.content_splitter)
@@ -2538,14 +2550,21 @@ class ConvertImagesWindow(QMainWindow):
 
     def _apply_initial_splitter_sizes(self):
         """Apply initial sizes to splitter panels (Phase 2)"""
-        # Calculate sizes: left=250, right=350, center=remaining
-        total_width = self.width()
+        # Calculate sizes based on splitter's actual width
+        splitter_width = self.content_splitter.width()
         left_width = 250
         right_width = 350
-        center_width = max(600, total_width - left_width - right_width - 16)  # 16 for handle widths
+        # Center gets remaining space, but ensure it's at least 600px
+        center_width = splitter_width - left_width - right_width
+        if center_width < 600:
+            # If not enough space, reduce side panels
+            center_width = 600
+            left_width = (splitter_width - 600) // 2
+            right_width = splitter_width - 600 - left_width
 
-        # Set sizes
-        self.content_splitter.setSizes([left_width, center_width, right_width])
+        # Try moving splitter handles manually
+        self.content_splitter.moveSplitter(left_width, 1)  # Move first handle to left_width position
+        self.content_splitter.moveSplitter(left_width + center_width, 2)  # Move second handle
 
     def _setup_loading_ui(self):
         """Show full-window loading animation while importing scans"""
