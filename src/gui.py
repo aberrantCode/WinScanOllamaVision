@@ -5648,10 +5648,10 @@ class StartupWindow(QWidget):
         center_layout.addLayout(content_layout)
 
         # Create clickable scanner container with stats
-        scanner_container = QWidget()
-        scanner_container.setCursor(Qt.CursorShape.PointingHandCursor)
-        scanner_container.setMaximumHeight(500)  # Limit height to prevent squishing
-        scanner_container.setStyleSheet("""
+        self.scanner_container = QWidget()
+        self.scanner_container.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Don't set max height here - we'll adjust it dynamically
+        self.scanner_container.setStyleSheet("""
             QWidget {
                 background-color: rgba(255, 255, 255, 0.1);
                 border-radius: 10px;
@@ -5661,9 +5661,9 @@ class StartupWindow(QWidget):
                 background-color: rgba(255, 255, 255, 0.2);
             }
         """)
-        scanner_container.mousePressEvent = lambda event: self.show_analysis_status()
+        self.scanner_container.mousePressEvent = lambda event: self.show_analysis_status()
 
-        scanner_layout = QVBoxLayout(scanner_container)
+        scanner_layout = QVBoxLayout(self.scanner_container)
         scanner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         scanner_layout.setSpacing(10)  # Reduced from 15 to save space
 
@@ -5743,7 +5743,7 @@ class StartupWindow(QWidget):
         # Load initial stats
         self._update_scanner_stats()
 
-        content_layout.addWidget(scanner_container, 1)
+        content_layout.addWidget(self.scanner_container, 1)
             
         button_layout = QVBoxLayout()
         button_layout.setSpacing(15)
@@ -5878,10 +5878,12 @@ class StartupWindow(QWidget):
         status_window = AnalysisStatusWindow(self, self.analysis_service)
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        # When window closes, hide the banner
+        # When window closes, hide the banner and restore scanner size
         def on_close():
             if hasattr(self, 'progress_banner'):
                 self.progress_banner.hide()
+            if hasattr(self, 'scanner_container'):
+                self.scanner_container.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
         status_window.finished.connect(on_close)
 
         status_window.show()
@@ -5914,6 +5916,10 @@ class StartupWindow(QWidget):
         # Show progress banner
         self.progress_banner.setVisible(True)
         self.progress_banner.update_progress(0, 0, "Starting analysis...")
+
+        # Shrink scanner container to make room for banner
+        if hasattr(self, 'scanner_container'):
+            self.scanner_container.setMaximumHeight(350)
 
         # Start scanner animation
         self._update_scanner_animation(True)
