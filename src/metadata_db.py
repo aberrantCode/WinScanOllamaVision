@@ -32,6 +32,10 @@ class MetadataDB:
         self._connect()
         self._create_tables()
 
+        # Initialize field history cache
+        self._companies_cache = None
+        self._titles_cache = None
+
     def _connect(self):
         """Establish database connection"""
         self.connection = sqlite3.connect(self.db_path)
@@ -351,6 +355,9 @@ class MetadataDB:
             json.dumps(document_metadata.get('additional', {}))
         ))
 
+        # Invalidate field history cache after archiving
+        self.invalidate_field_history_cache()
+
         self.connection.commit()
 
         # Optionally delete active metadata for archived files
@@ -511,6 +518,67 @@ class MetadataDB:
             return result[0]
 
         return 0  # Default: no rotation
+
+    def get_unique_companies(self, use_cache: bool = True) -> List[str]:
+        """
+        Get list of unique company names from archived documents.
+
+        Args:
+            use_cache: If True, use cached results if available
+
+        Returns:
+            Alphabetically sorted list of unique company names
+        """
+        if use_cache and self._companies_cache:
+            return self._companies_cache
+
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT DISTINCT company
+            FROM archived_metadata
+            WHERE company IS NOT NULL AND company != ''
+            ORDER BY company COLLATE NOCASE
+        """)
+
+        companies = [row[0] for row in cursor.fetchall()]
+
+        if use_cache:
+            self._companies_cache = companies
+
+        return companies
+
+    def get_unique_titles(self, use_cache: bool = True) -> List[str]:
+        """
+        Get list of unique document titles from archived documents.
+
+        Args:
+            use_cache: If True, use cached results if available
+
+        Returns:
+            Alphabetically sorted list of unique document titles
+        """
+        if use_cache and self._titles_cache:
+            return self._titles_cache
+
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT DISTINCT document_type
+            FROM archived_metadata
+            WHERE document_type IS NOT NULL AND document_type != ''
+            ORDER BY document_type COLLATE NOCASE
+        """)
+
+        titles = [row[0] for row in cursor.fetchall()]
+
+        if use_cache:
+            self._titles_cache = titles
+
+        return titles
+
+    def invalidate_field_history_cache(self) -> None:
+        """Invalidate cached field history results after archiving new documents."""
+        self._companies_cache = None
+        self._titles_cache = None
 
     def close(self):
         """Close database connection"""

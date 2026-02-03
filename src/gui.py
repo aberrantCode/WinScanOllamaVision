@@ -20,7 +20,6 @@ except ImportError:
 from config_manager import ConfigManager
 from ollama_service import OllamaService
 from file_processor import FileProcessor
-from field_history import FieldHistory
 from metadata_db import MetadataDB
 from settings_window_enhanced import EnhancedSettingsWindow
 from bundle_widgets import BundleSuggestionsView
@@ -1004,7 +1003,6 @@ class ConvertImagesWindow(QMainWindow):
             timeout=timeout
         )
         self.file_processor = FileProcessor(self.config_manager)
-        self.field_history = FieldHistory()
         self.metadata_db = MetadataDB()  # Initialize metadata database for caching
 
         # Phase 7: Bundle suggestion services
@@ -1956,7 +1954,7 @@ class ConvertImagesWindow(QMainWindow):
         self.company_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.company_edit.lineEdit().setPlaceholderText("Company name...")
         # Populate with history
-        companies = self.field_history.get_companies()
+        companies = self.metadata_db.get_unique_companies()
         self.company_edit.addItems(companies)
         self.company_edit.setCurrentText("")  # Start empty
         self.left_panel_layout.addWidget(self.company_edit)
@@ -1970,7 +1968,7 @@ class ConvertImagesWindow(QMainWindow):
         self.title_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.title_edit.lineEdit().setPlaceholderText("Document title...")
         # Populate with history
-        titles = self.field_history.get_titles()
+        titles = self.metadata_db.get_unique_titles()
         self.title_edit.addItems(titles)
         self.title_edit.setCurrentText("")  # Start empty
         self.left_panel_layout.addWidget(self.title_edit)
@@ -3940,10 +3938,6 @@ Files being sent to Ollama:
             QMessageBox.warning(self, "Missing Information", "Please enter a Document Title.")
             return
 
-        # Save to history
-        self.field_history.add_company(company)
-        self.field_history.add_title(title)
-
         # Update extracted metadata with user edits
         self.extracted_metadata = {
             'company': company,
@@ -4589,7 +4583,12 @@ class StartupWindow(QWidget):
 
     def show_settings_window(self):
         settings_window = EnhancedSettingsWindow(self)
-        settings_window.exec()
+        settings_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        settings_window.setWindowModality(Qt.WindowModality.ApplicationModal)
+        settings_window.show()
+
+        # Keep reference to prevent garbage collection
+        self._settings_window = settings_window
 
     def quit_application(self):
         """Handle Quit button click with confirmation"""
