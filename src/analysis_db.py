@@ -194,6 +194,47 @@ class AnalysisDB:
             )
         """)
 
+        # Analysis runs - track each analysis run
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT UNIQUE NOT NULL,
+
+                -- Run statistics
+                total_files INTEGER NOT NULL,
+                analyzed INTEGER DEFAULT 0,
+                cached INTEGER DEFAULT 0,
+                errors INTEGER DEFAULT 0,
+                skipped INTEGER DEFAULT 0,
+
+                -- Timing
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                duration_ms INTEGER,
+
+                -- Status
+                status TEXT DEFAULT 'running'
+            )
+        """)
+
+        # Analysis errors - track individual file failures
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+
+                -- Error details
+                error_message TEXT,
+                error_type TEXT,
+
+                -- Timestamp
+                error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id)
+            )
+        """)
+
         # Create indices for performance
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_analysis_file_path
@@ -782,8 +823,6 @@ class AnalysisDB:
         """
         Get recent analysis runs with aggregated statistics.
 
-        Groups analyses by timestamp proximity (within 5 minutes = same run).
-
         Args:
             limit: Maximum number of runs to return
 
@@ -796,96 +835,54 @@ class AnalysisDB:
                 - cached: Number of cached files
                 - errors: Number of failed files
                 - duration_seconds: Run duration in seconds
-                - status: 'success', 'partial', or 'failed'
+                - status: 'success', 'partial', 'failed', or 'running'
         """
         cursor = self.connection.cursor()
 
-        # Get all analyses ordered by time
+        # Get runs from the new analysis_runs table
         cursor.execute("""
             SELECT
-                id,
-                analyzed_at,
-                processing_time_ms,
-                is_cached,
-                confidence_score
-            FROM analysis_results
-            ORDER BY analyzed_at DESC
-        """)
+                run_id,
+                total_files,
+                analyzed,
+                cached,
+                errors,
+                skipped,
+                started_at as timestamp,
+                completed_at,
+                duration_ms,
+                status
+            FROM analysis_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+        """, (limit,))
 
         rows = cursor.fetchall()
 
-        if not rows:
-            return []
-
-        # Group analyses into runs (within 5 minutes = same run)
         runs = []
-        current_run = None
-        run_time_threshold = 300  # 5 minutes in seconds
-
         for row in rows:
-            analyzed_at = datetime.fromisoformat(row['analyzed_at'])
+            run = dict(row)
 
-            if current_run is None:
-                # Start new run
-                current_run = {
-                    'run_id': len(runs) + 1,
-                    'timestamp': row['analyzed_at'],
-                    'start_time': analyzed_at,
-                    'end_time': analyzed_at,
-                    'total_files': 1,
-                    'analyzed': 0 if row['is_cached'] else 1,
-                    'cached': 1 if row['is_cached'] else 0,
-                    'errors': 0,
-                    'duration_seconds': 0,
-                    'status': 'success'
-                }
+            # Convert duration from ms to seconds
+            if run['duration_ms']:
+                run['duration_seconds'] = run['duration_ms'] // 1000
             else:
-                # Check if this analysis belongs to current run
-                time_diff = (current_run['end_time'] - analyzed_at).total_seconds()
+                run['duration_seconds'] = 0
 
-                if abs(time_diff) <= run_time_threshold:
-                    # Add to current run
-                    current_run['total_files'] += 1
-                    if row['is_cached']:
-                        current_run['cached'] += 1
-                    else:
-                        current_run['analyzed'] += 1
-                    current_run['start_time'] = analyzed_at
-                else:
-                    # Finalize current run and start new one
-                    duration = (current_run['end_time'] - current_run['start_time']).total_seconds()
-                    current_run['duration_seconds'] = int(duration)
+            # Remove duration_ms as we have duration_seconds
+            del run['duration_ms']
 
-                    # Remove temporary fields
-                    del current_run['start_time']
-                    del current_run['end_time']
+            # Determine status if not explicitly set
+            if run['status'] == 'running':
+                run['status'] = 'running'
+            elif run['errors'] == 0:
+                run['status'] = 'success'
+            elif run['errors'] == run['total_files']:
+                run['status'] = 'failed'
+            else:
+                run['status'] = 'partial'
 
-                    runs.append(current_run)
-
-                    if len(runs) >= limit:
-                        break
-
-                    # Start new run
-                    current_run = {
-                        'run_id': len(runs) + 1,
-                        'timestamp': row['analyzed_at'],
-                        'start_time': analyzed_at,
-                        'end_time': analyzed_at,
-                        'total_files': 1,
-                        'analyzed': 0 if row['is_cached'] else 1,
-                        'cached': 1 if row['is_cached'] else 0,
-                        'errors': 0,
-                        'duration_seconds': 0,
-                        'status': 'success'
-                    }
-
-        # Add last run
-        if current_run and len(runs) < limit:
-            duration = (current_run['end_time'] - current_run['start_time']).total_seconds()
-            current_run['duration_seconds'] = int(duration)
-            del current_run['start_time']
-            del current_run['end_time']
-            runs.append(current_run)
+            runs.append(run)
 
         return runs
 
@@ -1011,6 +1008,108 @@ class AnalysisDB:
         failed = [dict(row) for row in rows]
 
         return failed
+
+    # ==================== Analysis Run Tracking Methods ====================
+
+    def start_analysis_run(self, run_id: str, total_files: int) -> None:
+        """
+        Start tracking a new analysis run.
+
+        Args:
+            run_id: Unique identifier for this run
+            total_files: Total number of files to analyze
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO analysis_runs (
+                run_id, total_files, status
+            ) VALUES (?, ?, 'running')
+        """, (run_id, total_files))
+        self.connection.commit()
+
+    def update_analysis_run(
+        self,
+        run_id: str,
+        analyzed: int = 0,
+        cached: int = 0,
+        errors: int = 0,
+        skipped: int = 0,
+        status: str = 'running'
+    ) -> None:
+        """
+        Update analysis run statistics.
+
+        Args:
+            run_id: Run identifier
+            analyzed: Number of newly analyzed files
+            cached: Number of cached files
+            errors: Number of errors
+            skipped: Number of skipped files
+            status: Run status (running, completed, failed)
+        """
+        cursor = self.connection.cursor()
+
+        # If status is completed or failed, also set completed_at and duration
+        if status in ('completed', 'failed'):
+            cursor.execute("""
+                UPDATE analysis_runs
+                SET analyzed = ?, cached = ?, errors = ?, skipped = ?,
+                    status = ?, completed_at = CURRENT_TIMESTAMP,
+                    duration_ms = CAST((julianday(CURRENT_TIMESTAMP) - julianday(started_at)) * 86400000 AS INTEGER)
+                WHERE run_id = ?
+            """, (analyzed, cached, errors, skipped, status, run_id))
+        else:
+            cursor.execute("""
+                UPDATE analysis_runs
+                SET analyzed = ?, cached = ?, errors = ?, skipped = ?, status = ?
+                WHERE run_id = ?
+            """, (analyzed, cached, errors, skipped, status, run_id))
+
+        self.connection.commit()
+
+    def save_analysis_error(
+        self,
+        run_id: str,
+        file_path: str,
+        error_message: str,
+        error_type: str = 'analysis_failed'
+    ) -> None:
+        """
+        Save an analysis error record.
+
+        Args:
+            run_id: Run identifier
+            file_path: Path to file that failed
+            error_message: Error message
+            error_type: Type of error
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO analysis_errors (
+                run_id, file_path, error_message, error_type
+            ) VALUES (?, ?, ?, ?)
+        """, (run_id, file_path, error_message, error_type))
+        self.connection.commit()
+
+    def get_run_errors(self, run_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all errors for a specific run.
+
+        Args:
+            run_id: Run identifier
+
+        Returns:
+            List of error dicts
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT * FROM analysis_errors
+            WHERE run_id = ?
+            ORDER BY error_at DESC
+        """, (run_id,))
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
     def close(self):
         """Close database connection"""

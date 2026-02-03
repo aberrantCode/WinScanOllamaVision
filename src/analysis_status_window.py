@@ -44,25 +44,29 @@ class AnalysisStatusWindow(QDialog):
                 background-color: #F9FAFB;
             }
             QTabWidget::pane {
-                border: 1px solid #D1D5DB;
-                border-radius: 5px;
+                border: 1px solid #E5E7EB;
+                border-radius: 8px;
                 background-color: white;
+                top: -1px;
             }
             QTabBar::tab {
-                background-color: #E5E7EB;
-                color: #374151;
+                background-color: #F3F4F6;
+                color: #6B7280;
+                border: 1px solid #E5E7EB;
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
                 padding: 10px 20px;
                 margin-right: 2px;
-                border-top-left-radius: 5px;
-                border-top-right-radius: 5px;
             }
             QTabBar::tab:selected {
                 background-color: white;
                 color: #2563EB;
-                font-weight: bold;
+                border-color: #E5E7EB;
+                border-bottom: 1px solid white;
             }
-            QTabBar::tab:hover {
-                background-color: #D1D5DB;
+            QTabBar::tab:hover:!selected {
+                background-color: #E5E7EB;
             }
             QPushButton {
                 background-color: #2563EB;
@@ -109,7 +113,7 @@ class AnalysisStatusWindow(QDialog):
         header_layout = QHBoxLayout()
 
         title_label = QLabel("Analysis Status")
-        title_label.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1F2937;")
+        title_label.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1F2937; background-color: transparent;")
         header_layout.addWidget(title_label)
 
         header_layout.addStretch()

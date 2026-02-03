@@ -5643,6 +5643,7 @@ class StartupWindow(QWidget):
         # Create clickable scanner container with stats
         scanner_container = QWidget()
         scanner_container.setCursor(Qt.CursorShape.PointingHandCursor)
+        scanner_container.setMaximumHeight(500)  # Limit height to prevent squishing
         scanner_container.setStyleSheet("""
             QWidget {
                 background-color: rgba(255, 255, 255, 0.1);
@@ -5657,7 +5658,7 @@ class StartupWindow(QWidget):
 
         scanner_layout = QVBoxLayout(scanner_container)
         scanner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        scanner_layout.setSpacing(15)
+        scanner_layout.setSpacing(10)  # Reduced from 15 to save space
 
         # Scanner GIF
         self.scanner_label = QLabel()
@@ -5682,8 +5683,8 @@ class StartupWindow(QWidget):
                     original_size = self.movie.frameRect().size()
 
                 if original_size.width() > 0 and original_size.height() > 0:
-                    # Scale to fit nicely in the window (max 400x400)
-                    max_dimension = 400
+                    # Scale to fit nicely in the window (max 350x350 to leave room for progress banner)
+                    max_dimension = 350
                     if original_size.width() > max_dimension or original_size.height() > max_dimension:
                         scale_factor = min(max_dimension / original_size.width(), max_dimension / original_size.height())
                         scaled_size = QSize(int(original_size.width() * scale_factor), int(original_size.height() * scale_factor))
@@ -5694,17 +5695,22 @@ class StartupWindow(QWidget):
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(scaled_size)
                     self.movie.setSpeed(20)  # 20% of original speed (5x slower)
-                    # Don't start animation immediately - wait for analysis to begin
-                    self.movie.stop()
-                    self.movie.jumpToFrame(0)
+                    # Play once on load, then stop
+                    self.movie.frameChanged.connect(self._on_movie_frame_changed)
+                    self.movie.start()
+                    self._is_initial_animation = True
+                    self._is_analyzing = False
                 else:
                     # Fallback: use default size
-                    default_size = QSize(400, 400)
+                    default_size = QSize(350, 350)
                     self.movie.setScaledSize(default_size)
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(default_size)
-                    self.movie.stop()
-                    self.movie.jumpToFrame(0)
+                    # Play once on load, then stop
+                    self.movie.frameChanged.connect(self._on_movie_frame_changed)
+                    self.movie.start()
+                    self._is_initial_animation = True
+                    self._is_analyzing = False
             else:
                 self.scanner_label.setText("Error loading GIF: Invalid movie format")
                 self.scanner_label.setStyleSheet("color: white; font-size: 14pt;")
@@ -5977,19 +5983,35 @@ class StartupWindow(QWidget):
                 # Update scanner stats
                 self._update_scanner_stats()
 
+    def _on_movie_frame_changed(self, frame_number):
+        """Handle movie frame changes to control initial vs continuous animation"""
+        if hasattr(self, '_is_initial_animation') and self._is_initial_animation:
+            # Check if we've looped back to frame 0 (completed one cycle)
+            if frame_number == 0 and hasattr(self, '_movie_started'):
+                # Initial animation complete, stop at first frame
+                self.movie.stop()
+                self.movie.jumpToFrame(0)
+                self._is_initial_animation = False
+            else:
+                # Mark that movie has started (not first frame anymore)
+                self._movie_started = True
+
     def _update_scanner_animation(self, is_analyzing: bool):
         """
         Control scanner GIF animation based on analysis state.
 
         Args:
-            is_analyzing: True to start animation, False to stop
+            is_analyzing: True to start animation (continuous loop), False to stop
         """
         if hasattr(self, 'movie') and self.movie.isValid():
+            self._is_analyzing = is_analyzing
+            self._is_initial_animation = False  # Disable initial animation mode
+            self._movie_started = False
             if is_analyzing:
-                self.movie.start()
+                self.movie.start()  # Continuous loop while analyzing
             else:
                 self.movie.stop()
-                self.movie.jumpToFrame(0)
+                self.movie.jumpToFrame(0)  # Show first frame when not analyzing
 
     def _update_scanner_stats(self, status: str = None, stats: dict = None):
         """

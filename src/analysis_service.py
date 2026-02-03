@@ -6,6 +6,7 @@ Orchestrates automatic page analysis on startup with caching support.
 import os
 import glob
 import time
+import uuid
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
 
@@ -99,8 +100,11 @@ Return ONLY the JSON object."""
         Returns:
             Dictionary with analysis statistics
         """
+        self._log("[SCAN] Starting scan_all_directories...")
+
         # Check if auto-analysis is enabled
         if not self.config.get_bool('AutoAnalysis', 'enabled', True):
+            self._log("[SCAN] Auto-analysis is disabled in settings")
             return {
                 'total_files': 0,
                 'analyzed': 0,
@@ -114,9 +118,11 @@ Return ONLY the JSON object."""
         if not directories:
             # Fall back to scan folder from DocumentProcessing
             scan_folder = self.config.get_setting('DocumentProcessing', 'scan_folder')
+            self._log(f"[SCAN] No active directories, using scan_folder: {scan_folder}")
             if scan_folder and os.path.exists(scan_folder):
                 directories = [scan_folder]
             else:
+                self._log("[SCAN] No directories found to scan")
                 return {
                     'total_files': 0,
                     'analyzed': 0,
@@ -125,6 +131,8 @@ Return ONLY the JSON object."""
                     'skipped': 0,
                     'message': 'No source directories configured'
                 }
+        else:
+            self._log(f"[SCAN] Active directories: {directories}")
 
         # Get batch size from config
         batch_size = self.config.get_int('AutoAnalysis', 'batch_size', 10)
@@ -138,9 +146,13 @@ Return ONLY the JSON object."""
             'processing_time_ms': 0
         }
 
+        # Generate unique run ID
+        run_id = f"run_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+
         start_time = time.time()
 
-        # Scan each directory
+        # Collect all files first to get total count
+        all_files = []
         for directory in directories:
             if not os.path.exists(directory):
                 continue
@@ -150,40 +162,70 @@ Return ONLY the JSON object."""
             for ext in ['*.png', '*.PNG', '*.jpg', '*.JPG', '*.jpeg', '*.JPEG']:
                 image_files_set.update(glob.glob(os.path.join(directory, ext)))
             image_files = sorted(list(image_files_set))
+            all_files.extend([(directory, f) for f in image_files])
 
-            stats['total_files'] += len(image_files)
+        stats['total_files'] = len(all_files)
 
-            # Process in batches
-            for i in range(0, len(image_files), batch_size):
-                batch = image_files[i:i + batch_size]
+        # Start tracking this run
+        self._log(f"[SCAN] Starting run {run_id} with {stats['total_files']} files")
+        self.analysis_db.start_analysis_run(run_id, stats['total_files'])
 
-                for j, image_path in enumerate(batch):
-                    current = i + j + 1
+        # Process all files
+        for idx, (directory, image_path) in enumerate(all_files):
+            current = idx + 1
 
-                    if progress_callback:
-                        progress_callback(
-                            f"Analyzing {os.path.basename(image_path)}...",
-                            current,
-                            stats['total_files']
-                        )
+            if progress_callback:
+                progress_callback(
+                    f"Analyzing {os.path.basename(image_path)}...",
+                    current,
+                    stats['total_files']
+                )
 
-                    # Analyze single page
-                    result = self._analyze_single_page(image_path, incremental)
+            # Analyze single page
+            result = self._analyze_single_page(image_path, incremental)
 
-                    if result['cached']:
-                        stats['cached'] += 1
-                    elif result['success']:
-                        stats['analyzed'] += 1
-                    elif result['skipped']:
-                        stats['skipped'] += 1
-                    else:
-                        stats['errors'] += 1
+            if result['cached']:
+                stats['cached'] += 1
+            elif result['success']:
+                stats['analyzed'] += 1
+            elif result['skipped']:
+                stats['skipped'] += 1
+            else:
+                stats['errors'] += 1
+                error_msg = result.get('error', 'Unknown error')
+                self._log(f"[SCAN] File failed: {os.path.basename(image_path)} - Error: {error_msg}")
 
-            # Update directory scan info
-            self.analysis_db.update_directory_scan_info(directory, len(image_files))
+                # Save error to database
+                self.analysis_db.save_analysis_error(
+                    run_id=run_id,
+                    file_path=image_path,
+                    error_message=error_msg,
+                    error_type='analysis_failed'
+                )
+
+        # Update directory scan info for each directory
+        for directory in directories:
+            if os.path.exists(directory):
+                # Count files in this directory
+                image_files_set = set()
+                for ext in ['*.png', '*.PNG', '*.jpg', '*.JPG', '*.jpeg', '*.JPEG']:
+                    image_files_set.update(glob.glob(os.path.join(directory, ext)))
+                self.analysis_db.update_directory_scan_info(directory, len(image_files_set))
 
         stats['processing_time_ms'] = int((time.time() - start_time) * 1000)
 
+        # Finalize the run
+        run_status = 'completed' if stats['errors'] == 0 else 'failed' if stats['errors'] == stats['total_files'] else 'completed'
+        self.analysis_db.update_analysis_run(
+            run_id=run_id,
+            analyzed=stats['analyzed'],
+            cached=stats['cached'],
+            errors=stats['errors'],
+            skipped=stats['skipped'],
+            status=run_status
+        )
+
+        self._log(f"[SCAN] Completed run {run_id} - Stats: {stats}")
         return stats
 
     def _analyze_single_page(
@@ -217,23 +259,30 @@ Return ONLY the JSON object."""
 
         # File needs analysis
         try:
+            self._log(f"[ANALYSIS] Starting analysis for: {os.path.basename(image_path)}")
             provider = self._get_provider()
+            self._log(f"[ANALYSIS] Provider obtained: {provider.provider_name}")
 
             # Perform analysis
+            self._log(f"[ANALYSIS] Calling provider.analyze_images()...")
             result = provider.analyze_images(
                 image_paths=[image_path],
                 prompt=self.DEFAULT_ANALYSIS_PROMPT
             )
+            self._log(f"[ANALYSIS] Provider returned: success={result.get('success')}")
 
             if not result['success']:
+                error_msg = result.get('error', 'Unknown error')
+                self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
                 return {
                     'success': False,
                     'cached': False,
                     'skipped': False,
-                    'error': result['error']
+                    'error': error_msg
                 }
 
             # Save analysis to database
+            self._log(f"[ANALYSIS] Saving to database...")
             self.analysis_db.save_analysis(
                 file_path=image_path,
                 file_hash=file_hash,
@@ -252,6 +301,7 @@ Return ONLY the JSON object."""
                 processing_time_ms=result['processing_time_ms']
             )
 
+            self._log(f"[ANALYSIS] Successfully saved to database")
             return {
                 'success': True,
                 'cached': False,
@@ -260,13 +310,26 @@ Return ONLY the JSON object."""
             }
 
         except Exception as e:
-            print(f"Error analyzing {image_path}: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            self._log(f"[ANALYSIS EXCEPTION] Error analyzing {os.path.basename(image_path)}: {str(e)}")
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
             return {
                 'success': False,
                 'cached': False,
                 'skipped': False,
                 'error': str(e)
             }
+
+    def _log(self, message: str):
+        """Write log message to app.log file"""
+        log_file_path = "app.log"
+        try:
+            with open(log_file_path, "a") as log_file:
+                log_file.write(f"{message}\n")
+        except:
+            # If logging fails, just print to console
+            print(message)
 
     def analyze_specific_files(
         self,
