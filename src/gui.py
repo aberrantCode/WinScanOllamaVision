@@ -5878,12 +5878,15 @@ class StartupWindow(QWidget):
         status_window = AnalysisStatusWindow(self, self.analysis_service)
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        # When window closes, hide the banner and restore scanner size
+        # When window closes, hide the banner and restore GIF size
         def on_close():
             if hasattr(self, 'progress_banner'):
                 self.progress_banner.hide()
-            if hasattr(self, 'scanner_container'):
-                self.scanner_container.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+            # Restore GIF to original size
+            if hasattr(self, 'movie') and self.movie.isValid():
+                restored_size = QSize(350, 350)
+                self.movie.setScaledSize(restored_size)
+                self.scanner_label.setFixedSize(restored_size)
         status_window.finished.connect(on_close)
 
         status_window.show()
@@ -5917,9 +5920,11 @@ class StartupWindow(QWidget):
         self.progress_banner.setVisible(True)
         self.progress_banner.update_progress(0, 0, "Starting analysis...")
 
-        # Shrink scanner container to make room for banner
-        if hasattr(self, 'scanner_container'):
-            self.scanner_container.setMaximumHeight(350)
+        # Reduce GIF size to make room for banner
+        if hasattr(self, 'movie') and self.movie.isValid():
+            reduced_size = QSize(250, 250)  # Smaller size when banner is visible
+            self.movie.setScaledSize(reduced_size)
+            self.scanner_label.setFixedSize(reduced_size)
 
         # Start scanner animation
         self._update_scanner_animation(True)
