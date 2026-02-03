@@ -5275,6 +5275,11 @@ Files being sent to Ollama:
 
             if bundles and len(bundles) > 0:
                 # Show bundle suggestions view
+                if not hasattr(self, 'bundle_suggestions_view') or self.bundle_suggestions_view is None:
+                    print("[Bundle Suggestions] ERROR: bundle_suggestions_view not initialized!")
+                    self._show_manual_view()
+                    self._load_next_page_for_stitching()
+                    return
                 self._show_bundle_view()
                 self.bundle_suggestions_view.set_bundles(bundles)
                 print(f"[Bundle Suggestions] Showing {len(bundles)} suggestions")
@@ -5327,8 +5332,9 @@ Files being sent to Ollama:
                 # Regenerate suggestions for remaining files
                 bundles = self.bundling_service.generate_bundle_recommendations(remaining_files)
                 if bundles and len(bundles) > 0:
-                    self.bundle_suggestions_view.set_bundles(bundles)
-                    self.status_label.setText(f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s).")
+                    if hasattr(self, 'bundle_suggestions_view') and self.bundle_suggestions_view is not None:
+                        self.bundle_suggestions_view.set_bundles(bundles)
+                        self.status_label.setText(f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s).")
                 else:
                     # No more bundles, ask if user wants to process manually
                     self._check_remaining_pages_after_bundles()
@@ -5410,8 +5416,9 @@ Files being sent to Ollama:
             # Regenerate suggestions for remaining files
             bundles = self.bundling_service.generate_bundle_recommendations(remaining_files)
             if bundles and len(bundles) > 0:
-                self.bundle_suggestions_view.set_bundles(bundles)
-                self.status_label.setText(f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s).")
+                if hasattr(self, 'bundle_suggestions_view') and self.bundle_suggestions_view is not None:
+                    self.bundle_suggestions_view.set_bundles(bundles)
+                    self.status_label.setText(f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s).")
             else:
                 # No more bundles, ask if user wants to process manually
                 self._check_remaining_pages_after_bundles()
