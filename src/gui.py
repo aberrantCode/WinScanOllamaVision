@@ -6136,29 +6136,40 @@ class StartupWindow(QWidget):
         # Show welcome dialog if many unanalyzed files
         if unanalyzed_count > 0:
             log(f"[DEBUG] Showing dialog for {unanalyzed_count} unanalyzed files")
-            # Estimate time (rough estimate: 3 seconds per page)
-            estimated_minutes = (unanalyzed_count * 3) // 60
-            time_estimate = f"{estimated_minutes} minutes" if estimated_minutes > 0 else "less than a minute"
+            try:
+                # Estimate time (rough estimate: 3 seconds per page)
+                estimated_minutes = (unanalyzed_count * 3) // 60
+                time_estimate = f"{estimated_minutes} minutes" if estimated_minutes > 0 else "less than a minute"
 
-            # Ensure window is active and has focus before showing dialog
-            self.activateWindow()
-            self.raise_()
+                log(f"[DEBUG] Calling activateWindow()")
+                # Ensure window is active and has focus before showing dialog
+                self.activateWindow()
 
-            log(f"[DEBUG] About to call QMessageBox.question()")
-            reply = QMessageBox.question(
-                self,
-                'Analyze Documents?',
-                f'Found {unanalyzed_count} unanalyzed pages in your scan folder.\n\n'
-                f'Would you like to analyze them now?\n\n'
-                f'Estimated time: {time_estimate}\n\n'
-                f'Analysis enables AI-powered bundle suggestions and automatic document organization.',
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
-            )
-            log(f"[DEBUG] Dialog closed, reply: {reply}")
+                log(f"[DEBUG] Calling raise_()")
+                self.raise_()
 
-            if reply == QMessageBox.StandardButton.Yes:
-                self.start_analysis(analysis_service)
+                log(f"[DEBUG] About to call QMessageBox.question()")
+                reply = QMessageBox.question(
+                    self,
+                    'Analyze Documents?',
+                    f'Found {unanalyzed_count} unanalyzed pages in your scan folder.\n\n'
+                    f'Would you like to analyze them now?\n\n'
+                    f'Estimated time: {time_estimate}\n\n'
+                    f'Analysis enables AI-powered bundle suggestions and automatic document organization.',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                log(f"[DEBUG] Dialog closed, reply: {reply}")
+
+                if reply == QMessageBox.StandardButton.Yes:
+                    log(f"[DEBUG] User clicked Yes, starting analysis")
+                    self.start_analysis(analysis_service)
+                else:
+                    log(f"[DEBUG] User clicked No, skipping analysis")
+            except Exception as e:
+                log(f"[ERROR] Exception showing dialog: {e}")
+                import traceback
+                log(f"[ERROR] Traceback: {traceback.format_exc()}")
 
 
 
