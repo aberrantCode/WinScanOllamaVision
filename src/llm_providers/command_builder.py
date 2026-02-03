@@ -34,6 +34,10 @@ class CommandBuilder:
         Returns:
             List of command parts (for subprocess)
         """
+        # Check if template is valid
+        if not template:
+            raise ValueError("Command template is not configured. Please set up the CLI provider command template in settings.")
+
         # Replace variables
         command_str = template.replace(CommandBuilder.VAR_MODEL, model)
 
