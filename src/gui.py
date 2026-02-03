@@ -175,9 +175,12 @@ class ProgressBannerWidget(QWidget):
         if self.details_expanded:
             self.details_button.setText("▲ Hide Details")
             self.setFixedHeight(180)
+            # Notify parent that details are expanded (to cancel auto-dismiss)
+            self.details_toggled.emit(True)
         else:
             self.details_button.setText("▼ Details")
             self.setFixedHeight(120)
+            self.details_toggled.emit(False)
 
         self.details_toggled.emit(self.details_expanded)
 
@@ -5625,6 +5628,7 @@ class StartupWindow(QWidget):
         self.progress_banner.setVisible(False)
         self.progress_banner.cancelled.connect(self._cancel_analysis)
         self.progress_banner.clicked.connect(self.show_analysis_status)
+        self.progress_banner.details_toggled.connect(self._on_banner_details_toggled)
         main_layout.addWidget(self.progress_banner)
 
         # Add spacing after banner
@@ -5863,6 +5867,13 @@ class StartupWindow(QWidget):
 
         # Call the check method which will show the dialog
         self.check_for_unanalyzed_files(self.analysis_service)
+
+    def _on_banner_details_toggled(self, expanded: bool):
+        """Handle when user toggles details on the progress banner"""
+        if expanded:
+            # Cancel auto-dismiss timer when details are expanded
+            if hasattr(self, '_banner_hide_timer') and self._banner_hide_timer.isActive():
+                self._banner_hide_timer.stop()
 
     def show_analysis_status(self):
         """Show the Analysis Status window"""
