@@ -15,6 +15,7 @@ from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta
 from analysis_db import AnalysisDB
 import json
+import os
 
 
 class AnalysisStatusWindow(QDialog):
@@ -281,7 +282,7 @@ class AnalysisStatusWindow(QDialog):
         # Table
         self.files_table = QTableWidget()
         self.files_table.setColumnCount(4)
-        self.files_table.setHorizontalHeaderLabels(["File", "Status", "Confidence", "Date"])
+        self.files_table.setHorizontalHeaderLabels(["File", "Status", "Details", "Date"])
         self.files_table.horizontalHeader().setStretchLastSection(False)
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.files_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
@@ -419,12 +420,30 @@ class AnalysisStatusWindow(QDialog):
             self.runs_layout.insertWidget(0, no_data)
 
     def _refresh_file_details(self):
-        """Refresh File Details tab"""
+        """Refresh File Details tab - show both successful and failed analyses"""
         self.files_table.setRowCount(0)
 
+        # Get successfully analyzed files
         files = self.analysis_db.get_analyzed_pages()
 
-        self.all_files = files  # Store for filtering
+        # Get recent runs to find failed files
+        recent_runs = self.analysis_db.get_recent_runs(limit=1)
+        failed_files = []
+
+        if recent_runs and recent_runs[0].get('errors', 0) > 0:
+            # Get errors from most recent run
+            errors = self.analysis_db.get_run_errors(recent_runs[0]['run_id'])
+            for error in errors:
+                failed_files.append({
+                    'file_path': error['file_path'],
+                    'status': 'Failed',
+                    'error_message': error.get('error_message', 'Unknown error'),
+                    'error_at': error.get('error_at'),
+                    'analyzed_at': error.get('error_at')
+                })
+
+        # Combine successful and failed files
+        self.all_files = files + failed_files  # Store for filtering
         self._apply_file_filter()
 
     def _refresh_statistics(self):
@@ -473,12 +492,17 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
 
         filtered_files = []
         for file_data in self.all_files:
+            # Determine file status
+            is_failed = file_data.get('status') == 'Failed'
+            is_cached = file_data.get('is_cached', False)
+            is_analyzed = not is_failed and not is_cached
+
             # Apply type filter
-            if filter_type == "Analyzed" and file_data.get('is_cached', False):
+            if filter_type == "Analyzed" and not is_analyzed:
                 continue
-            elif filter_type == "Cached" and not file_data.get('is_cached', False):
+            elif filter_type == "Cached" and not is_cached:
                 continue
-            elif filter_type == "Failed" and (file_data.get('confidence_score', 1.0) or 1.0) >= 0.3:
+            elif filter_type == "Failed" and not is_failed:
                 continue
 
             # Apply search filter
@@ -492,16 +516,18 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
 
         for row, file_data in enumerate(filtered_files):
             # File name
-            file_item = QTableWidgetItem(file_data['file_path'].split('\\')[-1])
+            file_item = QTableWidgetItem(os.path.basename(file_data['file_path']))
+            file_item.setToolTip(file_data['file_path'])  # Full path in tooltip
+            file_item.setData(Qt.ItemDataRole.UserRole, file_data)  # Store data for details
             self.files_table.setItem(row, 0, file_item)
 
             # Status
-            if file_data.get('is_cached', False):
-                status = "⚡ Cached"
-                color = QColor("#6B7280")
-            elif (file_data.get('confidence_score') or 1.0) < 0.3:
+            if file_data.get('status') == 'Failed':
                 status = "❌ Failed"
                 color = QColor("#DC2626")
+            elif file_data.get('is_cached', False):
+                status = "⚡ Cached"
+                color = QColor("#6B7280")
             else:
                 status = "✓ Analyzed"
                 color = QColor("#059669")
@@ -510,13 +536,24 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
             status_item.setForeground(color)
             self.files_table.setItem(row, 1, status_item)
 
-            # Confidence
-            confidence = file_data.get('confidence_score')
-            if confidence is not None:
-                conf_text = f"{confidence*100:.0f}%"
+            # Confidence (or error message for failed files)
+            if file_data.get('status') == 'Failed':
+                error_msg = file_data.get('error_message', 'Unknown error')
+                # Truncate long error messages
+                if len(error_msg) > 50:
+                    conf_text = error_msg[:47] + "..."
+                else:
+                    conf_text = error_msg
+                conf_item = QTableWidgetItem(conf_text)
+                conf_item.setToolTip(error_msg)  # Full error in tooltip
+                conf_item.setForeground(QColor("#DC2626"))
             else:
-                conf_text = "--"
-            conf_item = QTableWidgetItem(conf_text)
+                confidence = file_data.get('confidence_score')
+                if confidence is not None:
+                    conf_text = f"{confidence*100:.0f}%"
+                else:
+                    conf_text = "--"
+                conf_item = QTableWidgetItem(conf_text)
             self.files_table.setItem(row, 2, conf_item)
 
             # Date
@@ -537,6 +574,7 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
     def _create_run_widget(self, run: Dict[str, Any]) -> QWidget:
         """Create widget for a single run"""
         widget = QFrame()
+        widget.setCursor(Qt.CursorShape.PointingHandCursor)
         widget.setStyleSheet("""
             QFrame {
                 background-color: white;
@@ -546,8 +584,12 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
             }
             QFrame:hover {
                 background-color: #F9FAFB;
+                border-color: #2563EB;
             }
         """)
+
+        # Make widget clickable to show error details
+        widget.mousePressEvent = lambda event: self._show_run_errors(run)
 
         layout = QHBoxLayout(widget)
 
@@ -573,9 +615,15 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         details.setStyleSheet("color: #6B7280; font-size: 9pt;")
         info_layout.addWidget(details)
 
-        duration = QLabel(f"Duration: {self._format_duration(run['duration_seconds'])}")
-        duration.setStyleSheet("color: #6B7280; font-size: 9pt;")
-        info_layout.addWidget(duration)
+        duration_text = QLabel(f"Duration: {self._format_duration(run['duration_seconds'])}")
+        duration_text.setStyleSheet("color: #6B7280; font-size: 9pt;")
+        info_layout.addWidget(duration_text)
+
+        # Hint to click for error details
+        if run['errors'] > 0:
+            hint = QLabel("Click to view error details →")
+            hint.setStyleSheet("color: #2563EB; font-size: 9pt; font-style: italic;")
+            info_layout.addWidget(hint)
 
         layout.addLayout(info_layout, 1)
 
@@ -612,6 +660,72 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         layout.addWidget(bar)
 
         return widget
+
+    def _show_run_errors(self, run: Dict[str, Any]):
+        """Show error details for a run"""
+        if run['errors'] == 0:
+            QMessageBox.information(
+                self,
+                "No Errors",
+                f"This run completed successfully with no errors.\n\n"
+                f"Analyzed: {run['analyzed']}\nCached: {run['cached']}"
+            )
+            return
+
+        # Get errors for this run
+        errors = self.analysis_db.get_run_errors(run['run_id'])
+
+        if not errors:
+            QMessageBox.warning(
+                self,
+                "No Error Details",
+                f"This run had {run['errors']} errors, but error details are not available."
+            )
+            return
+
+        # Create error details dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Error Details - {run['run_id']}")
+        dialog.setMinimumSize(800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # Header
+        header = QLabel(f"{run['errors']} errors from analysis run")
+        header.setStyleSheet("font-size: 14pt; font-weight: bold; padding: 10px;")
+        layout.addWidget(header)
+
+        # Error table
+        error_table = QTableWidget()
+        error_table.setColumnCount(2)
+        error_table.setHorizontalHeaderLabels(["File", "Error Message"])
+        error_table.horizontalHeader().setStretchLastSection(True)
+        error_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        error_table.setColumnWidth(0, 300)
+        error_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        error_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+        error_table.setRowCount(len(errors))
+        for i, error in enumerate(errors):
+            # File path (basename only)
+            file_item = QTableWidgetItem(os.path.basename(error['file_path']))
+            file_item.setToolTip(error['file_path'])  # Full path in tooltip
+            error_table.setItem(i, 0, file_item)
+
+            # Error message
+            error_msg = error.get('error_message', 'Unknown error')
+            error_item = QTableWidgetItem(error_msg)
+            error_item.setToolTip(error_msg)  # Full message in tooltip
+            error_table.setItem(i, 1, error_item)
+
+        layout.addWidget(error_table)
+
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+
+        dialog.exec()
 
     def _show_file_details(self, index):
         """Show detailed file analysis dialog"""
