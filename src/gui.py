@@ -5878,7 +5878,7 @@ class StartupWindow(QWidget):
         status_window = AnalysisStatusWindow(self, self.analysis_service)
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        # When window closes, hide the banner and restore GIF size
+        # When window closes, hide the banner and restore everything
         def on_close():
             if hasattr(self, 'progress_banner'):
                 self.progress_banner.hide()
@@ -5887,6 +5887,9 @@ class StartupWindow(QWidget):
                 restored_size = QSize(350, 350)
                 self.movie.setScaledSize(restored_size)
                 self.scanner_label.setFixedSize(restored_size)
+            # Show stats label again
+            if hasattr(self, 'scanner_stats_label'):
+                self.scanner_stats_label.setVisible(True)
         status_window.finished.connect(on_close)
 
         status_window.show()
@@ -5920,9 +5923,13 @@ class StartupWindow(QWidget):
         self.progress_banner.setVisible(True)
         self.progress_banner.update_progress(0, 0, "Starting analysis...")
 
+        # Hide stats label since banner shows the same info
+        if hasattr(self, 'scanner_stats_label'):
+            self.scanner_stats_label.setVisible(False)
+
         # Reduce GIF size to make room for banner
         if hasattr(self, 'movie') and self.movie.isValid():
-            reduced_size = QSize(250, 250)  # Smaller size when banner is visible
+            reduced_size = QSize(280, 280)  # Reduced size when banner is visible
             self.movie.setScaledSize(reduced_size)
             self.scanner_label.setFixedSize(reduced_size)
 
