@@ -51,23 +51,26 @@ if __name__ == "__main__":
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
         log_message("AnalysisService initialized.")
 
+        # Store analysis_service in window for manual button access
+        startup_window.analysis_service = analysis_service
+
         log_message("Showing StartupWindow...")
         startup_window.show()
         log_message("StartupWindow.show() called.")
 
         # Check for unanalyzed files and optionally start analysis
-        # Use QTimer to defer this check until after window is fully shown
-        def check_unanalyzed():
-            try:
-                log_message("Checking for unanalyzed files...")
-                startup_window.check_for_unanalyzed_files(analysis_service)
-                log_message("Unanalyzed files check complete.")
-            except Exception as e:
-                log_message(f"Error checking for unanalyzed files: {e}")
-                import traceback as tb
-                log_message(tb.format_exc())
-
-        QTimer.singleShot(1000, check_unanalyzed)  # Increased to 1 second to ensure window is fully rendered
+        # DISABLED: User can now use the "Analyze Documents" button to manually trigger analysis
+        # def check_unanalyzed():
+        #     try:
+        #         log_message("Checking for unanalyzed files...")
+        #         startup_window.check_for_unanalyzed_files(analysis_service)
+        #         log_message("Unanalyzed files check complete.")
+        #     except Exception as e:
+        #         log_message(f"Error checking for unanalyzed files: {e}")
+        #         import traceback as tb
+        #         log_message(tb.format_exc())
+        #
+        # QTimer.singleShot(1000, check_unanalyzed)  # Increased to 1 second to ensure window is fully rendered
 
         log_message("Entering QApplication event loop...")
         exit_code = app.exec()

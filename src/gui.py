@@ -5758,6 +5758,14 @@ class StartupWindow(QWidget):
         settings_button.clicked.connect(self.show_settings_window)
         button_layout.addWidget(settings_button)
 
+        # Analyze Documents button
+        analyze_button = QPushButton("🔍 Analyze Documents")
+        analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        analyze_button.setMinimumHeight(60)
+        analyze_button.setStyleSheet("QPushButton { background-color: #059669; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #047857; }")
+        analyze_button.clicked.connect(self.manual_analyze_documents)
+        button_layout.addWidget(analyze_button)
+
         analysis_status_button = QPushButton("📊 Analysis Status")
         analysis_status_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         analysis_status_button.setMinimumHeight(60)
@@ -5819,6 +5827,23 @@ class StartupWindow(QWidget):
 
         # Keep reference to prevent garbage collection
         self._settings_window = settings_window
+
+    def manual_analyze_documents(self):
+        """Manually trigger document analysis"""
+        # Initialize analysis service if not already done
+        if not hasattr(self, 'analysis_service') or self.analysis_service is None:
+            from config_manager import ConfigManager
+            from analysis_db import AnalysisDB
+            from metadata_db import MetadataDB
+            from analysis_service import AnalysisService
+
+            config_manager = ConfigManager()
+            analysis_db = AnalysisDB()
+            metadata_db = MetadataDB()
+            self.analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
+
+        # Call the check method which will show the dialog
+        self.check_for_unanalyzed_files(self.analysis_service)
 
     def show_analysis_status(self):
         """Show the Analysis Status window"""
