@@ -67,7 +67,7 @@ if __name__ == "__main__":
                 import traceback as tb
                 log_message(tb.format_exc())
 
-        QTimer.singleShot(500, check_unanalyzed)
+        QTimer.singleShot(1000, check_unanalyzed)  # Increased to 1 second to ensure window is fully rendered
 
         log_message("Entering QApplication event loop...")
         exit_code = app.exec()
