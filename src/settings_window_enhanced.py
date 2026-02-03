@@ -43,6 +43,147 @@ class ExpandablePromptEdit(QPlainTextEdit):
         self.setMaximumHeight(200)
 
 
+class PromptOptimizationThread(QThread):
+    """Background thread for prompt optimization"""
+    finished = pyqtSignal(bool, str, str)  # success, optimized_prompt, error_message
+
+    def __init__(self, config_manager: ConfigManager, current_prompt: str):
+        super().__init__()
+        self.config_manager = config_manager
+        self.current_prompt = current_prompt
+
+    def run(self):
+        """Execute prompt optimization in background"""
+        try:
+            # Get active provider
+            active_provider_name = self.config_manager.get_active_provider()
+            provider = ProviderFactory.create_from_config_manager(self.config_manager)
+
+            # Create optimization prompt
+            optimization_request = (
+                "You are an AI prompt engineer. Improve this prompt for better responses from vision models. "
+                "Keep the JSON schema requirements intact. Return ONLY the improved prompt.\n\n"
+                f"Current prompt:\n{self.current_prompt}"
+            )
+
+            # For CLI-based providers (Claude CLI, Gemini CLI), we can try text-only
+            # For Ollama vision models, we need a workaround
+            if active_provider_name == 'ollama':
+                # Ollama vision models require images, so we'll create a minimal placeholder
+                # We'll use subprocess to call ollama with text-only chat
+                import subprocess
+                import json as json_module
+
+                model = provider.get_default_model()
+                timeout = provider.get_timeout()
+
+                try:
+                    # Use Ollama chat API directly (not vision)
+                    # This allows text-only requests
+                    result = subprocess.run(
+                        ['ollama', 'run', model, optimization_request],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout
+                    )
+
+                    if result.returncode == 0:
+                        optimized_prompt = result.stdout.strip()
+                        self.finished.emit(True, optimized_prompt, "")
+                    else:
+                        self.finished.emit(False, "", f"Ollama error: {result.stderr}")
+
+                except subprocess.TimeoutExpired:
+                    self.finished.emit(False, "", "Request timed out")
+                except Exception as e:
+                    self.finished.emit(False, "", f"Ollama execution error: {str(e)}")
+
+            else:
+                # For CLI providers (Claude, Gemini), try with empty image list
+                # These should handle text-only prompts gracefully
+                result = provider.analyze_images(
+                    image_paths=[],  # Empty list for text-only
+                    prompt=optimization_request,
+                    model=None  # Use default model
+                )
+
+                if result['success']:
+                    optimized_prompt = result['response'].strip()
+                    self.finished.emit(True, optimized_prompt, "")
+                else:
+                    self.finished.emit(False, "", result.get('error', 'Unknown error'))
+
+        except Exception as e:
+            self.finished.emit(False, "", str(e))
+
+
+class PromptComparisonDialog(QDialog):
+    """Dialog to show before/after prompt comparison"""
+
+    def __init__(self, original_prompt: str, optimized_prompt: str, parent=None):
+        super().__init__(parent)
+        self.original_prompt = original_prompt
+        self.optimized_prompt = optimized_prompt
+        self.accepted_optimization = False
+
+        self.setWindowTitle("Prompt Optimization - Review Changes")
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+
+        layout = QVBoxLayout(self)
+
+        # Header
+        header = QLabel("Review the optimized prompt. You can accept or cancel the changes.")
+        header.setStyleSheet("font-weight: bold; padding: 10px;")
+        layout.addWidget(header)
+
+        # Split view
+        splitter_layout = QHBoxLayout()
+
+        # Original prompt
+        original_group = QGroupBox("Original Prompt")
+        original_layout = QVBoxLayout(original_group)
+        self.original_text = QPlainTextEdit()
+        self.original_text.setPlainText(original_prompt)
+        self.original_text.setReadOnly(True)
+        original_layout.addWidget(self.original_text)
+        splitter_layout.addWidget(original_group)
+
+        # Optimized prompt
+        optimized_group = QGroupBox("Optimized Prompt")
+        optimized_layout = QVBoxLayout(optimized_group)
+        self.optimized_text = QPlainTextEdit()
+        self.optimized_text.setPlainText(optimized_prompt)
+        self.optimized_text.setReadOnly(False)  # Allow editing
+        optimized_layout.addWidget(self.optimized_text)
+
+        edit_hint = QLabel("You can edit the optimized prompt before accepting.")
+        edit_hint.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
+        optimized_layout.addWidget(edit_hint)
+
+        splitter_layout.addWidget(optimized_group)
+
+        layout.addLayout(splitter_layout)
+
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self._accept_optimization)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _accept_optimization(self):
+        """Accept the optimization (possibly edited)"""
+        self.optimized_prompt = self.optimized_text.toPlainText()
+        self.accepted_optimization = True
+        self.accept()
+
+    def get_final_prompt(self) -> str:
+        """Get the final prompt (possibly edited by user)"""
+        return self.optimized_prompt
+
+
 class EnhancedSettingsWindow(QDialog):
     """Enhanced Settings Window with 5-tab interface"""
 
@@ -51,6 +192,10 @@ class EnhancedSettingsWindow(QDialog):
         self.config_manager = ConfigManager()
         self.metadata_db = MetadataDB()
         self.analysis_db = AnalysisDB()
+
+        # Track optimization thread
+        self.optimization_thread = None
+        self.optimization_prompt_edit = None
 
         # Initialize Ollama service (for backward compatibility)
         timeout = float(self.config_manager.get_setting('Ollama', 'timeout', '300'))
@@ -1566,21 +1711,130 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
 
     def _optimize_prompt(self, prompt_edit: QPlainTextEdit):
         """Use AI to optimize a prompt"""
-        current_prompt = prompt_edit.toPlainText()
+        current_prompt = prompt_edit.toPlainText().strip()
 
+        # Validation
+        if not current_prompt:
+            QMessageBox.warning(
+                self, "Empty Prompt",
+                "Cannot optimize an empty prompt. Please enter a prompt first."
+            )
+            return
+
+        # Get active provider info
+        try:
+            active_provider = self.config_manager.get_active_provider()
+            provider_display_name = {
+                'ollama': 'Ollama',
+                'claude_cli': 'Claude CLI',
+                'gemini_cli': 'Gemini CLI'
+            }.get(active_provider, active_provider)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Configuration Error",
+                f"Failed to get active provider: {str(e)}"
+            )
+            return
+
+        # Confirm action
         reply = QMessageBox.question(
             self, "Optimize Prompt",
-            "This will send your current prompt to the active LLM provider for optimization.\n\n"
+            f"This will send your current prompt to {provider_display_name} for optimization.\n\n"
+            "The AI will suggest improvements while preserving JSON schema requirements.\n\n"
             "Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
-            QMessageBox.information(
-                self, "Coming Soon",
-                "AI prompt optimization will be fully implemented in next phase.\n"
-                "For now, you can manually edit prompts."
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Store reference to the prompt edit widget
+        self.optimization_prompt_edit = prompt_edit
+
+        # Create and show progress dialog
+        progress = QMessageBox(self)
+        progress.setWindowTitle("Optimizing Prompt")
+        progress.setText("Sending prompt to LLM for optimization...\n\nThis may take 10-60 seconds.")
+        progress.setIcon(QMessageBox.Icon.Information)
+        progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        progress.setModal(True)
+        progress.show()
+
+        # Process events to show dialog
+        from PyQt6.QtWidgets import QApplication
+        QApplication.processEvents()
+
+        # Create and start optimization thread
+        self.optimization_thread = PromptOptimizationThread(
+            self.config_manager,
+            current_prompt
+        )
+        self.optimization_thread.finished.connect(
+            lambda success, optimized, error: self._handle_optimization_result(
+                success, optimized, error, progress
             )
+        )
+        self.optimization_thread.start()
+
+    def _handle_optimization_result(
+        self,
+        success: bool,
+        optimized_prompt: str,
+        error_message: str,
+        progress_dialog: QMessageBox
+    ):
+        """Handle the result of prompt optimization"""
+        # Close progress dialog
+        progress_dialog.close()
+
+        if not success:
+            # Show error message
+            error_detail = error_message if error_message else "Unknown error"
+
+            # Check for common error patterns
+            if "analyze_images" in error_detail.lower() and "image" in error_detail.lower():
+                error_detail += (
+                    "\n\nNote: The current provider may require image inputs. "
+                    "Text-only optimization is not supported by this provider."
+                )
+            elif "timeout" in error_detail.lower():
+                error_detail += "\n\nThe request timed out. Try increasing the timeout in provider settings."
+            elif "connection" in error_detail.lower():
+                error_detail += "\n\nCannot connect to the LLM provider. Please check your configuration."
+
+            QMessageBox.critical(
+                self, "Optimization Failed",
+                f"Failed to optimize prompt:\n\n{error_detail}"
+            )
+            return
+
+        # Validate optimized prompt
+        if not optimized_prompt or not optimized_prompt.strip():
+            QMessageBox.warning(
+                self, "Invalid Response",
+                "The LLM returned an empty response. Please try again or edit manually."
+            )
+            return
+
+        # Show comparison dialog
+        original_prompt = self.optimization_prompt_edit.toPlainText()
+        comparison_dialog = PromptComparisonDialog(
+            original_prompt,
+            optimized_prompt,
+            self
+        )
+
+        if comparison_dialog.exec() == QDialog.DialogCode.Accepted:
+            # User accepted the optimization
+            final_prompt = comparison_dialog.get_final_prompt()
+            self.optimization_prompt_edit.setPlainText(final_prompt)
+
+            QMessageBox.information(
+                self, "Prompt Updated",
+                "The prompt has been updated with the optimized version.\n\n"
+                "Don't forget to click 'OK' to save your settings."
+            )
+        # else: User cancelled, do nothing
 
     def _add_directory(self):
         """Add a new directory to the list"""

@@ -25,11 +25,13 @@ from settings_window_enhanced import EnhancedSettingsWindow
 from bundle_widgets import BundleSuggestionsView
 from bundling_service import BundlingService
 from analysis_db import AnalysisDB
+from analysis_status_window import AnalysisStatusWindow
 
 class ProgressBannerWidget(QWidget):
     """Non-modal progress banner for analysis progress"""
     cancelled = pyqtSignal()
     details_toggled = pyqtSignal(bool)
+    clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -142,6 +144,28 @@ class ProgressBannerWidget(QWidget):
         main_layout.addWidget(self.details_widget)
 
         self.setFixedHeight(120)  # Initial compact height
+
+        # Set cursor to hand pointer to indicate clickability
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def enterEvent(self, event):
+        """Show hand cursor on hover"""
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Reset cursor"""
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """Handle click on banner"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Only emit click if not clicking on buttons
+            widget = self.childAt(event.pos())
+            if widget not in [self.cancel_button, self.details_button]:
+                self.clicked.emit()
+        super().mousePressEvent(event)
 
     def _toggle_details(self):
         self.details_expanded = not self.details_expanded
@@ -4186,6 +4210,7 @@ class StartupWindow(QWidget):
         self.analysis_service = None
         self.analysis_worker = None
         self.analysis_start_time = None
+        self.analysis_db = AnalysisDB()  # Initialize database for stats
         self._init_ui()
     
     def _init_ui(self):
@@ -4200,6 +4225,7 @@ class StartupWindow(QWidget):
         self.progress_banner = ProgressBannerWidget(self)
         self.progress_banner.setVisible(False)
         self.progress_banner.cancelled.connect(self._cancel_analysis)
+        self.progress_banner.clicked.connect(self.show_analysis_status)
         main_layout.addWidget(self.progress_banner)
 
         # Add spacing after banner
@@ -4218,8 +4244,28 @@ class StartupWindow(QWidget):
         content_layout = QHBoxLayout()
         center_layout.addLayout(content_layout)
 
-        scanner_label = QLabel()
-        scanner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Create clickable scanner container with stats
+        scanner_container = QWidget()
+        scanner_container.setCursor(Qt.CursorShape.PointingHandCursor)
+        scanner_container.setStyleSheet("""
+            QWidget {
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                padding: 10px;
+            }
+            QWidget:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+            }
+        """)
+        scanner_container.mousePressEvent = lambda event: self.show_analysis_status()
+
+        scanner_layout = QVBoxLayout(scanner_container)
+        scanner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scanner_layout.setSpacing(15)
+
+        # Scanner GIF
+        self.scanner_label = QLabel()
+        self.scanner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Get absolute path to GIF from script directory
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -4249,25 +4295,46 @@ class StartupWindow(QWidget):
                         scaled_size = original_size
 
                     self.movie.setScaledSize(scaled_size)
-                    scanner_label.setMovie(self.movie)
-                    scanner_label.setFixedSize(scaled_size)
+                    self.scanner_label.setMovie(self.movie)
+                    self.scanner_label.setFixedSize(scaled_size)
                     self.movie.setSpeed(20)  # 20% of original speed (5x slower)
-                    self.movie.start()
+                    # Don't start animation immediately - wait for analysis to begin
+                    self.movie.stop()
+                    self.movie.jumpToFrame(0)
                 else:
                     # Fallback: use default size
                     default_size = QSize(400, 400)
                     self.movie.setScaledSize(default_size)
-                    scanner_label.setMovie(self.movie)
-                    scanner_label.setFixedSize(default_size)
-                    self.movie.start()
+                    self.scanner_label.setMovie(self.movie)
+                    self.scanner_label.setFixedSize(default_size)
+                    self.movie.stop()
+                    self.movie.jumpToFrame(0)
             else:
-                scanner_label.setText("Error loading GIF: Invalid movie format")
-                scanner_label.setStyleSheet("color: white; font-size: 14pt;")
+                self.scanner_label.setText("Error loading GIF: Invalid movie format")
+                self.scanner_label.setStyleSheet("color: white; font-size: 14pt;")
         else:
-            scanner_label.setText(f"GIF not found at:\n{scanner_gif_path}")
-            scanner_label.setStyleSheet("color: white; font-size: 12pt;")
+            self.scanner_label.setText(f"GIF not found at:\n{scanner_gif_path}")
+            self.scanner_label.setStyleSheet("color: white; font-size: 12pt;")
 
-        content_layout.addWidget(scanner_label, 1)
+        scanner_layout.addWidget(self.scanner_label)
+
+        # Stats label below scanner
+        self.scanner_stats_label = QLabel()
+        self.scanner_stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scanner_stats_label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 12pt;
+                padding: 10px;
+                background-color: transparent;
+            }
+        """)
+        scanner_layout.addWidget(self.scanner_stats_label)
+
+        # Load initial stats
+        self._update_scanner_stats()
+
+        content_layout.addWidget(scanner_container, 1)
             
         button_layout = QVBoxLayout()
         button_layout.setSpacing(15)
@@ -4294,6 +4361,13 @@ class StartupWindow(QWidget):
         settings_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
         settings_button.clicked.connect(self.show_settings_window)
         button_layout.addWidget(settings_button)
+
+        analysis_status_button = QPushButton("📊 Analysis Status")
+        analysis_status_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        analysis_status_button.setMinimumHeight(60)
+        analysis_status_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
+        analysis_status_button.clicked.connect(self.show_analysis_status)
+        button_layout.addWidget(analysis_status_button)
 
         quit_button = QPushButton("Quit")
         quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -4350,6 +4424,15 @@ class StartupWindow(QWidget):
         # Keep reference to prevent garbage collection
         self._settings_window = settings_window
 
+    def show_analysis_status(self):
+        """Show the Analysis Status window"""
+        status_window = AnalysisStatusWindow(self, self.analysis_service)
+        status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        status_window.show()
+
+        # Keep reference to prevent garbage collection
+        self._status_window = status_window
+
     def quit_application(self):
         """Handle Quit button click with confirmation"""
         reply = QMessageBox.question(
@@ -4376,6 +4459,9 @@ class StartupWindow(QWidget):
         self.progress_banner.setVisible(True)
         self.progress_banner.update_progress(0, 0, "Starting analysis...")
 
+        # Start scanner animation
+        self._update_scanner_animation(True)
+
         # Start timer for elapsed time updates
         import time
         self.analysis_start_time = time.time()
@@ -4397,6 +4483,11 @@ class StartupWindow(QWidget):
             stats.get('cached', 0),
             stats.get('errors', 0)
         )
+        # Update scanner stats in real-time
+        self._update_scanner_stats(
+            status=f"Analyzing {current}/{total}...",
+            stats=stats
+        )
 
     def _update_analysis_time(self):
         """Update elapsed time display"""
@@ -4408,6 +4499,9 @@ class StartupWindow(QWidget):
     def _on_analysis_finished(self, stats):
         """Handle analysis completion"""
         self.analysis_timer.stop()
+
+        # Stop scanner animation
+        self._update_scanner_animation(False)
 
         if stats.get('total_files', 0) == 0:
             self.progress_banner.show_completion(
@@ -4432,6 +4526,9 @@ class StartupWindow(QWidget):
 
             self.progress_banner.show_completion(True, message)
 
+        # Update scanner stats
+        self._update_scanner_stats()
+
         # Auto-dismiss after 5 seconds
         QTimer.singleShot(5000, self.progress_banner.hide)
 
@@ -4452,8 +4549,150 @@ class StartupWindow(QWidget):
             if reply == QMessageBox.StandardButton.Yes:
                 self.analysis_worker.cancel()
                 self.analysis_timer.stop()
+                # Stop scanner animation
+                self._update_scanner_animation(False)
                 self.progress_banner.show_completion(False, "Analysis cancelled")
                 QTimer.singleShot(3000, self.progress_banner.hide)
+                # Update scanner stats
+                self._update_scanner_stats()
+
+    def _update_scanner_animation(self, is_analyzing: bool):
+        """
+        Control scanner GIF animation based on analysis state.
+
+        Args:
+            is_analyzing: True to start animation, False to stop
+        """
+        if hasattr(self, 'movie') and self.movie.isValid():
+            if is_analyzing:
+                self.movie.start()
+            else:
+                self.movie.stop()
+                self.movie.jumpToFrame(0)
+
+    def _update_scanner_stats(self, status: str = None, stats: dict = None):
+        """
+        Update the stats label below the scanner GIF.
+
+        Args:
+            status: Current status text (e.g., "Analyzing 23/47...")
+            stats: Optional dict with 'analyzed', 'cached', 'errors' keys for real-time updates
+        """
+        if not hasattr(self, 'scanner_stats_label'):
+            return
+
+        # If no stats provided, query database for latest
+        if stats is None:
+            try:
+                db_stats = self.analysis_db.get_analysis_statistics()
+                total_files = db_stats.get('total_files', 0)
+                cached_files = db_stats.get('cached_files', 0)
+                failed_files = db_stats.get('failed_files', 0)
+
+                # Get last analysis time from recent runs
+                recent_runs = self.analysis_db.get_recent_runs(limit=1)
+                if recent_runs:
+                    last_run = recent_runs[0]
+                    last_time_str = self._format_relative_time(last_run['timestamp'])
+                else:
+                    last_time_str = "Never"
+
+                # Determine status based on current state
+                if status is None:
+                    if hasattr(self, 'analysis_worker') and self.analysis_worker and self.analysis_worker.isRunning():
+                        status_color = "#2563EB"  # Blue
+                        status_text = "Status: Analyzing..."
+                    elif total_files == 0:
+                        status_color = "#6B7280"  # Gray
+                        status_text = "Status: No files analyzed"
+                    elif failed_files > 0:
+                        status_color = "#DC2626"  # Red
+                        status_text = f"Status: Complete ({failed_files} errors)"
+                    else:
+                        status_color = "#059669"  # Green
+                        status_text = "Status: Idle"
+                else:
+                    status_color = "#2563EB"  # Blue for active analysis
+                    status_text = f"Status: {status}"
+
+            except Exception as e:
+                # Fallback if database query fails
+                total_files = 0
+                cached_files = 0
+                failed_files = 0
+                last_time_str = "Unknown"
+                status_color = "#6B7280"
+                status_text = "Status: Unknown"
+        else:
+            # Use provided stats for real-time updates
+            total_files = stats.get('analyzed', 0) + stats.get('cached', 0)
+            cached_files = stats.get('cached', 0)
+            failed_files = stats.get('errors', 0)
+            last_time_str = "In progress"
+            status_color = "#2563EB"  # Blue
+            status_text = f"Status: {status}" if status else "Status: Analyzing..."
+
+        # Calculate cache percentage
+        cache_pct = int((cached_files / total_files * 100)) if total_files > 0 else 0
+
+        # Format numbers with commas
+        total_str = f"{total_files:,}"
+        cached_str = f"{cached_files:,}"
+        errors_str = f"{failed_files:,}"
+
+        # Build status HTML
+        html = f"""
+        <div style="text-align: center;">
+            <div style="color: {status_color}; font-weight: bold; margin-bottom: 8px;">
+                {status_text}
+            </div>
+            <div style="color: white; font-size: 11pt;">
+                {total_str} files | {cached_str} cached ({cache_pct}%) | {errors_str} errors
+            </div>
+            <div style="color: rgba(255, 255, 255, 0.8); font-size: 10pt; margin-top: 5px;">
+                Last analysis: {last_time_str}
+            </div>
+        </div>
+        """
+
+        self.scanner_stats_label.setText(html)
+
+    def _format_relative_time(self, iso_timestamp: str) -> str:
+        """
+        Format ISO timestamp as relative time (e.g., "2 hours ago").
+
+        Args:
+            iso_timestamp: ISO format timestamp string
+
+        Returns:
+            Relative time string
+        """
+        try:
+            from datetime import datetime, timedelta
+
+            # Parse ISO timestamp
+            dt = datetime.fromisoformat(iso_timestamp.replace('Z', '+00:00'))
+            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+
+            # Calculate difference
+            diff = now - dt
+
+            # Format based on duration
+            if diff.total_seconds() < 60:
+                return "Just now"
+            elif diff.total_seconds() < 3600:
+                minutes = int(diff.total_seconds() / 60)
+                return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+            elif diff.total_seconds() < 86400:
+                hours = int(diff.total_seconds() / 3600)
+                return f"{hours} hour{'s' if hours != 1 else ''} ago"
+            elif diff.days < 30:
+                return f"{diff.days} day{'s' if diff.days != 1 else ''} ago"
+            else:
+                months = diff.days // 30
+                return f"{months} month{'s' if months != 1 else ''} ago"
+        except Exception:
+            return "Unknown"
 
     def check_for_unanalyzed_files(self, analysis_service):
         """Check for unanalyzed files and show welcome dialog if needed"""

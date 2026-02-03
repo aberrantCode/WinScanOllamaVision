@@ -142,7 +142,7 @@ class BundleSuggestionCard(QFrame):
         modify_button = QPushButton("✎ Modify")
         modify_button.setStyleSheet("""
             QPushButton {
-                background-color: #0078D7;
+                background-color: #2563EB;
                 color: white;
                 border: none;
                 border-radius: 4px;
@@ -150,7 +150,7 @@ class BundleSuggestionCard(QFrame):
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #006ABC;
+                background-color: #1D4ED8;
             }
         """)
         modify_button.clicked.connect(self._on_modify)

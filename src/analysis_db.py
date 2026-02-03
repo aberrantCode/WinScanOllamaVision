@@ -776,6 +776,242 @@ class AnalysisDB:
         self.connection.commit()
         return cursor.rowcount
 
+    # ==================== Analysis Status Window Methods ====================
+
+    def get_recent_runs(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get recent analysis runs with aggregated statistics.
+
+        Groups analyses by timestamp proximity (within 5 minutes = same run).
+
+        Args:
+            limit: Maximum number of runs to return
+
+        Returns:
+            List of run dicts with keys:
+                - run_id: Unique run identifier
+                - timestamp: ISO format timestamp of run start
+                - total_files: Number of files in run
+                - analyzed: Number of newly analyzed files
+                - cached: Number of cached files
+                - errors: Number of failed files
+                - duration_seconds: Run duration in seconds
+                - status: 'success', 'partial', or 'failed'
+        """
+        cursor = self.connection.cursor()
+
+        # Get all analyses ordered by time
+        cursor.execute("""
+            SELECT
+                id,
+                analyzed_at,
+                processing_time_ms,
+                is_cached,
+                confidence_score
+            FROM analysis_results
+            ORDER BY analyzed_at DESC
+        """)
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            return []
+
+        # Group analyses into runs (within 5 minutes = same run)
+        runs = []
+        current_run = None
+        run_time_threshold = 300  # 5 minutes in seconds
+
+        for row in rows:
+            analyzed_at = datetime.fromisoformat(row['analyzed_at'])
+
+            if current_run is None:
+                # Start new run
+                current_run = {
+                    'run_id': len(runs) + 1,
+                    'timestamp': row['analyzed_at'],
+                    'start_time': analyzed_at,
+                    'end_time': analyzed_at,
+                    'total_files': 1,
+                    'analyzed': 0 if row['is_cached'] else 1,
+                    'cached': 1 if row['is_cached'] else 0,
+                    'errors': 0,
+                    'duration_seconds': 0,
+                    'status': 'success'
+                }
+            else:
+                # Check if this analysis belongs to current run
+                time_diff = (current_run['end_time'] - analyzed_at).total_seconds()
+
+                if abs(time_diff) <= run_time_threshold:
+                    # Add to current run
+                    current_run['total_files'] += 1
+                    if row['is_cached']:
+                        current_run['cached'] += 1
+                    else:
+                        current_run['analyzed'] += 1
+                    current_run['start_time'] = analyzed_at
+                else:
+                    # Finalize current run and start new one
+                    duration = (current_run['end_time'] - current_run['start_time']).total_seconds()
+                    current_run['duration_seconds'] = int(duration)
+
+                    # Remove temporary fields
+                    del current_run['start_time']
+                    del current_run['end_time']
+
+                    runs.append(current_run)
+
+                    if len(runs) >= limit:
+                        break
+
+                    # Start new run
+                    current_run = {
+                        'run_id': len(runs) + 1,
+                        'timestamp': row['analyzed_at'],
+                        'start_time': analyzed_at,
+                        'end_time': analyzed_at,
+                        'total_files': 1,
+                        'analyzed': 0 if row['is_cached'] else 1,
+                        'cached': 1 if row['is_cached'] else 0,
+                        'errors': 0,
+                        'duration_seconds': 0,
+                        'status': 'success'
+                    }
+
+        # Add last run
+        if current_run and len(runs) < limit:
+            duration = (current_run['end_time'] - current_run['start_time']).total_seconds()
+            current_run['duration_seconds'] = int(duration)
+            del current_run['start_time']
+            del current_run['end_time']
+            runs.append(current_run)
+
+        return runs
+
+    def get_analysis_statistics(self) -> Dict[str, Any]:
+        """
+        Get comprehensive analysis statistics for the status window.
+
+        Returns:
+            Dict with keys:
+                - total_files: Total analyzed files
+                - total_runs: Total analysis runs
+                - success_rate: Percentage of successful analyses
+                - cache_hit_rate: Percentage of cached results
+                - avg_confidence: Average confidence score
+                - avg_processing_time_ms: Average processing time
+                - total_processing_time_ms: Total processing time
+                - cached_files: Number of cached files
+                - failed_files: Number of failed analyses
+        """
+        cursor = self.connection.cursor()
+
+        stats = {
+            'total_files': 0,
+            'total_runs': 0,
+            'success_rate': 0.0,
+            'cache_hit_rate': 0.0,
+            'avg_confidence': 0.0,
+            'avg_processing_time_ms': 0.0,
+            'total_processing_time_ms': 0,
+            'cached_files': 0,
+            'failed_files': 0
+        }
+
+        # Total files
+        cursor.execute("SELECT COUNT(*) as count FROM analysis_results")
+        stats['total_files'] = cursor.fetchone()['count']
+
+        if stats['total_files'] == 0:
+            return stats
+
+        # Cached files
+        cursor.execute("SELECT COUNT(*) as count FROM analysis_results WHERE is_cached = 1")
+        stats['cached_files'] = cursor.fetchone()['count']
+
+        # Cache hit rate
+        stats['cache_hit_rate'] = (stats['cached_files'] / stats['total_files'] * 100) if stats['total_files'] > 0 else 0.0
+
+        # Average confidence (excluding nulls)
+        cursor.execute("SELECT AVG(confidence_score) as avg_conf FROM analysis_results WHERE confidence_score IS NOT NULL")
+        result = cursor.fetchone()
+        stats['avg_confidence'] = result['avg_conf'] if result['avg_conf'] is not None else 0.0
+
+        # Processing time stats
+        cursor.execute("SELECT AVG(processing_time_ms) as avg_time, SUM(processing_time_ms) as total_time FROM analysis_results")
+        result = cursor.fetchone()
+        stats['avg_processing_time_ms'] = result['avg_time'] if result['avg_time'] is not None else 0.0
+        stats['total_processing_time_ms'] = result['total_time'] if result['total_time'] is not None else 0
+
+        # Success rate (assuming all records in DB are successful; failed ones would need error tracking)
+        # For now, we assume 100% success rate for records that exist
+        stats['success_rate'] = 100.0
+
+        # Total runs
+        runs = self.get_recent_runs(limit=1000)  # Get all runs
+        stats['total_runs'] = len(runs)
+
+        return stats
+
+    def get_document_type_breakdown(self) -> Dict[str, int]:
+        """
+        Get document type breakdown ordered by count.
+
+        Returns:
+            Dict mapping document type to count, ordered by count descending.
+            Unknown/null types are labeled as "Unknown".
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT
+                COALESCE(document_type, 'Unknown') as doc_type,
+                COUNT(*) as count
+            FROM analysis_results
+            GROUP BY doc_type
+            ORDER BY count DESC
+        """)
+
+        rows = cursor.fetchall()
+        breakdown = {row['doc_type']: row['count'] for row in rows}
+
+        return breakdown
+
+    def get_failed_analyses(self) -> List[Dict[str, Any]]:
+        """
+        Get list of failed analyses with error details.
+
+        Note: Current schema doesn't track failures explicitly.
+        This method can be enhanced when error tracking is added.
+
+        Returns:
+            List of failed analysis dicts with keys:
+                - file_path: Path to failed file
+                - error_message: Error description
+                - analyzed_at: Timestamp
+                - provider_name: LLM provider used
+        """
+        cursor = self.connection.cursor()
+
+        # For now, we consider analyses with very low confidence or missing data as potential failures
+        cursor.execute("""
+            SELECT
+                file_path,
+                raw_response as error_message,
+                analyzed_at,
+                provider_name,
+                confidence_score
+            FROM analysis_results
+            WHERE confidence_score IS NULL OR confidence_score < 0.3
+            ORDER BY analyzed_at DESC
+        """)
+
+        rows = cursor.fetchall()
+        failed = [dict(row) for row in rows]
+
+        return failed
+
     def close(self):
         """Close database connection"""
         if self.connection:
