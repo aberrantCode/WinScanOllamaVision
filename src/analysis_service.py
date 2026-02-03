@@ -145,10 +145,11 @@ Return ONLY the JSON object."""
             if not os.path.exists(directory):
                 continue
 
-            # Find all image files (PNG, JPG, JPEG)
-            image_files = []
+            # Find all image files (PNG, JPG, JPEG) - use set to avoid duplicates
+            image_files_set = set()
             for ext in ['*.png', '*.PNG', '*.jpg', '*.JPG', '*.jpeg', '*.JPEG']:
-                image_files.extend(glob.glob(os.path.join(directory, ext)))
+                image_files_set.update(glob.glob(os.path.join(directory, ext)))
+            image_files = sorted(list(image_files_set))
 
             stats['total_files'] += len(image_files)
 
