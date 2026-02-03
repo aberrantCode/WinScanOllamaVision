@@ -2054,18 +2054,277 @@ class ConvertImagesWindow(QMainWindow):
             self._apply_zoom_mode()
 
     def _setup_keyboard_shortcuts(self):
-        """Setup keyboard shortcuts for zoom and other actions (Phase 8)"""
+        """Setup keyboard shortcuts for navigation, actions, zoom, and bundles (Phase 6)"""
         from PyQt6.QtGui import QShortcut, QKeySequence
 
-        # Zoom shortcuts
+        # ===== NAVIGATION SHORTCUTS =====
+        # Previous/Next image (gallery navigation)
+        left_arrow_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
+        left_arrow_shortcut.activated.connect(self._navigate_previous_image)
+
+        right_arrow_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
+        right_arrow_shortcut.activated.connect(self._navigate_next_image)
+
+        # Jump 10 images
+        pgup_shortcut = QShortcut(QKeySequence(Qt.Key.Key_PageUp), self)
+        pgup_shortcut.activated.connect(lambda: self._jump_images(-10))
+
+        pgdown_shortcut = QShortcut(QKeySequence(Qt.Key.Key_PageDown), self)
+        pgdown_shortcut.activated.connect(lambda: self._jump_images(10))
+
+        # First/Last image
+        home_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Home), self)
+        home_shortcut.activated.connect(self._jump_to_first_image)
+
+        end_shortcut = QShortcut(QKeySequence(Qt.Key.Key_End), self)
+        end_shortcut.activated.connect(self._jump_to_last_image)
+
+        # ===== ACTION SHORTCUTS =====
+        # Include current page in bundle
+        space_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        space_shortcut.activated.connect(self._shortcut_include_page)
+
+        # Exclude current page from bundle
+        delete_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self)
+        delete_shortcut.activated.connect(self._shortcut_exclude_page)
+
+        # Approve/Continue to next step
+        enter_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), self)
+        enter_shortcut.activated.connect(self._shortcut_approve_continue)
+
+        # Cancel/Back
+        esc_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        esc_shortcut.activated.connect(self._shortcut_cancel_back)
+
+        # ===== ZOOM SHORTCUTS =====
+        # Zoom in (25% increment)
         zoom_in_shortcut = QShortcut(QKeySequence("Ctrl++"), self)
         zoom_in_shortcut.activated.connect(self._zoom_in)
 
+        # Zoom out (25% decrement)
         zoom_out_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)
         zoom_out_shortcut.activated.connect(self._zoom_out)
 
+        # Fit to window
         zoom_reset_shortcut = QShortcut(QKeySequence("Ctrl+0"), self)
         zoom_reset_shortcut.activated.connect(lambda: self._set_zoom_mode_to_fit_window())
+
+        # ===== BUNDLE SHORTCUTS (Step 0) =====
+        # Accept all high confidence
+        ctrl_a_shortcut = QShortcut(QKeySequence("Ctrl+A"), self)
+        ctrl_a_shortcut.activated.connect(self._shortcut_accept_all_high)
+
+        # Skip to manual workflow
+        ctrl_d_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        ctrl_d_shortcut.activated.connect(self._shortcut_skip_to_manual)
+
+        # ===== HELP SHORTCUT =====
+        # Toggle shortcuts legend
+        f1_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        f1_shortcut.activated.connect(self._toggle_shortcuts_legend)
+
+        question_shortcut = QShortcut(QKeySequence("?"), self)
+        question_shortcut.activated.connect(self._toggle_shortcuts_legend)
+
+        # Store shortcuts for later reference
+        self.keyboard_shortcuts = {
+            'navigation': {
+                'Left/Right Arrow': 'Previous/Next image',
+                'Page Up/Down': 'Jump 10 images',
+                'Home/End': 'First/Last image',
+            },
+            'actions': {
+                'Space': 'Include current page in bundle',
+                'Delete': 'Exclude current page from bundle',
+                'Enter': 'Approve/Continue to next step',
+                'Esc': 'Cancel/Back',
+            },
+            'zoom': {
+                'Ctrl + +': 'Zoom in (25%)',
+                'Ctrl + -': 'Zoom out (25%)',
+                'Ctrl + 0': 'Fit to window',
+            },
+            'bundles': {
+                'Ctrl + A': 'Accept all high confidence (Step 0)',
+                'Ctrl + D': 'Skip to manual workflow (Step 0)',
+            },
+            'help': {
+                'F1 or ?': 'Toggle shortcuts legend',
+            }
+        }
+
+    # ===== KEYBOARD SHORTCUT HANDLER METHODS (Phase 6) =====
+
+    def _navigate_previous_image(self):
+        """Navigate to previous image in gallery (Left Arrow)"""
+        if not self.all_files or not self.current_page_path:
+            return
+
+        try:
+            current_idx = self.all_files.index(self.current_page_path)
+            if current_idx > 0:
+                prev_file = self.all_files[current_idx - 1]
+                self._on_thumbnail_clicked(prev_file)
+        except (ValueError, IndexError):
+            pass
+
+    def _navigate_next_image(self):
+        """Navigate to next image in gallery (Right Arrow)"""
+        if not self.all_files or not self.current_page_path:
+            return
+
+        try:
+            current_idx = self.all_files.index(self.current_page_path)
+            if current_idx < len(self.all_files) - 1:
+                next_file = self.all_files[current_idx + 1]
+                self._on_thumbnail_clicked(next_file)
+        except (ValueError, IndexError):
+            pass
+
+    def _jump_images(self, offset):
+        """Jump forward or backward by offset images (Page Up/Down)"""
+        if not self.all_files or not self.current_page_path:
+            return
+
+        try:
+            current_idx = self.all_files.index(self.current_page_path)
+            new_idx = max(0, min(len(self.all_files) - 1, current_idx + offset))
+            if new_idx != current_idx:
+                target_file = self.all_files[new_idx]
+                self._on_thumbnail_clicked(target_file)
+        except (ValueError, IndexError):
+            pass
+
+    def _jump_to_first_image(self):
+        """Jump to first image in gallery (Home)"""
+        if self.all_files:
+            self._on_thumbnail_clicked(self.all_files[0])
+
+    def _jump_to_last_image(self):
+        """Jump to last image in gallery (End)"""
+        if self.all_files:
+            self._on_thumbnail_clicked(self.all_files[-1])
+
+    def _shortcut_include_page(self):
+        """Include current page in bundle (Space)"""
+        if self.current_step == WorkflowStep.STITCHING:
+            if hasattr(self, 'include_button') and self.include_button.isVisible() and self.include_button.isEnabled():
+                self.include_button.click()
+
+    def _shortcut_exclude_page(self):
+        """Exclude current page from bundle (Delete)"""
+        if self.current_step == WorkflowStep.STITCHING:
+            if hasattr(self, 'exclude_page_button') and self.exclude_page_button.isVisible() and self.exclude_page_button.isEnabled():
+                self.exclude_page_button.click()
+
+    def _shortcut_approve_continue(self):
+        """Approve/Continue to next step (Enter)"""
+        if self.current_step == WorkflowStep.STITCHING:
+            # Try exclude_button (which is the "Approve" button in Step 1)
+            if hasattr(self, 'exclude_button') and self.exclude_button.isVisible() and self.exclude_button.isEnabled():
+                self.exclude_button.click()
+        elif self.current_step == WorkflowStep.ORDERING:
+            # Approve order button in Step 3
+            if hasattr(self, 'approve_order_button') and self.approve_order_button.isVisible() and self.approve_order_button.isEnabled():
+                self.approve_order_button.click()
+        elif self.current_step == WorkflowStep.FINALIZATION:
+            # Finalize button in Step 4
+            if hasattr(self, 'finalize_button') and self.finalize_button.isVisible() and self.finalize_button.isEnabled():
+                self.finalize_button.click()
+
+    def _shortcut_cancel_back(self):
+        """Cancel/Back to previous step (Esc)"""
+        if hasattr(self, 'header_back_button') and self.header_back_button.isVisible():
+            self.header_back_button.click()
+        elif hasattr(self, 'cancel_request_button') and self.cancel_request_button.isVisible():
+            self.cancel_request_button.click()
+
+    def _shortcut_accept_all_high(self):
+        """Accept all high confidence bundles (Ctrl+A in Step 0)"""
+        if self.current_step == WorkflowStep.BUNDLE_SUGGESTIONS:
+            if hasattr(self, 'bundle_suggestions_view'):
+                self.bundle_suggestions_view._on_accept_all_high_clicked()
+
+    def _shortcut_skip_to_manual(self):
+        """Skip to manual workflow (Ctrl+D in Step 0)"""
+        if self.current_step == WorkflowStep.BUNDLE_SUGGESTIONS:
+            if hasattr(self, 'bundle_suggestions_view'):
+                self.bundle_suggestions_view._on_skip_to_manual_clicked()
+
+    def _toggle_shortcuts_legend(self):
+        """Toggle visibility of keyboard shortcuts legend (F1 or ?)"""
+        if hasattr(self, 'shortcuts_legend_widget'):
+            self.shortcuts_legend_widget.setVisible(not self.shortcuts_legend_widget.isVisible())
+        else:
+            self._create_shortcuts_legend()
+            self.shortcuts_legend_widget.setVisible(True)
+
+    def _create_shortcuts_legend(self):
+        """Create collapsible keyboard shortcuts legend widget (Phase 6)"""
+        from PyQt6.QtWidgets import QGroupBox, QGridLayout
+
+        # Create a collapsible group box
+        self.shortcuts_legend_widget = QGroupBox("Keyboard Shortcuts")
+        self.shortcuts_legend_widget.setCheckable(True)
+        self.shortcuts_legend_widget.setChecked(True)
+        self.shortcuts_legend_widget.setStyleSheet("""
+            QGroupBox {
+                background-color: #F9FAFB;
+                border: 1px solid #E5E7EB;
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 15px;
+                font-size: 11pt;
+                font-weight: bold;
+                color: #374151;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+                background-color: #F9FAFB;
+            }
+        """)
+
+        legend_layout = QGridLayout()
+        legend_layout.setSpacing(8)
+        legend_layout.setContentsMargins(10, 10, 10, 10)
+
+        row = 0
+        for category, shortcuts in self.keyboard_shortcuts.items():
+            # Category header
+            category_label = QLabel(f"{category.upper()}")
+            category_label.setStyleSheet("font-weight: bold; color: #2563EB; font-size: 10pt;")
+            legend_layout.addWidget(category_label, row, 0, 1, 2)
+            row += 1
+
+            # Shortcuts in this category
+            for shortcut_key, description in shortcuts.items():
+                key_label = QLabel(shortcut_key)
+                key_label.setStyleSheet("""
+                    QLabel {
+                        background-color: #FFFFFF;
+                        border: 1px solid #D1D5DB;
+                        border-radius: 3px;
+                        padding: 3px 8px;
+                        font-family: 'Consolas', monospace;
+                        font-size: 9pt;
+                        color: #111827;
+                    }
+                """)
+                desc_label = QLabel(description)
+                desc_label.setStyleSheet("font-size: 9pt; color: #6B7280;")
+
+                legend_layout.addWidget(key_label, row, 0, Qt.AlignmentFlag.AlignLeft)
+                legend_layout.addWidget(desc_label, row, 1, Qt.AlignmentFlag.AlignLeft)
+                row += 1
+
+        self.shortcuts_legend_widget.setLayout(legend_layout)
+
+        # Add to main layout at the bottom
+        self.main_layout.addWidget(self.shortcuts_legend_widget)
+
+        # Don't set visibility here - let the caller (_toggle_shortcuts_legend) handle it
 
     def _set_zoom_mode_to_fit_window(self):
         """Set zoom mode to fit window (Ctrl+0 shortcut) (Phase 8)"""
@@ -2113,6 +2372,58 @@ class ConvertImagesWindow(QMainWindow):
             print(f"[Rotation] Error: {e}")
             import traceback
             traceback.print_exc()
+
+    # ===== VISUAL FEEDBACK METHODS (PHASE 6) =====
+
+    def _flash_preview(self, color="#059669", duration=200):
+        """Flash the preview area with a color to provide visual feedback (Phase 6)"""
+        if not hasattr(self, 'large_preview_label'):
+            return
+
+        # Store original stylesheet
+        original_style = self.large_preview_label.styleSheet()
+
+        # Apply flash color
+        flash_style = f"background-color: {color}; border: 3px solid {color};"
+        self.large_preview_label.setStyleSheet(flash_style)
+
+        # Reset after duration
+        QTimer.singleShot(duration, lambda: self.large_preview_label.setStyleSheet(original_style))
+
+    def _flash_thumbnail(self, file_path, color="#059669", duration=200):
+        """Flash a specific thumbnail to provide visual feedback (Phase 6)"""
+        # Find the thumbnail widget for this file
+        for i in range(self.thumbnail_layout.count()):
+            item = self.thumbnail_layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if hasattr(widget, 'file_path') and widget.file_path == file_path:
+                    # Store original stylesheet
+                    original_style = widget.styleSheet()
+
+                    # Apply flash color
+                    flash_style = f"border: 3px solid {color}; background-color: {color};"
+                    widget.setStyleSheet(flash_style)
+
+                    # Reset after duration
+                    QTimer.singleShot(duration, lambda w=widget, s=original_style: w.setStyleSheet(s))
+                    break
+
+    def _show_status_flash(self, message, color="#059669", duration=2000):
+        """Show a temporary status message with color (Phase 6)"""
+        # Store original status
+        original_text = self.status_label.text()
+        original_style = self.status_label.styleSheet()
+
+        # Apply flash message
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+        # Reset after duration
+        QTimer.singleShot(duration, lambda: (
+            self.status_label.setText(original_text),
+            self.status_label.setStyleSheet(original_style)
+        ))
 
     # ===== AUTO-APPROVAL METHODS =====
 
@@ -2418,6 +2729,7 @@ class ConvertImagesWindow(QMainWindow):
             "font-size: 10pt; padding: 10px; border-radius: 5px; }"
             "QPushButton:hover { background-color: #D97706; }"
         )
+        self.cancel_request_button.setToolTip("Cancel current request (Esc)")
         self.cancel_request_button.clicked.connect(self._on_cancel_ollama_step1)
         self.cancel_request_button.setVisible(False)
         button_layout.addWidget(self.cancel_request_button)
@@ -2431,6 +2743,7 @@ class ConvertImagesWindow(QMainWindow):
             "font-size: 11pt; padding: 12px; border-radius: 5px; }"
             "QPushButton:hover { background-color: #1D4ED8; }"
         )
+        self.exclude_button.setToolTip("Approve bundle and continue to next step (Enter)")
         self.exclude_button.clicked.connect(self._on_finish_group)
         self.exclude_button.setVisible(False)
         button_layout.addWidget(self.exclude_button)
@@ -2457,6 +2770,7 @@ class ConvertImagesWindow(QMainWindow):
             "font-size: 12pt; padding: 15px; border-radius: 5px; }"
             "QPushButton:hover { background-color: #047857; }"
         )
+        self.include_button.setToolTip("Include current page in bundle (Space)")
         self.include_button.clicked.connect(self._on_include_current_page)
         self.include_button.setVisible(False)
         button_layout.addWidget(self.include_button)
@@ -2470,6 +2784,7 @@ class ConvertImagesWindow(QMainWindow):
             "font-size: 11pt; padding: 12px; border-radius: 5px; }"
             "QPushButton:hover { background-color: #B91C1C; }"
         )
+        self.exclude_page_button.setToolTip("Exclude current page from bundle (Delete)")
         self.exclude_page_button.clicked.connect(self._on_exclude_current_page)
         self.exclude_page_button.setVisible(False)
         button_layout.addWidget(self.exclude_page_button)
@@ -2754,6 +3069,7 @@ class ConvertImagesWindow(QMainWindow):
             "font-size: 12pt; padding: 15px; border-radius: 5px; }"
             "QPushButton:hover { background-color: #047857; }"
         )
+        self.approve_order_button.setToolTip("Approve page order and continue (Enter)")
         self.approve_order_button.clicked.connect(self._on_approve_page_order)
         button_layout.addWidget(self.approve_order_button)
 
@@ -3768,6 +4084,10 @@ Files being sent to Ollama:
             if hasattr(self, 'metadata_display'):
                 self.metadata_display.set_bundle_files(self.current_group)
 
+            # Phase 6: Visual feedback
+            self._flash_preview("#059669")
+            self._flash_thumbnail(self.current_page_path, "#059669")
+
             self.status_label.setText(f"Page marked as included. Group has {len(self.current_group)} page(s).")
 
             # Load next page to continue
@@ -3785,6 +4105,10 @@ Files being sent to Ollama:
             # Phase 4: Update metadata display
             if hasattr(self, 'metadata_display'):
                 self.metadata_display.set_bundle_files(self.current_group)
+
+            # Phase 6: Visual feedback
+            self._flash_preview("#059669")
+            self._flash_thumbnail(self.current_page_path, "#059669")
 
             files_remaining = len(self.all_files) - self.current_file_index
             self.status_label.setText(f"✓ Page included. Group has {len(self.current_group)} page(s). ({files_remaining} remaining)")
@@ -3914,6 +4238,10 @@ Files being sent to Ollama:
 
         # Update buttons based on new state
         self._update_step1_buttons_for_state('excluded')
+
+        # Phase 6: Visual feedback
+        self._flash_preview("#DC2626")
+        self._flash_thumbnail(self.current_page_path, "#DC2626")
 
         self.status_label.setText(f"Page excluded. Group has {len(self.current_group)} page(s).")
 
@@ -4941,24 +5269,14 @@ Files being sent to Ollama:
     def _load_and_show_bundle_suggestions(self):
         """Generate and display bundle suggestions (Step 0)"""
         try:
-            # Hide regular workflow UI
-            if hasattr(self, 'content_layout') and self.content_layout.parentWidget():
-                self.content_layout.parentWidget().setVisible(False)
-            if hasattr(self, 'thumbnail_scroll'):
-                self.thumbnail_scroll.setVisible(False)
-
-            # Update step indicator
-            self.step_title_label.setText("AI Bundle Suggestions")
-            self.step_indicator_label.setText("Step 0 of 5")
-
             # Generate bundle suggestions using BundlingService
             print(f"[Bundle Suggestions] Generating recommendations for {len(self.all_files)} files...")
             bundles = self.bundling_service.generate_bundle_recommendations(self.all_files)
 
             if bundles and len(bundles) > 0:
                 # Show bundle suggestions view
+                self._show_bundle_view()
                 self.bundle_suggestions_view.set_bundles(bundles)
-                self.bundle_suggestions_view.setVisible(True)
                 print(f"[Bundle Suggestions] Showing {len(bundles)} suggestions")
                 self.status_label.setText(f"Found {len(bundles)} bundle suggestion(s). Review and accept/modify/reject each.")
             else:
@@ -5019,28 +5337,87 @@ Files being sent to Ollama:
                 self._check_remaining_pages_after_bundles()
 
     def _on_bundle_modified(self, bundle_data):
-        """Handle bundle modification - load into stitching workflow"""
+        """Handle bundle modification - load into manual stitching workflow"""
         print(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
         file_paths = bundle_data.get('file_paths', [])
+        if not file_paths:
+            return
+
+        # Store the suggested metadata for this bundle
+        self.extracted_metadata['suggestion'] = {
+            'company': bundle_data.get('company'),
+            'title': bundle_data.get('document_type'),
+            'date': bundle_data.get('document_date')
+        }
+
+        # Pre-populate current_group with the bundle pages
+        self.current_group = list(file_paths)
+
+        # Show notification
+        QMessageBox.information(
+            self,
+            "Modify Bundle",
+            f"Loading {len(file_paths)} page(s) into manual stitching view.\n\n"
+            "You can add/remove pages, then approve the bundle when ready."
+        )
+
+        # Ensure step 1 UI is initialized (if coming from bundle view)
+        if not hasattr(self, 'page_states'):
+            self._setup_step1_ui()
+
+        # Transition to manual stitching view
+        self._show_manual_view()
+
+        # Add thumbnails for pre-loaded bundle pages
+        for file_path in file_paths:
+            self._add_thumbnail(file_path, 'included')
+            self.page_states[file_path] = 'included'
+
+        # Update metadata display with bundle info
+        if hasattr(self, 'metadata_display') and file_paths:
+            self.metadata_display.set_bundle_files(self.current_group)
+            self.metadata_display.set_current_file(file_paths[0])
+
+        # Load first page in the bundle for preview
         if file_paths:
-            self.all_files = file_paths
-            self.current_file_index = 0
-            self.current_group = list(file_paths)
-            self.extracted_metadata['suggestion'] = {
-                'company': bundle_data.get('company'),
-                'title': bundle_data.get('document_type'),
-                'date': bundle_data.get('document_date')
-            }
-            self.current_step = WorkflowStep.STITCHING
-            self._on_skip_to_manual_workflow()
+            self.current_page_path = file_paths[0]
+            self._display_page_in_large_preview(file_paths[0])
+
+        # Set file index to start after these files
+        self.current_file_index = 0  # Reset to allow adding more pages
+
+        self.status_label.setText(f"Modifying bundle with {len(file_paths)} page(s). Add/remove pages as needed, then approve.")
 
     def _on_bundle_rejected(self, bundle_data):
-        """Handle bundle rejection"""
+        """Handle bundle rejection - pages remain in pool for manual processing"""
         print(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
+        file_paths = bundle_data.get('file_paths', [])
+
+        # Display confirmation
         QMessageBox.information(
             self, "Bundle Rejected",
-            f"Rejected bundle for '{bundle_data.get('document_type')}'."
+            f"Rejected bundle for '{bundle_data.get('document_type')}'.\n\n"
+            f"{len(file_paths)} page(s) will remain available for manual processing or re-bundling."
         )
+
+        # Regenerate bundle suggestions for remaining pages
+        bundled_files = set()
+        for group in self.completed_groups:
+            bundled_files.update(group)
+        remaining_files = [f for f in self.all_files if f not in bundled_files]
+
+        if remaining_files:
+            # Regenerate suggestions for remaining files
+            bundles = self.bundling_service.generate_bundle_recommendations(remaining_files)
+            if bundles and len(bundles) > 0:
+                self.bundle_suggestions_view.set_bundles(bundles)
+                self.status_label.setText(f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s).")
+            else:
+                # No more bundles, ask if user wants to process manually
+                self._check_remaining_pages_after_bundles()
+        else:
+            # All files bundled
+            self._check_remaining_pages_after_bundles()
 
     def _on_accept_all_high_confidence(self):
         """Accept all high confidence bundles automatically"""
@@ -5121,38 +5498,65 @@ Files being sent to Ollama:
 
     def _transition_to_finalization(self):
         """Transition to finalization step after bundle acceptance"""
-        # Hide bundle suggestions
+        # Hide bundle suggestions view
         self.bundle_suggestions_view.setVisible(False)
+
+        # Show three-column layout (finalization uses it)
+        if hasattr(self, 'content_splitter'):
+            self.content_splitter.setVisible(True)
+        if hasattr(self, 'thumbnail_scroll'):
+            self.thumbnail_scroll.setVisible(True)
 
         # Update step indicator
         self.current_step = WorkflowStep.FINALIZATION
         self.step_title_label.setText("Document Finalization")
         self.step_indicator_label.setText("Step 4 of 5")
 
-        # Show regular workflow UI for finalization
-        if hasattr(self, 'content_layout') and self.content_layout.parentWidget():
-            self.content_layout.parentWidget().setVisible(True)
-
         # Move to finalization step (this method should exist from earlier phases)
         self._show_finalization_step()
+
+    def _show_bundle_view(self):
+        """Show bundle suggestions view and hide three-column layout"""
+        print("[Bundle View] Showing bundle suggestions view")
+
+        # Show bundle suggestions view
+        self.bundle_suggestions_view.setVisible(True)
+
+        # Hide three-column layout
+        if hasattr(self, 'content_splitter'):
+            self.content_splitter.setVisible(False)
+        if hasattr(self, 'thumbnail_scroll'):
+            self.thumbnail_scroll.setVisible(False)
+
+        # Update step indicator
+        self.current_step = WorkflowStep.BUNDLE_SUGGESTIONS
+        self.step_title_label.setText("AI Bundle Suggestions")
+        self.step_indicator_label.setText("Step 0 of 5")
+
+    def _show_manual_view(self):
+        """Show three-column manual stitching view and hide bundle suggestions"""
+        print("[Manual View] Showing three-column layout")
+
+        # Hide bundle suggestions view
+        self.bundle_suggestions_view.setVisible(False)
+
+        # Show three-column layout
+        if hasattr(self, 'content_splitter'):
+            self.content_splitter.setVisible(True)
+        if hasattr(self, 'thumbnail_scroll'):
+            self.thumbnail_scroll.setVisible(True)
+
+        # Update step indicator
+        self.current_step = WorkflowStep.STITCHING
+        self.step_title_label.setText("Document Stitching")
+        self.step_indicator_label.setText("Step 1 of 5")
 
     def _on_skip_to_manual_workflow(self):
         """Skip bundle suggestions and go to manual stitching"""
         print("[Bundle] Skipping to manual workflow")
 
-        # Hide bundle suggestions view
-        self.bundle_suggestions_view.setVisible(False)
-
-        # Show regular workflow UI
-        if hasattr(self, 'content_layout') and self.content_layout.parentWidget():
-            self.content_layout.parentWidget().setVisible(True)
-        if hasattr(self, 'thumbnail_scroll'):
-            self.thumbnail_scroll.setVisible(True)
-
-        # Transition to stitching step
-        self.current_step = WorkflowStep.STITCHING
-        self.step_title_label.setText("Document Stitching")
-        self.step_indicator_label.setText("Step 1 of 5")  # Phase 7: Updated to reflect bundle suggestions
+        # Show manual view
+        self._show_manual_view()
 
         # Load first page for manual stitching
         if self.all_files and self.current_file_index < len(self.all_files):
