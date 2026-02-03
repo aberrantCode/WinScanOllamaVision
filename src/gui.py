@@ -6095,11 +6095,17 @@ class StartupWindow(QWidget):
         from analysis_db import AnalysisDB
         import glob
 
+        def log(msg):
+            with open("app.log", "a") as f:
+                f.write(f"{msg}\n")
+
         analysis_db = AnalysisDB()
 
         # Get scan folder
         scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
+        log(f"[DEBUG] Scan folder: {scan_folder}")
         if not scan_folder or not os.path.exists(scan_folder):
+            log(f"[DEBUG] Scan folder doesn't exist or not set")
             analysis_db.close()
             return
 
@@ -6110,7 +6116,9 @@ class StartupWindow(QWidget):
         image_files = list(image_files_set)
 
         total_files = len(image_files)
+        log(f"[DEBUG] Total files found: {total_files}")
         if total_files == 0:
+            log(f"[DEBUG] No files found, returning")
             analysis_db.close()
             return
 
@@ -6123,13 +6131,20 @@ class StartupWindow(QWidget):
         analysis_db.close()
 
         unanalyzed_count = total_files - analyzed_count
+        log(f"[DEBUG] Analyzed: {analyzed_count}, Unanalyzed: {unanalyzed_count}")
 
         # Show welcome dialog if many unanalyzed files
         if unanalyzed_count > 0:
+            log(f"[DEBUG] Showing dialog for {unanalyzed_count} unanalyzed files")
             # Estimate time (rough estimate: 3 seconds per page)
             estimated_minutes = (unanalyzed_count * 3) // 60
             time_estimate = f"{estimated_minutes} minutes" if estimated_minutes > 0 else "less than a minute"
 
+            # Ensure window is active and has focus before showing dialog
+            self.activateWindow()
+            self.raise_()
+
+            log(f"[DEBUG] About to call QMessageBox.question()")
             reply = QMessageBox.question(
                 self,
                 'Analyze Documents?',
@@ -6140,6 +6155,7 @@ class StartupWindow(QWidget):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes
             )
+            log(f"[DEBUG] Dialog closed, reply: {reply}")
 
             if reply == QMessageBox.StandardButton.Yes:
                 self.start_analysis(analysis_service)
