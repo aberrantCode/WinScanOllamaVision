@@ -1656,12 +1656,16 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
         """Update visible provider settings panel"""
         provider = self.provider_combo.currentData()
 
+        # Safety check - ensure widgets are created before switching
+        if not hasattr(self, 'provider_stack'):
+            return
+
         # Use QStackedWidget's setCurrentWidget for proper switching
-        if provider == "ollama":
+        if provider == "ollama" and hasattr(self, 'ollama_settings_widget'):
             self.provider_stack.setCurrentWidget(self.ollama_settings_widget)
-        elif provider == "claude_cli":
+        elif provider == "claude_cli" and hasattr(self, 'claude_settings_widget'):
             self.provider_stack.setCurrentWidget(self.claude_settings_widget)
-        elif provider == "gemini_cli":
+        elif provider == "gemini_cli" and hasattr(self, 'gemini_settings_widget'):
             self.provider_stack.setCurrentWidget(self.gemini_settings_widget)
 
     def _on_auto_approval_toggled(self, state):
