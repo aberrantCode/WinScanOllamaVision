@@ -5866,15 +5866,17 @@ class StartupWindow(QWidget):
 
     def show_analysis_status(self):
         """Show the Analysis Status window"""
-        # Mark that user is viewing the status window
-        self._user_viewing_status = True
+        # Cancel auto-dismiss timer if it's running
+        if hasattr(self, '_banner_hide_timer') and self._banner_hide_timer.isActive():
+            self._banner_hide_timer.stop()
 
         status_window = AnalysisStatusWindow(self, self.analysis_service)
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        # When window closes, reset flag
+        # When window closes, hide the banner
         def on_close():
-            self._user_viewing_status = False
+            if hasattr(self, 'progress_banner'):
+                self.progress_banner.hide()
         status_window.finished.connect(on_close)
 
         status_window.show()
@@ -5978,11 +5980,11 @@ class StartupWindow(QWidget):
         # Update scanner stats
         self._update_scanner_stats()
 
-        # Auto-dismiss after 5 seconds (unless user is viewing the status window)
-        def maybe_hide_banner():
-            if not hasattr(self, '_user_viewing_status') or not self._user_viewing_status:
-                self.progress_banner.hide()
-        QTimer.singleShot(5000, maybe_hide_banner)
+        # Auto-dismiss after 5 seconds (can be cancelled if user opens status window)
+        self._banner_hide_timer = QTimer(self)
+        self._banner_hide_timer.setSingleShot(True)
+        self._banner_hide_timer.timeout.connect(self.progress_banner.hide)
+        self._banner_hide_timer.start(5000)
 
         self.analysis_worker = None
 
@@ -6004,7 +6006,13 @@ class StartupWindow(QWidget):
                 # Stop scanner animation
                 self._update_scanner_animation(False)
                 self.progress_banner.show_completion(False, "Analysis cancelled")
-                QTimer.singleShot(3000, self.progress_banner.hide)
+
+                # Auto-dismiss after 3 seconds (can be cancelled if user opens status window)
+                self._banner_hide_timer = QTimer(self)
+                self._banner_hide_timer.setSingleShot(True)
+                self._banner_hide_timer.timeout.connect(self.progress_banner.hide)
+                self._banner_hide_timer.start(3000)
+
                 # Update scanner stats
                 self._update_scanner_stats()
 
