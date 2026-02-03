@@ -5890,8 +5890,8 @@ class StartupWindow(QWidget):
         self.analysis_timer.timeout.connect(self._update_analysis_time)
         self.analysis_timer.start(1000)
 
-        # Create worker thread
-        self.analysis_worker = AnalysisWorker(analysis_service)
+        # Create worker thread with config_manager to avoid SQLite thread errors
+        self.analysis_worker = AnalysisWorker(self.config_manager)
         self.analysis_worker.progress.connect(self._on_analysis_progress)
         self.analysis_worker.finished.connect(self._on_analysis_finished)
         self.analysis_worker.start()
@@ -6206,9 +6206,9 @@ class AnalysisWorker(QThread):
     progress = pyqtSignal(str, int, int, dict)
     finished = pyqtSignal(dict)
 
-    def __init__(self, analysis_service):
+    def __init__(self, config_manager):
         super().__init__()
-        self.analysis_service = analysis_service
+        self.config_manager = config_manager
         self._cancelled = False
         self.current_stats = {
             'analyzed': 0,
@@ -6220,15 +6220,28 @@ class AnalysisWorker(QThread):
     def run(self):
         """Run analysis in background thread"""
         try:
+            # Create new database connections in this thread to avoid SQLite thread errors
+            from analysis_db import AnalysisDB
+            from metadata_db import MetadataDB
+            from analysis_service import AnalysisService
+
+            analysis_db = AnalysisDB()
+            metadata_db = MetadataDB()
+            analysis_service = AnalysisService(self.config_manager, analysis_db, metadata_db)
+
             def progress_callback(status_text, current, total):
                 if self._cancelled:
                     raise InterruptedError("Analysis cancelled by user")
                 self.progress.emit(status_text, current, total, self.current_stats)
 
-            stats = self.analysis_service.scan_all_directories(
+            stats = analysis_service.scan_all_directories(
                 progress_callback=progress_callback,
                 incremental=True
             )
+
+            # Close database connections
+            analysis_db.close()
+            metadata_db.close()
 
             self.current_stats.update(stats)
             self.finished.emit(stats)

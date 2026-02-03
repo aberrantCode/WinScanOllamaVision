@@ -157,6 +157,7 @@ class AnalysisStatusWindow(QDialog):
     def _create_current_status_tab(self) -> QWidget:
         """Create the Current Status tab"""
         widget = QWidget()
+        widget.setStyleSheet("QWidget { background-color: white; }")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
@@ -220,6 +221,7 @@ class AnalysisStatusWindow(QDialog):
     def _create_recent_runs_tab(self) -> QWidget:
         """Create the Recent Runs tab"""
         widget = QWidget()
+        widget.setStyleSheet("QWidget { background-color: white; }")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
@@ -246,6 +248,7 @@ class AnalysisStatusWindow(QDialog):
     def _create_file_details_tab(self) -> QWidget:
         """Create the File Details tab"""
         widget = QWidget()
+        widget.setStyleSheet("QWidget { background-color: white; }")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
@@ -298,6 +301,7 @@ class AnalysisStatusWindow(QDialog):
     def _create_statistics_tab(self) -> QWidget:
         """Create the Statistics tab"""
         widget = QWidget()
+        widget.setStyleSheet("QWidget { background-color: white; }")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
