@@ -427,7 +427,7 @@ class WorkflowStep(Enum):
 class ConvertPDFsWindow(QMainWindow):
     """Window for extracting pages from PDFs for re-bundling"""
 
-    def __init__(self):
+    def __init__(self, pdf_files=None):
         super().__init__()
         self.config_manager = ConfigManager()
         self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
@@ -441,12 +441,15 @@ class ConvertPDFsWindow(QMainWindow):
 
         # State
         self.current_step = 1
-        self.pdf_files = []
+        self.pdf_files = pdf_files if pdf_files else []
         self.selected_pdfs = []
         self.extraction_results = []
 
         self._init_ui()
-        self._load_pdfs()
+
+        # If no PDF files provided, load from scan folder
+        if not self.pdf_files:
+            self._load_pdfs()
 
     def _init_ui(self):
         """Initialize the UI with 3-step workflow"""
@@ -5804,17 +5807,27 @@ class StartupWindow(QWidget):
         self._check_for_pdfs()
 
     def _check_for_pdfs(self):
-        scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
-        if not os.path.isdir(scan_folder):
-            self.extract_button.setEnabled(False)
-            return
-        
-        pdf_files = [f for f in os.listdir(scan_folder) if f.lower().endswith('.pdf')]
-        self.extract_button.setEnabled(len(pdf_files) > 0)
+        """No longer needed - button is always enabled for manual PDF selection"""
+        pass
 
     def _process_pdfs(self):
-        """Open the Convert PDFs window"""
-        convert_pdfs_window = ConvertPDFsWindow()
+        """Open file dialog to select PDFs, then convert them to PNGs"""
+        from PyQt6.QtWidgets import QFileDialog
+
+        # Open file dialog to select PDF files
+        pdf_files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select PDF Files to Convert",
+            "",
+            "PDF Files (*.pdf);;All Files (*.*)"
+        )
+
+        if not pdf_files:
+            # User cancelled
+            return
+
+        # Open ConvertPDFsWindow with selected files
+        convert_pdfs_window = ConvertPDFsWindow(pdf_files=pdf_files)
         convert_pdfs_window.show()
         convert_pdfs_window.exec()
 
