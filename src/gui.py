@@ -5760,6 +5760,14 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
+        # Analyze Documents button - moved to top with blue background
+        analyze_button = QPushButton("🔍 Analyze Documents")
+        analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        analyze_button.setMinimumHeight(60)
+        analyze_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
+        analyze_button.clicked.connect(self.manual_analyze_documents)
+        button_layout.addWidget(analyze_button)
+
         process_button = QPushButton("Convert Scans")
         process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         process_button.setMinimumHeight(60)
@@ -5781,21 +5789,6 @@ class StartupWindow(QWidget):
         settings_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
         settings_button.clicked.connect(self.show_settings_window)
         button_layout.addWidget(settings_button)
-
-        # Analyze Documents button
-        analyze_button = QPushButton("🔍 Analyze Documents")
-        analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        analyze_button.setMinimumHeight(60)
-        analyze_button.setStyleSheet("QPushButton { background-color: #059669; color: white; border: 2px solid #047857; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #047857; }")
-        analyze_button.clicked.connect(self.manual_analyze_documents)
-        button_layout.addWidget(analyze_button)
-
-        analysis_status_button = QPushButton("📊 Analysis Status")
-        analysis_status_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        analysis_status_button.setMinimumHeight(60)
-        analysis_status_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
-        analysis_status_button.clicked.connect(self.show_analysis_status)
-        button_layout.addWidget(analysis_status_button)
 
         quit_button = QPushButton("Quit")
         quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
