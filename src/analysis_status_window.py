@@ -260,11 +260,17 @@ class AnalysisStatusWindow(QDialog):
         self.start_analysis_button.clicked.connect(self._start_analysis)
         button_layout.addWidget(self.start_analysis_button)
 
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setStyleSheet(get_button_style('danger'))
-        self.cancel_button.clicked.connect(self._cancel_analysis)
-        self.cancel_button.setVisible(False)
-        button_layout.addWidget(self.cancel_button)
+        self.stop_button = QPushButton("Stop Analysis")
+        self.stop_button.setStyleSheet(get_button_style('secondary'))
+        self.stop_button.clicked.connect(self._stop_analysis)
+        self.stop_button.setVisible(False)
+        button_layout.addWidget(self.stop_button)
+
+        self.abort_button = QPushButton("Abort Analysis")
+        self.abort_button.setStyleSheet(get_button_style('danger'))
+        self.abort_button.clicked.connect(self._abort_analysis)
+        self.abort_button.setVisible(False)
+        button_layout.addWidget(self.abort_button)
 
         self.retry_failed_button = QPushButton("Retry Failed")
         self.retry_failed_button.clicked.connect(self._retry_failed)
@@ -971,7 +977,8 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
 
         # Update buttons
         self.start_analysis_button.setEnabled(False)
-        self.cancel_button.setVisible(True)
+        self.stop_button.setVisible(True)
+        self.abort_button.setVisible(True)
 
         # Start elapsed time timer
         import time
@@ -1047,7 +1054,8 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
 
         # Update buttons
         self.start_analysis_button.setEnabled(True)
-        self.cancel_button.setVisible(False)
+        self.stop_button.setVisible(False)
+        self.abort_button.setVisible(False)
 
         # Clear worker reference
         self.analysis_worker = None
@@ -1055,20 +1063,36 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         # Refresh all data
         self._refresh_all()
 
-    def _cancel_analysis(self):
-        """Cancel ongoing analysis"""
+    def _stop_analysis(self):
+        """Stop ongoing analysis and save partial results"""
         if not self.analysis_worker or not self.analysis_worker.isRunning():
             return
 
         reply = show_question(
             self,
-            "Cancel Analysis?",
-            "Analysis is in progress. Do you want to cancel?\n\n"
-            "Already analyzed pages will be kept."
+            "Stop Analysis?",
+            "Stop analysis and save partial results?\n\n"
+            "Already analyzed pages will be saved."
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            self.analysis_worker.cancel()
+            self.analysis_worker.cancel(abort=False)
+            # UI updates will happen via the finished signal
+
+    def _abort_analysis(self):
+        """Abort ongoing analysis without saving results"""
+        if not self.analysis_worker or not self.analysis_worker.isRunning():
+            return
+
+        reply = show_question(
+            self,
+            "Abort Analysis?",
+            "Abort analysis without saving results?\n\n"
+            "All progress will be discarded."
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.analysis_worker.cancel(abort=True)
             # UI updates will happen via the finished signal
 
     def _update_elapsed_time(self):

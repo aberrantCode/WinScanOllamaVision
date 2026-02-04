@@ -53,7 +53,8 @@ class AnalysisService:
     def scan_all_directories(
         self,
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
-        incremental: bool = True
+        incremental: bool = True,
+        abort_check: Optional[Callable[[], bool]] = None
     ) -> Dict[str, Any]:
         """
         Scan all configured source directories and analyze pages.
@@ -61,6 +62,7 @@ class AnalysisService:
         Args:
             progress_callback: Optional callback(status_text, current, total)
             incremental: If True, skip already-analyzed files (cache-aware)
+            abort_check: Optional callback that returns True if analysis should be aborted without saving
 
         Returns:
             Dictionary with analysis statistics
@@ -191,16 +193,29 @@ class AnalysisService:
             raise  # Re-raise to let caller handle it
 
         finally:
-            # Always update the run with final statistics
-            self.analysis_db.update_analysis_run(
-                run_id=run_id,
-                analyzed=stats['analyzed'],
-                cached=stats['cached'],
-                errors=stats['errors'],
-                skipped=stats['skipped'],
-                status=run_status
-            )
-            self._log(f"[SCAN] Run {run_id} finalized - Stats: {stats}")
+            # Check if analysis was aborted (don't save results)
+            if abort_check and abort_check():
+                # Abort mode - mark as aborted with zero stats
+                self.analysis_db.update_analysis_run(
+                    run_id=run_id,
+                    analyzed=0,
+                    cached=0,
+                    errors=0,
+                    skipped=0,
+                    status='aborted'
+                )
+                self._log(f"[SCAN] Run {run_id} aborted - no results saved")
+            else:
+                # Normal completion or stop (save partial results)
+                self.analysis_db.update_analysis_run(
+                    run_id=run_id,
+                    analyzed=stats['analyzed'],
+                    cached=stats['cached'],
+                    errors=stats['errors'],
+                    skipped=stats['skipped'],
+                    status=run_status
+                )
+                self._log(f"[SCAN] Run {run_id} finalized - Stats: {stats}")
 
         return stats
 

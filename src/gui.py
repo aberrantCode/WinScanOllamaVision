@@ -6089,6 +6089,7 @@ class AnalysisWorker(QThread):
         super().__init__()
         self.config_manager = config_manager
         self._cancelled = False
+        self._abort_mode = False
         self.current_stats = {
             'analyzed': 0,
             'cached': 0,
@@ -6113,9 +6114,13 @@ class AnalysisWorker(QThread):
                     raise InterruptedError("Analysis cancelled by user")
                 self.progress.emit(status_text, current, total, self.current_stats)
 
+            def abort_check():
+                return self._abort_mode
+
             stats = analysis_service.scan_all_directories(
                 progress_callback=progress_callback,
-                incremental=True
+                incremental=True,
+                abort_check=abort_check
             )
 
             # Close database connections
@@ -6126,13 +6131,24 @@ class AnalysisWorker(QThread):
             self.finished.emit(stats)
 
         except InterruptedError:
-            self.finished.emit({
-                'total_files': self.current_stats.get('total_files', 0),
-                'analyzed': self.current_stats.get('analyzed', 0),
-                'cached': self.current_stats.get('cached', 0),
-                'errors': self.current_stats.get('errors', 0),
-                'message': 'Analysis cancelled'
-            })
+            if self._abort_mode:
+                # Abort mode - don't report any results
+                self.finished.emit({
+                    'total_files': 0,
+                    'analyzed': 0,
+                    'cached': 0,
+                    'errors': 0,
+                    'message': 'Analysis aborted'
+                })
+            else:
+                # Stop mode - report partial results
+                self.finished.emit({
+                    'total_files': self.current_stats.get('total_files', 0),
+                    'analyzed': self.current_stats.get('analyzed', 0),
+                    'cached': self.current_stats.get('cached', 0),
+                    'errors': self.current_stats.get('errors', 0),
+                    'message': 'Analysis stopped'
+                })
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -6144,9 +6160,14 @@ class AnalysisWorker(QThread):
                 'message': f'Analysis error: {str(e)}'
             })
 
-    def cancel(self):
-        """Cancel the analysis"""
+    def cancel(self, abort=False):
+        """Cancel the analysis
+
+        Args:
+            abort: If True, don't save partial results; if False, save partial results
+        """
         self._cancelled = True
+        self._abort_mode = abort
 
 
 class SpecificFilesAnalysisWorker(QThread):
