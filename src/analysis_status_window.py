@@ -318,21 +318,66 @@ class AnalysisStatusWindow(QDialog):
 
         # Filter controls
         filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(8)
 
-        filter_layout.addWidget(QLabel("Filter:"))
+        # Filter label
+        filter_label = QLabel("Filter:")
+        filter_label.setStyleSheet("color: #374151; font-size: 10pt; font-weight: 600; background-color: transparent;")
+        filter_layout.addWidget(filter_label)
 
+        # Filter combo box
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["All", "Analyzed", "Cached", "Failed"])
         self.filter_combo.currentTextChanged.connect(self._apply_file_filter)
+        self.filter_combo.setMinimumWidth(120)
+        self.filter_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #D1D5DB;
+                border-radius: 6px;
+                padding: 6px 10px;
+                background-color: white;
+                color: #1F2937;
+                font-size: 10pt;
+            }
+            QComboBox:hover {
+                border-color: #3B82F6;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                width: 12px;
+                height: 12px;
+            }
+        """)
         filter_layout.addWidget(self.filter_combo)
 
         filter_layout.addSpacing(20)
 
-        filter_layout.addWidget(QLabel("Search:"))
+        # Search label
+        search_label = QLabel("Search:")
+        search_label.setStyleSheet("color: #374151; font-size: 10pt; font-weight: 600; background-color: transparent;")
+        filter_layout.addWidget(search_label)
 
+        # Search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search filename...")
         self.search_input.textChanged.connect(self._apply_file_filter)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #D1D5DB;
+                border-radius: 6px;
+                padding: 6px 10px;
+                background-color: white;
+                color: #1F2937;
+                font-size: 10pt;
+            }
+            QLineEdit:focus {
+                border-color: #3B82F6;
+                outline: none;
+            }
+        """)
         filter_layout.addWidget(self.search_input, 1)
 
         layout.addLayout(filter_layout)
