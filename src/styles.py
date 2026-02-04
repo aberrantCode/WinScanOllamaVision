@@ -53,94 +53,64 @@ class Colors:
 
 # ===== BUTTON STYLES =====
 
-def get_primary_button_style():
-    """Modern primary button with hover lift effect"""
+def get_button_style(color='primary'):
+    """
+    Unified button style with consistent sizing and optional color.
+
+    Args:
+        color: Button color variant ('primary', 'success', 'danger', 'secondary', 'gray')
+
+    Returns:
+        CSS stylesheet string for QPushButton
+    """
+    # Color mapping
+    color_map = {
+        'primary': (Colors.PRIMARY, Colors.PRIMARY_HOVER),
+        'success': (Colors.SUCCESS, Colors.SUCCESS_HOVER),
+        'danger': (Colors.DANGER, Colors.DANGER_HOVER),
+        'secondary': (Colors.GRAY_200, Colors.GRAY_300),
+        'gray': (Colors.GRAY_200, Colors.GRAY_300),
+    }
+
+    bg_color, hover_color = color_map.get(color, color_map['primary'])
+
+    # Text color based on background
+    text_color = Colors.WHITE if color in ['primary', 'success', 'danger'] else Colors.GRAY_900
+
     return f"""
         QPushButton {{
-            background-color: {Colors.PRIMARY};
-            color: {Colors.WHITE};
+            background-color: {bg_color};
+            color: {text_color};
             border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-size: 11pt;
-            font-weight: 600;
-            min-height: 40px;
+            border-radius: 5px;
+            padding: 8px 16px;
+            font-size: 10pt;
+            min-width: 100px;
         }}
         QPushButton:hover {{
-            background-color: {Colors.PRIMARY_HOVER};
-            padding-top: 10px;
-            padding-bottom: 14px;
-        }}
-        QPushButton:pressed {{
-            background-color: {Colors.PRIMARY_HOVER};
-            padding-top: 13px;
-            padding-bottom: 11px;
+            background-color: {hover_color};
         }}
         QPushButton:disabled {{
             background-color: {Colors.GRAY_300};
             color: {Colors.GRAY_500};
         }}
     """
+
+
+# Legacy functions for backward compatibility (deprecated - use get_button_style instead)
+def get_primary_button_style():
+    """Deprecated: Use get_button_style('primary') instead"""
+    return get_button_style('primary')
 
 
 def get_success_button_style():
-    """Success button (green) with hover effect"""
-    return f"""
-        QPushButton {{
-            background-color: {Colors.SUCCESS};
-            color: {Colors.WHITE};
-            border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-size: 11pt;
-            font-weight: 600;
-            min-height: 40px;
-        }}
-        QPushButton:hover {{
-            background-color: {Colors.SUCCESS_HOVER};
-            padding-top: 10px;
-            padding-bottom: 14px;
-        }}
-        QPushButton:pressed {{
-            background-color: {Colors.SUCCESS_HOVER};
-            padding-top: 13px;
-            padding-bottom: 11px;
-        }}
-        QPushButton:disabled {{
-            background-color: {Colors.GRAY_300};
-            color: {Colors.GRAY_500};
-        }}
-    """
+    """Deprecated: Use get_button_style('success') instead"""
+    return get_button_style('success')
 
 
 def get_danger_button_style():
-    """Danger button (red) with hover effect"""
-    return f"""
-        QPushButton {{
-            background-color: {Colors.DANGER};
-            color: {Colors.WHITE};
-            border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-size: 11pt;
-            font-weight: 600;
-            min-height: 40px;
-        }}
-        QPushButton:hover {{
-            background-color: {Colors.DANGER_HOVER};
-            padding-top: 10px;
-            padding-bottom: 14px;
-        }}
-        QPushButton:pressed {{
-            background-color: {Colors.DANGER_HOVER};
-            padding-top: 13px;
-            padding-bottom: 11px;
-        }}
-        QPushButton:disabled {{
-            background-color: {Colors.GRAY_300};
-            color: {Colors.GRAY_500};
-        }}
-    """
+    """Deprecated: Use get_button_style('danger') instead"""
+    return get_button_style('danger')
 
 
 def get_secondary_button_style():

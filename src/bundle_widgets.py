@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 from typing import List, Dict, Any
 import os
+from styles import get_button_style
 
 
 class BundleSuggestionCard(QFrame):
@@ -123,53 +124,17 @@ class BundleSuggestionCard(QFrame):
         button_layout = QHBoxLayout()
 
         accept_button = QPushButton("✓ Accept")
-        accept_button.setStyleSheet("""
-            QPushButton {
-                background-color: #059669;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #047857;
-            }
-        """)
+        accept_button.setStyleSheet(get_button_style('success'))
         accept_button.clicked.connect(self._on_accept)
         button_layout.addWidget(accept_button)
 
         modify_button = QPushButton("✎ Modify")
-        modify_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2563EB;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1D4ED8;
-            }
-        """)
+        modify_button.setStyleSheet(get_button_style('primary'))
         modify_button.clicked.connect(self._on_modify)
         button_layout.addWidget(modify_button)
 
         reject_button = QPushButton("✗ Reject")
-        reject_button.setStyleSheet("""
-            QPushButton {
-                background-color: #DC2626;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #B91C1C;
-            }
-        """)
+        reject_button.setStyleSheet(get_button_style('danger'))
         reject_button.clicked.connect(self._on_reject)
         button_layout.addWidget(reject_button)
 
@@ -265,36 +230,12 @@ class BundleSuggestionsView(QWidget):
 
         # Action buttons
         accept_all_btn = QPushButton("Accept All High Confidence")
-        accept_all_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #059669;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 20px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #047857;
-            }
-        """)
+        accept_all_btn.setStyleSheet(get_button_style('success'))
         accept_all_btn.clicked.connect(self.accept_all_high.emit)
         header_layout.addWidget(accept_all_btn)
 
         skip_btn = QPushButton("Review Manually")
-        skip_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #6B7280;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 20px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #4B5563;
-            }
-        """)
+        skip_btn.setStyleSheet(get_button_style('secondary'))
         skip_btn.clicked.connect(self.skip_to_manual.emit)
         header_layout.addWidget(skip_btn)
 
