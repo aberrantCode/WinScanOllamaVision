@@ -266,6 +266,27 @@ class AnalysisDB:
             ON source_directories(is_active)
         """)
 
+        # Additional indices for Analysis Status Window transformation
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analysis_confidence
+            ON analysis_results(confidence_score)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analysis_company_type
+            ON analysis_results(company, document_type)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analysis_date
+            ON analysis_results(analyzed_at DESC)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bundle_status
+            ON document_bundles(status)
+        """)
+
         self.connection.commit()
 
     # ==================== Analysis Results Methods ====================
@@ -1132,6 +1153,462 @@ class AnalysisDB:
 
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+    # ==================== Analysis Status Window Transformation Methods ====================
+
+    def get_collection_summary(self) -> Dict[str, Any]:
+        """
+        Get comprehensive collection summary for dashboard.
+
+        Returns:
+            Dict with keys:
+                - files_detected: Total files in source directories
+                - files_analyzed: Count from analysis_results
+                - high_confidence_count: Count with confidence >= 0.8
+                - pages_bundled: Count of pages in bundles
+                - documents_archived: Count from archived_metadata
+                - processing_speed: Pages per minute from last 100 analyses
+                - eta_minutes: Estimated time remaining
+                - avg_confidence: Average confidence score
+                - error_rate: Percentage of errors
+                - metadata_completeness: Per-field completion percentages
+                - cache_hit_rate: Percentage of cached results
+        """
+        summary = {
+            'files_detected': self._count_detected_files(),
+            'files_analyzed': 0,
+            'high_confidence_count': self._count_high_confidence(),
+            'pages_bundled': self._count_bundled_pages(),
+            'documents_archived': 0,
+            'processing_speed': self._calculate_processing_speed(),
+            'eta_minutes': 0,
+            'avg_confidence': 0.0,
+            'error_rate': 0.0,
+            'metadata_completeness': self._get_metadata_completeness(),
+            'cache_hit_rate': 0.0
+        }
+
+        cursor = self.connection.cursor()
+
+        # Files analyzed
+        cursor.execute("SELECT COUNT(*) as count FROM analysis_results")
+        summary['files_analyzed'] = cursor.fetchone()['count']
+
+        # Documents archived (from MetadataDB - table may not exist in analysis DB)
+        try:
+            cursor.execute("SELECT COUNT(*) as count FROM archived_metadata")
+            summary['documents_archived'] = cursor.fetchone()['count']
+        except sqlite3.OperationalError:
+            # Table doesn't exist (separate MetadataDB)
+            summary['documents_archived'] = 0
+
+        # Average confidence (excluding nulls)
+        cursor.execute("""
+            SELECT AVG(confidence_score) as avg_conf
+            FROM analysis_results
+            WHERE confidence_score IS NOT NULL
+        """)
+        result = cursor.fetchone()
+        summary['avg_confidence'] = result['avg_conf'] if result['avg_conf'] is not None else 0.0
+
+        # Cache hit rate
+        if summary['files_analyzed'] > 0:
+            cursor.execute("SELECT COUNT(*) as count FROM analysis_results WHERE is_cached = 1")
+            cached_count = cursor.fetchone()['count']
+            summary['cache_hit_rate'] = (cached_count / summary['files_analyzed']) * 100
+
+        # Error rate (from analysis_errors table)
+        cursor.execute("SELECT COUNT(DISTINCT file_path) as error_count FROM analysis_errors")
+        error_count = cursor.fetchone()['error_count']
+        if summary['files_analyzed'] > 0:
+            summary['error_rate'] = (error_count / summary['files_analyzed']) * 100
+
+        # Calculate ETA
+        summary['eta_minutes'] = self._calculate_eta(summary['files_detected'], summary['files_analyzed'], summary['processing_speed'])
+
+        return summary
+
+    def get_action_items(self) -> Dict[str, int]:
+        """
+        Get counts for actionable items.
+
+        Returns:
+            Dict with keys:
+                - pending_analysis: Files detected but not yet analyzed
+                - pending_bundles: Bundles in 'suggested' status
+                - failed_files: Files with analysis errors
+                - unbundled_files: Analyzed files not in any bundle
+        """
+        cursor = self.connection.cursor()
+
+        action_items = {
+            'pending_analysis': 0,
+            'pending_bundles': self._count_pending_bundles(),
+            'failed_files': 0,
+            'unbundled_files': 0
+        }
+
+        # Pending analysis = detected - analyzed
+        files_detected = self._count_detected_files()
+        cursor.execute("SELECT COUNT(*) as count FROM analysis_results")
+        files_analyzed = cursor.fetchone()['count']
+        action_items['pending_analysis'] = max(0, files_detected - files_analyzed)
+
+        # Failed files (distinct file paths from errors)
+        cursor.execute("SELECT COUNT(DISTINCT file_path) as count FROM analysis_errors")
+        action_items['failed_files'] = cursor.fetchone()['count']
+
+        # Unbundled files = analyzed - bundled
+        action_items['unbundled_files'] = max(0, files_analyzed - self._count_bundled_pages())
+
+        return action_items
+
+    def get_document_insights(self) -> Dict[str, Any]:
+        """
+        Get document-level insights and statistics.
+
+        Returns:
+            Dict with keys:
+                - total_documents: Total archived documents
+                - total_archived_pages: Total pages in archived documents
+                - avg_pages_per_doc: Average pages per document
+                - bundle_acceptance_rate: Percentage of accepted bundles
+                - pending_bundle_count: Number of pending bundles
+                - type_distribution: Dict mapping document type to count
+                - company_distribution: Dict mapping company to count
+        """
+        cursor = self.connection.cursor()
+
+        insights = {
+            'total_documents': 0,
+            'total_archived_pages': 0,
+            'avg_pages_per_doc': 0.0,
+            'bundle_acceptance_rate': self._calc_bundle_acceptance_rate(),
+            'pending_bundle_count': self._count_pending_bundles(),
+            'type_distribution': self._get_type_distribution(),
+            'company_distribution': self._get_company_distribution()
+        }
+
+        # Total documents and pages from archived_metadata (table may not exist in analysis DB)
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as doc_count,
+                    SUM(total_pages) as page_count
+                FROM archived_metadata
+            """)
+            result = cursor.fetchone()
+            insights['total_documents'] = result['doc_count']
+            insights['total_archived_pages'] = result['page_count'] if result['page_count'] is not None else 0
+        except sqlite3.OperationalError:
+            # Table doesn't exist (separate MetadataDB)
+            pass
+
+        # Average pages per document
+        if insights['total_documents'] > 0:
+            insights['avg_pages_per_doc'] = insights['total_archived_pages'] / insights['total_documents']
+
+        return insights
+
+    def get_analyzed_pages_detailed(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Get all analysis results with full metadata for grid display.
+
+        Args:
+            filters: Optional filters dict with keys:
+                - company: Filter by company name
+                - document_type: Filter by document type
+                - confidence_min: Minimum confidence score
+                - date_from: Filter by analyzed_at >= date
+                - date_to: Filter by analyzed_at <= date
+                - search_text: Search in file_path
+                - status: Filter by status (analyzed, cached, failed)
+
+        Returns:
+            List of analysis result dicts with 18 fields:
+                - id, file_path, file_hash, provider_name, model_name
+                - document_type, company, document_date, page_number, total_pages
+                - belongs_to_same_doc, confidence_score, rotation_needed, suggested_rotation
+                - rotation_confidence, analyzed_at, processing_time_ms, is_cached
+        """
+        cursor = self.connection.cursor()
+
+        query = """
+            SELECT
+                id, file_path, file_hash, provider_name, model_name,
+                document_type, company, document_date, page_number, total_pages,
+                belongs_to_same_doc, confidence_score, rotation_needed, suggested_rotation,
+                rotation_confidence, analyzed_at, processing_time_ms, is_cached
+            FROM analysis_results
+            WHERE 1=1
+        """
+        params = []
+
+        if filters:
+            if filters.get('company'):
+                query += " AND company LIKE ?"
+                params.append(f"%{filters['company']}%")
+
+            if filters.get('document_type'):
+                query += " AND document_type LIKE ?"
+                params.append(f"%{filters['document_type']}%")
+
+            if filters.get('confidence_min') is not None:
+                query += " AND confidence_score >= ?"
+                params.append(filters['confidence_min'])
+
+            if filters.get('date_from'):
+                query += " AND analyzed_at >= ?"
+                params.append(filters['date_from'])
+
+            if filters.get('date_to'):
+                query += " AND analyzed_at <= ?"
+                params.append(filters['date_to'])
+
+            if filters.get('search_text'):
+                query += " AND file_path LIKE ?"
+                params.append(f"%{filters['search_text']}%")
+
+            if filters.get('status') == 'cached':
+                query += " AND is_cached = 1"
+            elif filters.get('status') == 'analyzed':
+                query += " AND is_cached = 0"
+            elif filters.get('status') == 'failed':
+                query += " AND id IN (SELECT DISTINCT ae.file_path FROM analysis_errors ae)"
+
+        query += " ORDER BY analyzed_at DESC"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    # ==================== Helper Methods for Calculations ====================
+
+    def _count_detected_files(self) -> int:
+        """
+        Count total files detected in all active source directories.
+
+        Returns:
+            Total count of image files (.png, .jpg, .jpeg, .tiff, .tif)
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT directory_path FROM source_directories WHERE is_active = 1")
+        directories = [row['directory_path'] for row in cursor.fetchall()]
+
+        total_files = 0
+        valid_extensions = {'.png', '.jpg', '.jpeg', '.tiff', '.tif'}
+
+        for directory in directories:
+            if os.path.exists(directory):
+                try:
+                    for filename in os.listdir(directory):
+                        _, ext = os.path.splitext(filename)
+                        if ext.lower() in valid_extensions:
+                            total_files += 1
+                except (PermissionError, OSError):
+                    # Skip directories we can't access
+                    continue
+
+        return total_files
+
+    def _count_high_confidence(self) -> int:
+        """
+        Count analysis results with confidence >= 0.8.
+
+        Returns:
+            Count of high confidence analyses
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM analysis_results
+            WHERE confidence_score >= 0.8
+        """)
+        return cursor.fetchone()['count']
+
+    def _count_bundled_pages(self) -> int:
+        """
+        Count total pages that are part of any bundle.
+
+        Returns:
+            Count of bundled pages
+        """
+        cursor = self.connection.cursor()
+
+        # Sum of total_pages from all bundles (not status='rejected')
+        cursor.execute("""
+            SELECT SUM(total_pages) as total
+            FROM document_bundles
+            WHERE status != 'rejected'
+        """)
+        result = cursor.fetchone()
+        return result['total'] if result['total'] is not None else 0
+
+    def _calculate_processing_speed(self) -> float:
+        """
+        Calculate processing speed from last 100 analyses.
+
+        Returns:
+            Pages per minute, or 0 if insufficient data
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT AVG(processing_time_ms) as avg_time
+            FROM (
+                SELECT processing_time_ms
+                FROM analysis_results
+                WHERE processing_time_ms IS NOT NULL
+                ORDER BY analyzed_at DESC
+                LIMIT 100
+            )
+        """)
+        result = cursor.fetchone()
+
+        if result['avg_time'] is None or result['avg_time'] == 0:
+            return 0.0
+
+        # Convert ms per page to pages per minute
+        avg_time_sec = result['avg_time'] / 1000.0
+        pages_per_minute = 60.0 / avg_time_sec if avg_time_sec > 0 else 0.0
+
+        return pages_per_minute
+
+    def _calculate_eta(self, files_detected: int, files_analyzed: int, processing_speed: float) -> float:
+        """
+        Calculate estimated time remaining in minutes.
+
+        Args:
+            files_detected: Total files detected
+            files_analyzed: Files already analyzed
+            processing_speed: Pages per minute
+
+        Returns:
+            Estimated minutes remaining, or 0 if N/A
+        """
+        pending = max(0, files_detected - files_analyzed)
+
+        if pending == 0 or processing_speed == 0:
+            return 0.0
+
+        return pending / processing_speed
+
+    def _get_metadata_completeness(self) -> Dict[str, float]:
+        """
+        Calculate metadata completeness percentages per field.
+
+        Returns:
+            Dict mapping field name to completion percentage
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("SELECT COUNT(*) as total FROM analysis_results")
+        total = cursor.fetchone()['total']
+
+        if total == 0:
+            return {
+                'company': 0.0,
+                'document_type': 0.0,
+                'document_date': 0.0,
+                'page_number': 0.0,
+                'total_pages': 0.0
+            }
+
+        completeness = {}
+        fields = ['company', 'document_type', 'document_date', 'page_number', 'total_pages']
+
+        for field in fields:
+            cursor.execute(f"""
+                SELECT COUNT(*) as count
+                FROM analysis_results
+                WHERE {field} IS NOT NULL AND {field} != ''
+            """)
+            count = cursor.fetchone()['count']
+            completeness[field] = (count / total) * 100
+
+        return completeness
+
+    def _count_pending_bundles(self) -> int:
+        """
+        Count bundles with status='suggested'.
+
+        Returns:
+            Count of pending bundles
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM document_bundles
+            WHERE status = 'suggested'
+        """)
+        return cursor.fetchone()['count']
+
+    def _calc_bundle_acceptance_rate(self) -> float:
+        """
+        Calculate percentage of accepted bundles.
+
+        Returns:
+            Acceptance rate percentage, or 0 if no bundles
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("SELECT COUNT(*) as total FROM document_bundles")
+        total = cursor.fetchone()['total']
+
+        if total == 0:
+            return 0.0
+
+        cursor.execute("""
+            SELECT COUNT(*) as accepted
+            FROM document_bundles
+            WHERE status = 'accepted'
+        """)
+        accepted = cursor.fetchone()['accepted']
+
+        return (accepted / total) * 100
+
+    def _get_type_distribution(self) -> Dict[str, int]:
+        """
+        Get document type distribution from analysis results.
+
+        Returns:
+            Dict mapping document type to count, ordered by count descending
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT
+                COALESCE(document_type, 'Unknown') as doc_type,
+                COUNT(*) as count
+            FROM analysis_results
+            GROUP BY doc_type
+            ORDER BY count DESC
+        """)
+
+        rows = cursor.fetchall()
+        return {row['doc_type']: row['count'] for row in rows}
+
+    def _get_company_distribution(self) -> Dict[str, int]:
+        """
+        Get company distribution from analysis results.
+
+        Returns:
+            Dict mapping company name to count, ordered by count descending
+        """
+        cursor = self.connection.cursor()
+
+        cursor.execute("""
+            SELECT
+                COALESCE(company, 'Unknown') as company_name,
+                COUNT(*) as count
+            FROM analysis_results
+            GROUP BY company_name
+            ORDER BY count DESC
+        """)
+
+        rows = cursor.fetchall()
+        return {row['company_name']: row['count'] for row in rows}
 
     def close(self):
         """Close database connection"""

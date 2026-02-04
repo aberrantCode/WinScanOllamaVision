@@ -49,6 +49,7 @@ class Colors:
     BLACK = "#000000"
     BACKGROUND = "#F9FAFB"  # Light gray background
     BORDER = "#E5E7EB"  # Border color
+    WARNING_LIGHT = "#FFFBEB"  # Very light amber for warning backgrounds
 
 
 # ===== BUTTON STYLES =====
@@ -445,6 +446,143 @@ def get_danger_badge_style():
             padding: 4px 12px;
             font-size: 9pt;
             font-weight: 600;
+        }}
+    """
+
+
+# ===== ANALYSIS STATUS WINDOW STYLES =====
+
+def get_metric_card_style():
+    """Metric card for displaying statistics with border and padding"""
+    return f"""
+        QFrame {{
+            background-color: {Colors.WHITE};
+            border: 2px solid {Colors.BORDER};
+            border-radius: 10px;
+            padding: 16px;
+        }}
+        QFrame:hover {{
+            border-color: {Colors.PRIMARY_LIGHT};
+        }}
+    """
+
+
+def get_progress_bar_style(percentage: float) -> str:
+    """
+    Progress bar with color coding based on percentage.
+    Green for >80%, yellow for 60-80%, red for <60%.
+
+    Args:
+        percentage: Value from 0-100 to determine color
+    """
+    if percentage >= 80:
+        chunk_color = Colors.SUCCESS
+    elif percentage >= 60:
+        chunk_color = Colors.WARNING
+    else:
+        chunk_color = Colors.DANGER
+
+    return f"""
+        QProgressBar {{
+            background-color: {Colors.GRAY_200};
+            border: none;
+            border-radius: 10px;
+            height: 20px;
+            text-align: center;
+            color: {Colors.GRAY_900};
+            font-weight: 600;
+            font-size: 10pt;
+        }}
+        QProgressBar::chunk {{
+            background-color: {chunk_color};
+            border-radius: 10px;
+        }}
+    """
+
+
+def get_collapsible_section_style():
+    """Header bar style for collapsible sections with expand/collapse functionality"""
+    return f"""
+        QFrame {{
+            background-color: {Colors.GRAY_100};
+            border: 1px solid {Colors.BORDER};
+            border-radius: 8px;
+            padding: 12px 16px;
+        }}
+        QFrame:hover {{
+            background-color: {Colors.GRAY_200};
+        }}
+        QLabel {{
+            background-color: transparent;
+            color: {Colors.GRAY_900};
+            font-size: 11pt;
+            font-weight: 600;
+            border: none;
+        }}
+        QPushButton {{
+            background-color: transparent;
+            border: none;
+            color: {Colors.GRAY_700};
+            font-size: 14pt;
+            padding: 0px;
+            min-width: 24px;
+            max-width: 24px;
+            min-height: 24px;
+            max-height: 24px;
+        }}
+        QPushButton:hover {{
+            color: {Colors.PRIMARY};
+        }}
+    """
+
+
+def get_action_items_panel_style():
+    """Warning panel style for action items with light yellow background"""
+    return f"""
+        QFrame {{
+            background-color: {Colors.WARNING_LIGHT};
+            border: 2px solid {Colors.WARNING};
+            border-radius: 10px;
+            padding: 16px;
+        }}
+        QLabel {{
+            background-color: transparent;
+            color: {Colors.GRAY_900};
+        }}
+    """
+
+
+def get_distribution_bar_style():
+    """Smaller progress bar style for distribution visualizations"""
+    return f"""
+        QProgressBar {{
+            background-color: {Colors.GRAY_200};
+            border: none;
+            border-radius: 6px;
+            height: 12px;
+            text-align: center;
+        }}
+        QProgressBar::chunk {{
+            background-color: {Colors.PRIMARY};
+            border-radius: 6px;
+        }}
+    """
+
+
+def get_grid_toolbar_style():
+    """Toolbar frame style with panel background and proper spacing"""
+    return f"""
+        QFrame {{
+            background-color: {Colors.GRAY_50};
+            border: 1px solid {Colors.BORDER};
+            border-radius: 8px;
+            padding: 8px 12px;
+        }}
+        QLabel {{
+            background-color: transparent;
+            color: {Colors.GRAY_700};
+            font-size: 10pt;
+            border: none;
         }}
     """
 
