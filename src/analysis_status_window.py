@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from analysis_db import AnalysisDB
 from styles import (
     show_information, show_warning, show_question, show_critical,
-    Colors, get_primary_button_style, get_danger_button_style, get_success_button_style
+    Colors, get_button_style
 )
 import json
 import os
@@ -161,20 +161,7 @@ class AnalysisStatusWindow(QDialog):
         footer_layout.addWidget(self.export_button)
 
         self.clear_history_button = QPushButton("Clear History")
-        self.clear_history_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.DANGER};
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-size: 10pt;
-                min-width: 100px;
-            }}
-            QPushButton:hover {{
-                background-color: {Colors.DANGER_HOVER};
-            }}
-        """)
+        self.clear_history_button.setStyleSheet(get_button_style('danger'))
         self.clear_history_button.clicked.connect(self._clear_history)
         footer_layout.addWidget(self.clear_history_button)
 
@@ -269,41 +256,12 @@ class AnalysisStatusWindow(QDialog):
         button_layout = QHBoxLayout()
 
         self.start_analysis_button = QPushButton("Start Analysis")
-        self.start_analysis_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.SUCCESS};
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-size: 10pt;
-                min-width: 100px;
-            }}
-            QPushButton:hover {{
-                background-color: {Colors.SUCCESS_HOVER};
-            }}
-            QPushButton:disabled {{
-                background-color: #9CA3AF;
-            }}
-        """)
+        self.start_analysis_button.setStyleSheet(get_button_style('success'))
         self.start_analysis_button.clicked.connect(self._start_analysis)
         button_layout.addWidget(self.start_analysis_button)
 
         self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.DANGER};
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-size: 10pt;
-                min-width: 100px;
-            }}
-            QPushButton:hover {{
-                background-color: {Colors.DANGER_HOVER};
-            }}
-        """)
+        self.cancel_button.setStyleSheet(get_button_style('danger'))
         self.cancel_button.clicked.connect(self._cancel_analysis)
         self.cancel_button.setVisible(False)
         button_layout.addWidget(self.cancel_button)
@@ -1156,7 +1114,7 @@ class FileDetailsDialog(QDialog):
 
     def _init_ui(self):
         """Initialize the UI"""
-        from styles import Colors, get_primary_button_style
+        from styles import Colors, get_button_style
 
         filename = os.path.basename(self.file_data.get('file_path', 'Unknown'))
         self.setWindowTitle(f"Analysis Details: {filename}")
@@ -1290,27 +1248,14 @@ class FileDetailsDialog(QDialog):
         button_layout = QHBoxLayout()
 
         copy_button = QPushButton("Copy JSON")
-        copy_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.GRAY_200};
-                color: {Colors.GRAY_900};
-                border: none;
-                border-radius: 6px;
-                padding: 8px 20px;
-                font-weight: 600;
-                min-width: 100px;
-            }}
-            QPushButton:hover {{
-                background-color: {Colors.GRAY_300};
-            }}
-        """)
+        copy_button.setStyleSheet(get_button_style('secondary'))
         copy_button.clicked.connect(self._copy_json)
         button_layout.addWidget(copy_button)
 
         button_layout.addStretch()
 
         close_button = QPushButton("Close")
-        close_button.setStyleSheet(get_primary_button_style())
+        close_button.setStyleSheet(get_button_style('primary'))
         close_button.clicked.connect(self.accept)
         button_layout.addWidget(close_button)
 

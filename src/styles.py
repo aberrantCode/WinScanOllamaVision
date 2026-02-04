@@ -53,6 +53,40 @@ class Colors:
 
 # ===== BUTTON STYLES =====
 
+def get_button_style(color='primary'):
+    """
+    Global button style matching dialog default button (same as refresh button).
+
+    Args:
+        color: 'primary' (blue), 'success' (green), 'danger' (red), 'secondary' (gray)
+    """
+    colors = {
+        'primary': (Colors.PRIMARY, Colors.PRIMARY_HOVER),
+        'success': (Colors.SUCCESS, Colors.SUCCESS_HOVER),
+        'danger': (Colors.DANGER, Colors.DANGER_HOVER),
+        'secondary': (Colors.GRAY_200, Colors.GRAY_300),
+    }
+    bg, hover = colors.get(color, colors['primary'])
+    text = Colors.WHITE if color in ['primary', 'success', 'danger'] else Colors.GRAY_900
+
+    return f"""
+        QPushButton {{
+            background-color: {bg};
+            color: {text};
+            border: none;
+            border-radius: 5px;
+            padding: 8px 16px;
+            font-size: 10pt;
+            min-width: 100px;
+        }}
+        QPushButton:hover {{
+            background-color: {hover};
+        }}
+        QPushButton:disabled {{
+            background-color: #9CA3AF;
+        }}
+    """
+
 def get_primary_button_style():
     """Modern primary button with hover lift effect"""
     return f"""
