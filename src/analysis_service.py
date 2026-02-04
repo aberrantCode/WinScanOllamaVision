@@ -135,62 +135,73 @@ class AnalysisService:
         self._log(f"[SCAN] Starting run {run_id} with {stats['total_files']} files")
         self.analysis_db.start_analysis_run(run_id, stats['total_files'])
 
-        # Process all files
-        for idx, (directory, image_path) in enumerate(all_files):
-            current = idx + 1
+        try:
+            # Process all files
+            for idx, (directory, image_path) in enumerate(all_files):
+                current = idx + 1
 
-            if progress_callback:
-                progress_callback(
-                    f"Analyzing {os.path.basename(image_path)}...",
-                    current,
-                    stats['total_files']
-                )
+                if progress_callback:
+                    progress_callback(
+                        f"Analyzing {os.path.basename(image_path)}...",
+                        current,
+                        stats['total_files']
+                    )
 
-            # Analyze single page
-            result = self._analyze_single_page(image_path, incremental)
+                # Analyze single page
+                result = self._analyze_single_page(image_path, incremental)
 
-            if result['cached']:
-                stats['cached'] += 1
-            elif result['success']:
-                stats['analyzed'] += 1
-            elif result['skipped']:
-                stats['skipped'] += 1
-            else:
-                stats['errors'] += 1
-                error_msg = result.get('error', 'Unknown error')
-                self._log(f"[SCAN] File failed: {os.path.basename(image_path)} - Error: {error_msg}")
+                if result['cached']:
+                    stats['cached'] += 1
+                elif result['success']:
+                    stats['analyzed'] += 1
+                elif result['skipped']:
+                    stats['skipped'] += 1
+                else:
+                    stats['errors'] += 1
+                    error_msg = result.get('error', 'Unknown error')
+                    self._log(f"[SCAN] File failed: {os.path.basename(image_path)} - Error: {error_msg}")
 
-                # Save error to database
-                self.analysis_db.save_analysis_error(
-                    run_id=run_id,
-                    file_path=image_path,
-                    error_message=error_msg,
-                    error_type='analysis_failed'
-                )
+                    # Save error to database
+                    self.analysis_db.save_analysis_error(
+                        run_id=run_id,
+                        file_path=image_path,
+                        error_message=error_msg,
+                        error_type='analysis_failed'
+                    )
 
-        # Update directory scan info for each directory
-        for directory in directories:
-            if os.path.exists(directory):
-                # Count files in this directory
-                image_files_set = set()
-                for ext in ['*.png', '*.PNG', '*.jpg', '*.JPG', '*.jpeg', '*.JPEG']:
-                    image_files_set.update(glob.glob(os.path.join(directory, ext)))
-                self.analysis_db.update_directory_scan_info(directory, len(image_files_set))
+            # Update directory scan info for each directory
+            for directory in directories:
+                if os.path.exists(directory):
+                    # Count files in this directory
+                    image_files_set = set()
+                    for ext in ['*.png', '*.PNG', '*.jpg', '*.JPG', '*.jpeg', '*.JPEG']:
+                        image_files_set.update(glob.glob(os.path.join(directory, ext)))
+                    self.analysis_db.update_directory_scan_info(directory, len(image_files_set))
 
-        stats['processing_time_ms'] = int((time.time() - start_time) * 1000)
+            stats['processing_time_ms'] = int((time.time() - start_time) * 1000)
 
-        # Finalize the run
-        run_status = 'completed' if stats['errors'] == 0 else 'failed' if stats['errors'] == stats['total_files'] else 'completed'
-        self.analysis_db.update_analysis_run(
-            run_id=run_id,
-            analyzed=stats['analyzed'],
-            cached=stats['cached'],
-            errors=stats['errors'],
-            skipped=stats['skipped'],
-            status=run_status
-        )
+            # Finalize the run
+            run_status = 'completed' if stats['errors'] == 0 else 'failed' if stats['errors'] == stats['total_files'] else 'completed'
 
-        self._log(f"[SCAN] Completed run {run_id} - Stats: {stats}")
+        except InterruptedError:
+            # Analysis was cancelled - update with partial results
+            stats['processing_time_ms'] = int((time.time() - start_time) * 1000)
+            run_status = 'cancelled'
+            self._log(f"[SCAN] Run {run_id} cancelled by user")
+            raise  # Re-raise to let caller handle it
+
+        finally:
+            # Always update the run with final statistics
+            self.analysis_db.update_analysis_run(
+                run_id=run_id,
+                analyzed=stats['analyzed'],
+                cached=stats['cached'],
+                errors=stats['errors'],
+                skipped=stats['skipped'],
+                status=run_status
+            )
+            self._log(f"[SCAN] Run {run_id} finalized - Stats: {stats}")
+
         return stats
 
     def _analyze_single_page(
