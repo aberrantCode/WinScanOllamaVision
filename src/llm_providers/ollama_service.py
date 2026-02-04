@@ -3,7 +3,39 @@ import json
 import os
 from typing import List, Dict, Optional, Any
 import httpx
-from llm_providers.ollama_service import *  # noqa: F401,F403
+
+class OllamaService:
+    def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
+        """
+        Initialize OllamaService with configurable timeout.
+
+        Args:
+            base_url: Ollama server URL
+            timeout: Request timeout in seconds (default: 300 seconds / 5 minutes)
+        """
+        # The SDK uses OLLAMA_HOST environment variable or default localhost:11434
+        # We can set the host if needed
+        if base_url != "http://localhost:11434":
+            os.environ['OLLAMA_HOST'] = base_url
+        self.base_url = base_url
+        self.timeout = timeout
+
+        # Create client with timeout configuration
+        self.client = ollama.Client(
+            host=base_url,
+            timeout=httpx.Timeout(timeout)
+        )
+
+    def list_models(self) -> List[Dict[str, Any]]:
+        """Lists locally available Ollama models."""
+        try:
+            response = self.client.list()
+            return response.get("models", [])
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to Ollama server. Is it running? Error: {e}")
+
+    @staticmethod
+    def is_vision_model(model_name: str) -> bool:
         """
         Determine if a model is a vision model based on its name.
         Vision models typically have specific name patterns.
@@ -252,11 +284,11 @@ Respond ONLY with valid JSON in this format:
 CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, no code blocks.
 
 Required JSON format:
-{{
+{
   "company": "company name or null",
   "title": "document type or null",
   "date": "YYYY-MM-DD or null"
-}}
+}
 
 Task:
 1. Company: Organization name from headers/footers/logos
@@ -367,12 +399,12 @@ Determine the logical reading order based on:
 - Visual layout clues
 
 Respond with ONLY valid JSON:
-{{
+{
   "ordered_indices": [list of 0-based indices in correct order],
   "confidence": "high" or "medium" or "low"
-}}
+}
 
-Example for 3 pages: {{"ordered_indices": [1, 0, 2], "confidence": "high"}}
+Example for 3 pages: {"ordered_indices": [1, 0, 2], "confidence": "high"}
 
 Current order is: [0, 1, 2, ..., {len(image_paths)-1}]
 Provide the CORRECT order as indices."""
@@ -462,50 +494,3 @@ Example:
         except Exception as e:
             # Silently handle extraction errors
             return {"pages": []}
-
-
-# Example Usage (for testing during development)
-if __name__ == "__main__":
-    ollama_service = OllamaService()
-
-    try:
-        print("Listing available models...")
-        models = ollama_service.list_models()
-        if models:
-            print("Available models:")
-            for model in models:
-                print(f"- {model['name']}")
-        else:
-            print("No models found. Please pull some models using 'ollama pull <model_name>'.")
-
-        # Dummy image file for testing chat_with_vision_model
-        dummy_image_path = "temp_dummy_image.png"
-        from PIL import Image
-        img = Image.new('RGB', (60, 30), color = 'red')
-        img.save(dummy_image_path)
-
-        if models:
-            vision_model = next((m['name'] for m in models if 'vision' in m.get('family', '') or 'llava' in m['name'] or 'qwen' in m['name']), None)
-            if vision_model:
-                print(f"\nUsing vision model: {vision_model}")
-
-                # Test grouping validation
-                print("\nTesting grouping validation...")
-                is_grouped = ollama_service.validate_grouping(vision_model, [dummy_image_path])
-                print(f"Are images grouped? {is_grouped}")
-
-                # Test document info extraction
-                print("\nTesting document info extraction...")
-                doc_info = ollama_service.extract_document_info(vision_model, [dummy_image_path], "Invoice, Statement")
-                print(f"Extracted Info: {doc_info}")
-
-            else:
-                print("No suitable vision model found for testing chat functions.")
-
-        if os.path.exists(dummy_image_path):
-            os.remove(dummy_image_path)
-
-    except ConnectionError as e:
-        print(f"Connection Error: {e}")
-    except Exception as e:
-        print(f"An error occurred: {e}")

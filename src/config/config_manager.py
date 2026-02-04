@@ -3,7 +3,63 @@ import os
 import json
 from typing import List, Dict, Any, Optional
 
-from config.config_manager import *  # noqa: F401,F403
+class ConfigManager:
+    def __init__(self, config_file=None):
+        # If no config file specified, use AppData directory
+        if config_file is None:
+            appdata_root = os.getenv('APPDATA', os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming'))
+            appdata_dir = os.path.join(appdata_root, 'WinScanLLM')
+            config_file = os.path.join(appdata_dir, 'settings.ini')
+
+        self.config_file = config_file
+        self.config = configparser.ConfigParser()
+        self._load_config()
+
+    def _load_config(self):
+        if os.path.exists(self.config_file):
+            self.config.read(self.config_file)
+            # Ensure all default sections exist (for config files created before new providers added)
+            self._create_default_config()
+            self._save_config()
+        else:
+            self._create_default_config()
+            self._save_config()
+
+    def _create_default_config(self):
+        # Default LLM Provider settings
+        if 'LLMProvider' not in self.config:
+            self.config['LLMProvider'] = {
+                'active_provider': 'ollama',
+                'default_model': ''
+            }
+
+        # Default Ollama settings
+        if 'Ollama' not in self.config:
+            self.config['Ollama'] = {
+                'model': 'qwen2.5-vl', # Default vision model
+                'base_url': 'http://localhost:11434',
+                'timeout': '300'  # Timeout in seconds (5 minutes default for vision models)
+            }
+
+        # Claude CLI settings
+        if 'ClaudeCLI' not in self.config:
+            self.config['ClaudeCLI'] = {
+                'command_template': 'claude --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%',
+                'timeout': '300',
+                'models': 'claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
+                'default_model': 'claude-3-5-sonnet-20241022'
+            }
+
+        # Gemini CLI settings
+        if 'GeminiCLI' not in self.config:
+            self.config['GeminiCLI'] = {
+                'command_template': 'gemini --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%',
+                'timeout': '300',
+                'models': 'gemini-2.0-flash-exp,gemini-1.5-pro',
+                'default_model': 'gemini-2.0-flash-exp'
+            }
+
+        # Default Document Processing settings
         if 'DocumentProcessing' not in self.config:
             self.config['DocumentProcessing'] = {
                 'scan_folder': os.path.join(os.path.expanduser('~'), 'Pictures', 'Scans'),
@@ -168,26 +224,3 @@ from config.config_manager import *  # noqa: F401,F403
             return int(value)
         except ValueError:
             return default
-
-# Example Usage (for testing during development)
-if __name__ == "__main__":
-    # Create a temporary config file for testing
-    temp_config_file = 'temp_settings.ini'
-    config_manager = ConfigManager(temp_config_file)
-
-    print("Initial config (default or loaded):")
-    print(f"Ollama Model: {config_manager.get_setting('Ollama', 'model')}")
-    print(f"Scan Folder: {config_manager.get_setting('DocumentProcessing', 'scan_folder')}")
-    
-    config_manager.set_setting('Ollama', 'model', 'llava:latest')
-    config_manager.set_setting('DocumentProcessing', 'scan_folder', 'C:\\MyScans')
-    config_manager.set_setting('DocumentProcessing', 'title_keywords', 'Invoice,Receipt')
-
-    print("\nConfig after setting new values:")
-    print(f"Ollama Model: {config_manager.get_setting('Ollama', 'model')}")
-    print(f"Scan Folder: {config_manager.get_setting('DocumentProcessing', 'scan_folder')}")
-    print(f"Title Keywords: {config_manager.get_setting('DocumentProcessing', 'title_keywords')}")
-
-    # Clean up temporary file
-    if os.path.exists(temp_config_file):
-        os.remove(temp_config_file)

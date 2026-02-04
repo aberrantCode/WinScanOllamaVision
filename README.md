@@ -85,3 +85,57 @@ Navigate to the root directory of the project and run:
 python -m unittest discover tests
 ```
 This will execute all tests in the `tests/` directory.
+
+## Suggested repo layout (proposed)
+To make the codebase easier to navigate and maintain, consider organizing `src/` into logical subpackages. This is a non-destructive refactor suggestion — current imports/tests will continue to work, but new files should follow this layout.
+
+Recommended structure:
+
+```
+src/
+    main.py                      # App startup
+    ui/                          # All GUI widgets and windows
+        gui.py
+        analysis_status_window.py
+        settings_window_enhanced.py
+        file_details_grid.py
+        bundle_widgets.py
+        style.py
+        styles.py
+        style.qss
+    services/                    # Business logic and orchestration
+        analysis_service.py
+        bundling_service.py
+        file_processor.py
+        phase7_handlers.py
+        collection_status_helpers.py
+        appdata_manager.py
+    db/                          # Database wrappers / persistence
+        analysis_db.py
+        metadata_db.py
+    llm_providers/               # Provider implementations and factory
+        base_provider.py
+        provider_factory.py
+        command_builder.py
+        ollama_provider.py
+        claude_cli_provider.py
+        gemini_cli_provider.py
+    config/                      # Configuration helpers
+        config_manager.py
+    utils/                       # Small helpers/shared utilities
+        (move small helpers here)
+```
+
+Why this helps:
+- Groups UI code away from service logic so reviewers can focus faster.
+- Makes provider implementations obvious (all under `llm_providers`).
+- Keeps DB wrappers together for schema/transaction changes.
+- Simplifies CI and import paths for tests and packaging.
+
+Placement rules (must-follow for new files):
+- Source code: add under `src/` (subfolders as above). Avoid new top-level `.py` files in repo root.
+- Tests: put new tests in `tests/` following `test_*.py` naming.
+- Docs: add Markdown under `docs/`.
+- Assets/test data: `assets/` or `data/`.
+
+If you want, I can prepare a small refactor branch that moves files into this structure and updates imports and tests accordingly — should I proceed with a prototype refactor? 
