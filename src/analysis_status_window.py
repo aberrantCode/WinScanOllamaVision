@@ -350,6 +350,26 @@ class AnalysisStatusWindow(QDialog):
                 width: 12px;
                 height: 12px;
             }
+            QComboBox QAbstractItemView {
+                border: 1px solid #D1D5DB;
+                background-color: white;
+                color: #1F2937;
+                selection-background-color: #3B82F6;
+                selection-color: white;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 6px 10px;
+                min-height: 24px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #EFF6FF;
+                color: #1F2937;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #3B82F6;
+                color: white;
+            }
         """)
         filter_layout.addWidget(self.filter_combo)
 
