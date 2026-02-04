@@ -5686,21 +5686,15 @@ class StartupWindow(QWidget):
         content_layout = QHBoxLayout()
         center_layout.addLayout(content_layout)
 
-        # Create clickable scanner container with stats
+        # Create scanner container
         self.scanner_container = QWidget()
-        self.scanner_container.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Don't set max height here - we'll adjust it dynamically
         self.scanner_container.setStyleSheet("""
             QWidget {
                 background-color: rgba(255, 255, 255, 0.1);
                 border-radius: 10px;
                 padding: 10px;
             }
-            QWidget:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-            }
         """)
-        self.scanner_container.mousePressEvent = lambda event: self.show_analysis_status()
 
         scanner_layout = QVBoxLayout(self.scanner_container)
         scanner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -5765,22 +5759,6 @@ class StartupWindow(QWidget):
             self.scanner_label.setStyleSheet("color: white; font-size: 12pt;")
 
         scanner_layout.addWidget(self.scanner_label)
-
-        # Stats label below scanner
-        self.scanner_stats_label = QLabel()
-        self.scanner_stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.scanner_stats_label.setStyleSheet("""
-            QLabel {
-                color: white;
-                font-size: 12pt;
-                padding: 10px;
-                background-color: transparent;
-            }
-        """)
-        scanner_layout.addWidget(self.scanner_stats_label)
-
-        # Load initial stats
-        self._update_scanner_stats()
 
         content_layout.addWidget(self.scanner_container, 1)
             
@@ -5990,73 +5968,6 @@ class StartupWindow(QWidget):
             else:
                 self.movie.stop()
                 self.movie.jumpToFrame(0)  # Show first frame when not analyzing
-
-    def _update_scanner_stats(self):
-        """
-        Update the stats label below the scanner GIF.
-        Shows static database statistics when idle.
-        """
-        if not hasattr(self, 'scanner_stats_label'):
-            return
-
-        try:
-            db_stats = self.analysis_db.get_analysis_statistics()
-            total_files = db_stats.get('total_files', 0)
-            cached_files = db_stats.get('cached_files', 0)
-            failed_files = db_stats.get('failed_files', 0)
-
-            # Get last analysis time from recent runs
-            recent_runs = self.analysis_db.get_recent_runs(limit=1)
-            if recent_runs:
-                last_run = recent_runs[0]
-                last_time_str = self._format_relative_time(last_run['timestamp'])
-            else:
-                last_time_str = "Never"
-
-            # Determine status based on database state
-            if total_files == 0:
-                status_color = "#6B7280"  # Gray
-                status_text = "Status: No files analyzed"
-            elif failed_files > 0:
-                status_color = "#DC2626"  # Red
-                status_text = f"Status: Complete ({failed_files} errors)"
-            else:
-                status_color = "#059669"  # Green
-                status_text = "Status: Idle"
-
-        except Exception as e:
-            # Fallback if database query fails
-            total_files = 0
-            cached_files = 0
-            failed_files = 0
-            last_time_str = "Unknown"
-            status_color = "#6B7280"
-            status_text = "Status: Unknown"
-
-        # Calculate cache percentage
-        cache_pct = int((cached_files / total_files * 100)) if total_files > 0 else 0
-
-        # Format numbers with commas
-        total_str = f"{total_files:,}"
-        cached_str = f"{cached_files:,}"
-        errors_str = f"{failed_files:,}"
-
-        # Build status HTML
-        html = f"""
-        <div style="text-align: center;">
-            <div style="color: {status_color}; font-weight: bold; margin-bottom: 8px;">
-                {status_text}
-            </div>
-            <div style="color: white; font-size: 11pt;">
-                {total_str} files | {cached_str} cached ({cache_pct}%) | {errors_str} errors
-            </div>
-            <div style="color: rgba(255, 255, 255, 0.8); font-size: 10pt; margin-top: 5px;">
-                Last analysis: {last_time_str}
-            </div>
-        </div>
-        """
-
-        self.scanner_stats_label.setText(html)
 
     def _format_relative_time(self, iso_timestamp: str) -> str:
         """
