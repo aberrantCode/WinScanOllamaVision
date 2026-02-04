@@ -3,7 +3,7 @@ from services.file_processor import *  # noqa: F401,F403
 # Example Usage (for testing during development)
 if __name__ == "__main__":
     # Assuming config_manager.py and settings.ini exist and are functional
-    from config_manager import ConfigManager
+    from config.config_manager import ConfigManager
     
     # Setup dummy environment
     test_scan_folder = "test_scans"

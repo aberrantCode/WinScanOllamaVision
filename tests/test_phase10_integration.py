@@ -22,15 +22,15 @@ def test_imports_all_modules():
 
     try:
         # Core modules
-        from config_manager import ConfigManager
+        from config.config_manager import ConfigManager
         from metadata_db import MetadataDB
         from analysis_db import AnalysisDB
 
         # Services
-        from ollama_service import OllamaService
-        from file_processor import FileProcessor
+        from llm_providers.ollama_service import OllamaService
+        from services.file_processor import FileProcessor
         from bundling_service import BundlingService
-        from analysis_service import AnalysisService
+        from services.analysis_service import AnalysisService
 
         # Providers
         from llm_providers.base_provider import BaseLLMProvider
@@ -134,7 +134,7 @@ def test_config_persistence():
     print("\n[TEST] Configuration persistence")
 
     try:
-        from config_manager import ConfigManager
+        from config.config_manager import ConfigManager
 
         # Create temporary config
         with tempfile.NamedTemporaryFile(suffix='.ini', delete=False, mode='w') as f:
@@ -172,7 +172,7 @@ def test_provider_factory():
 
     try:
         from llm_providers.provider_factory import ProviderFactory
-        from config_manager import ConfigManager
+        from config.config_manager import ConfigManager
 
         # Create temporary config
         with tempfile.NamedTemporaryFile(suffix='.ini', delete=False, mode='w') as f:
@@ -298,8 +298,8 @@ def test_file_processor_pdf_creation():
     print("\n[TEST] File processor PDF creation")
 
     try:
-        from file_processor import FileProcessor
-        from config_manager import ConfigManager
+        from services.file_processor import FileProcessor
+        from config.config_manager import ConfigManager
 
         # Create temporary config and directories
         with tempfile.TemporaryDirectory() as temp_dir:

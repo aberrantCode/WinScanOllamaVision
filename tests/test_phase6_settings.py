@@ -12,7 +12,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from PyQt6.QtWidgets import QApplication
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 from metadata_db import MetadataDB
 from analysis_db import AnalysisDB
 

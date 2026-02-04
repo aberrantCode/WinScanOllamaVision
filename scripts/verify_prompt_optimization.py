@@ -98,7 +98,7 @@ def check_thread_signals():
 
     try:
         # Create minimal test instance
-        from config_manager import ConfigManager
+        from config.config_manager import ConfigManager
         config = ConfigManager()
         thread = PromptOptimizationThread(config, "test")
 

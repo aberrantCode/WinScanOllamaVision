@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from PyQt6.QtWidgets import QApplication, QPlainTextEdit
 from PyQt6.QtCore import QThread
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 from settings_window_enhanced import (
     PromptOptimizationThread,
     PromptComparisonDialog

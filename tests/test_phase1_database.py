@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from metadata_db import MetadataDB
 from analysis_db import AnalysisDB
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 
 
 def test_metadata_db():

@@ -15,7 +15,7 @@ print("\n>>> Phase 1: Database Foundation")
 try:
     from metadata_db import MetadataDB
     from analysis_db import AnalysisDB
-    from config_manager import ConfigManager
+    from config.config_manager import ConfigManager
     import tempfile
 
     print("\n[TEST] MetadataDB creation")
@@ -94,11 +94,11 @@ except Exception as e:
 # Test Phase 3
 print("\n>>> Phase 3: Analysis & Bundling Services")
 try:
-    from analysis_service import AnalysisService
+    from services.analysis_service import AnalysisService
     from bundling_service import BundlingService
     from analysis_db import AnalysisDB
     from metadata_db import MetadataDB
-    from config_manager import ConfigManager
+    from config.config_manager import ConfigManager
     import tempfile
     import time
 

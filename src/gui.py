@@ -18,9 +18,9 @@ except ImportError:
     print("Error: PyMuPDF (fitz) is not installed. Please run 'pip install PyMuPDF'.")
     sys.exit(1)
 
-from config_manager import ConfigManager
-from ollama_service import OllamaService
-from file_processor import FileProcessor
+from config.config_manager import ConfigManager
+from llm_providers.ollama_service import OllamaService
+from services.file_processor import FileProcessor
 from metadata_db import MetadataDB
 from settings_window_enhanced import EnhancedSettingsWindow
 from bundle_widgets import BundleSuggestionsView
@@ -1559,7 +1559,7 @@ class ConvertImagesWindow(QMainWindow):
         self.bundling_service = BundlingService(self.analysis_db)
 
         # Analysis service for pre-processing files
-        from analysis_service import AnalysisService
+        from services.analysis_service import AnalysisService
         self.analysis_service = AnalysisService(self.config_manager, self.analysis_db, self.metadata_db)
 
         self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
@@ -5859,10 +5859,10 @@ class StartupWindow(QWidget):
         """Manually trigger document analysis - opens status window with auto-start"""
         # Initialize analysis service if not already done
         if not hasattr(self, 'analysis_service') or self.analysis_service is None:
-            from config_manager import ConfigManager
+            from config.config_manager import ConfigManager
             from analysis_db import AnalysisDB
             from metadata_db import MetadataDB
-            from analysis_service import AnalysisService
+            from services.analysis_service import AnalysisService
 
             config_manager = ConfigManager()
             analysis_db = AnalysisDB()
@@ -5887,10 +5887,10 @@ class StartupWindow(QWidget):
         """Show the Analysis Status window"""
         # Initialize analysis service if needed
         if not hasattr(self, 'analysis_service') or self.analysis_service is None:
-            from config_manager import ConfigManager
+            from config.config_manager import ConfigManager
             from analysis_db import AnalysisDB
             from metadata_db import MetadataDB
-            from analysis_service import AnalysisService
+            from services.analysis_service import AnalysisService
 
             config_manager = ConfigManager()
             analysis_db = AnalysisDB()

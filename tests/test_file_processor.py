@@ -5,8 +5,8 @@ import time
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 from unittest.mock import patch, MagicMock
-from file_processor import FileProcessor
-from config_manager import ConfigManager
+from services.file_processor import FileProcessor
+from config.config_manager import ConfigManager
 from PIL import Image
 
 class TestFileProcessor(unittest.TestCase):
@@ -72,7 +72,7 @@ class TestFileProcessor(unittest.TestCase):
         self.assertEqual(len(grouped[0]), 2)
         self.assertEqual(len(grouped[1]), 1)
 
-    @patch('file_processor.fitz.open')
+    @patch('services.file_processor.fitz.open')
     def test_create_searchable_pdf(self, mock_fitz_open):
         mock_doc = MagicMock()
         mock_page = MagicMock()

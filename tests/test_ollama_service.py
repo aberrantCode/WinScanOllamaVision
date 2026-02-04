@@ -5,7 +5,7 @@ import json
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 from unittest.mock import patch, MagicMock
 import requests
-from ollama_service import OllamaService
+from llm_providers.ollama_service import OllamaService
 
 class TestOllamaService(unittest.TestCase):
     def setUp(self):
@@ -19,7 +19,7 @@ class TestOllamaService(unittest.TestCase):
         if os.path.exists(self.dummy_image_path):
             os.remove(self.dummy_image_path)
 
-    @patch('ollama_service.requests.Session.request')
+    @patch('llm_providers.ollama_service.requests.Session.request')
     def test_list_models_success(self, mock_request):
         mock_response = MagicMock()
         mock_response.json.return_value = {"models": [{"name": "llava:latest"}]}
@@ -29,14 +29,14 @@ class TestOllamaService(unittest.TestCase):
         self.assertEqual(len(models), 1)
         self.assertEqual(models[0]['name'], "llava:latest")
 
-    @patch('ollama_service.requests.Session.request')
+    @patch('llm_providers.ollama_service.requests.Session.request')
     def test_list_models_connection_error(self, mock_request):
         mock_request.side_effect = requests.exceptions.ConnectionError("Mocked error")
         with self.assertRaises(ConnectionError):
             self.ollama_service.list_models()
 
-    @patch('ollama_service.requests.Session.request')
-    @patch('ollama_service.OllamaService._encode_image')
+    @patch('llm_providers.ollama_service.requests.Session.request')
+    @patch('llm_providers.ollama_service.OllamaService._encode_image')
     def test_chat_with_vision_model_success(self, mock_encode_image, mock_request):
         mock_encode_image.return_value = "base64_string"
         mock_response = MagicMock()
@@ -51,7 +51,7 @@ class TestOllamaService(unittest.TestCase):
         self.assertEqual(sent_payload['messages'][0]['content'], "prompt")
         self.assertEqual(sent_payload['messages'][0]['images'][0], "base64_string")
 
-    @patch('ollama_service.OllamaService.chat_with_vision_model')
+    @patch('llm_providers.ollama_service.OllamaService.chat_with_vision_model')
     def test_extract_document_info_parsing(self, mock_chat):
         mock_chat.return_value = {"content": '{"company": "A", "title": "B", "date": "C"}'}
         info = self.ollama_service.extract_document_info("model", [], "keywords")
@@ -59,7 +59,7 @@ class TestOllamaService(unittest.TestCase):
         self.assertEqual(info['title'], "B")
         self.assertEqual(info['date'], "C")
 
-    @patch('ollama_service.OllamaService.chat_with_vision_model')
+    @patch('llm_providers.ollama_service.OllamaService.chat_with_vision_model')
     def test_extract_document_info_bad_json(self, mock_chat):
         mock_chat.return_value = {"content": 'this is not json'}
         info = self.ollama_service.extract_document_info("model", [], "keywords")

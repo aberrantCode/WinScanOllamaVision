@@ -2,7 +2,7 @@ import unittest
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 
 class TestConfigManager(unittest.TestCase):
     def setUp(self):

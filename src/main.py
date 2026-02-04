@@ -5,10 +5,10 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 from gui import StartupWindow
 from appdata_manager import initialize_appdata
-from analysis_service import AnalysisService
+from services.analysis_service import AnalysisService
 from analysis_db import AnalysisDB
 from metadata_db import MetadataDB
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 
 # Import style sheet
 from style import stylesheet

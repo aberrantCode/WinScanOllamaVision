@@ -9,10 +9,7 @@ from typing import Dict, Any, List, Optional
 from .base_provider import BaseLLMProvider
 
 # Import the existing OllamaService
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from ollama_service import OllamaService
+from llm_providers.ollama_service import OllamaService
 
 
 class OllamaProvider(BaseLLMProvider):

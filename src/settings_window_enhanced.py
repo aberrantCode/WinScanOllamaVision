@@ -20,19 +20,19 @@ from styles import show_information, show_warning, show_critical, show_question
 
 # Import existing components
 try:
-    from config_manager import ConfigManager
+    from config.config_manager import ConfigManager
     from metadata_db import MetadataDB
     from analysis_db import AnalysisDB
-    from ollama_service import OllamaService
+    from llm_providers.ollama_service import OllamaService
     from llm_providers.provider_factory import ProviderFactory
 except ImportError:
     # Fallback for different import paths
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
-    from config_manager import ConfigManager
+    from config.config_manager import ConfigManager
     from metadata_db import MetadataDB
     from analysis_db import AnalysisDB
-    from ollama_service import OllamaService
+    from llm_providers.ollama_service import OllamaService
     from llm_providers.provider_factory import ProviderFactory
 
 

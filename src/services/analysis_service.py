@@ -10,16 +10,10 @@ import uuid
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
 
-try:
-    from src.analysis_db import AnalysisDB
-    from src.metadata_db import MetadataDB
-    from src.llm_providers.provider_factory import ProviderFactory
-    from src.config_manager import ConfigManager
-except ImportError:
-    from analysis_db import AnalysisDB
-    from metadata_db import MetadataDB
-    from llm_providers.provider_factory import ProviderFactory
-    from config_manager import ConfigManager
+from analysis_db import AnalysisDB
+from metadata_db import MetadataDB
+from llm_providers.provider_factory import ProviderFactory
+from config.config_manager import ConfigManager
 
 
 class AnalysisService:
@@ -394,14 +388,9 @@ class AnalysisService:
 
 # Example usage
 if __name__ == "__main__":
-    try:
-        from src.config_manager import ConfigManager
-        from src.analysis_db import AnalysisDB
-        from src.metadata_db import MetadataDB
-    except ImportError:
-        from config_manager import ConfigManager
-        from analysis_db import AnalysisDB
-        from metadata_db import MetadataDB
+    from config.config_manager import ConfigManager
+    from analysis_db import AnalysisDB
+    from metadata_db import MetadataDB
 
     # Create instances
     config = ConfigManager()

@@ -17,7 +17,7 @@ from llm_providers.command_builder import CommandBuilder
 from llm_providers.ollama_provider import OllamaProvider
 from llm_providers.claude_cli_provider import ClaudeCliProvider
 from llm_providers.gemini_cli_provider import GeminiCliProvider
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 
 
 def test_command_builder():

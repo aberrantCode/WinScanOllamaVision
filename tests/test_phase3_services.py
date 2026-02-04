@@ -11,11 +11,11 @@ from PIL import Image
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from analysis_service import AnalysisService
+from services.analysis_service import AnalysisService
 from bundling_service import BundlingService
 from analysis_db import AnalysisDB
 from metadata_db import MetadataDB
-from config_manager import ConfigManager
+from config.config_manager import ConfigManager
 
 
 def create_test_images(count=5):
