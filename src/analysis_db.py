@@ -761,26 +761,48 @@ class AnalysisDB:
 
     def purge_analysis_results(self, older_than_days: Optional[int] = None) -> int:
         """
-        Purge old analysis results.
+        Purge old analysis results, runs, and errors.
 
         Args:
             older_than_days: Delete results older than N days (None = all)
 
         Returns:
-            Number of entries deleted
+            Number of entries deleted from analysis_results
         """
         cursor = self.connection.cursor()
 
         if older_than_days:
+            # Delete analysis results
             cursor.execute("""
                 DELETE FROM analysis_results
                 WHERE analyzed_at < datetime('now', '-{} days')
             """.format(older_than_days))
+            results_deleted = cursor.rowcount
+
+            # Delete analysis runs
+            cursor.execute("""
+                DELETE FROM analysis_runs
+                WHERE started_at < datetime('now', '-{} days')
+            """.format(older_than_days))
+
+            # Delete analysis errors (orphaned ones will be cleaned up)
+            cursor.execute("""
+                DELETE FROM analysis_errors
+                WHERE error_at < datetime('now', '-{} days')
+            """.format(older_than_days))
         else:
+            # Delete all analysis results
             cursor.execute("DELETE FROM analysis_results")
+            results_deleted = cursor.rowcount
+
+            # Delete all analysis runs
+            cursor.execute("DELETE FROM analysis_runs")
+
+            # Delete all analysis errors
+            cursor.execute("DELETE FROM analysis_errors")
 
         self.connection.commit()
-        return cursor.rowcount
+        return results_deleted
 
     def purge_completed_bundles(self) -> int:
         """Purge completed/rejected bundles"""
