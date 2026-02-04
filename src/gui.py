@@ -5690,9 +5690,7 @@ class StartupWindow(QWidget):
         self.scanner_container = QWidget()
         self.scanner_container.setStyleSheet("""
             QWidget {
-                background-color: rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                padding: 10px;
+                background-color: transparent;
             }
         """)
 
@@ -5735,10 +5733,8 @@ class StartupWindow(QWidget):
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(scaled_size)
                     self.movie.setSpeed(20)  # 20% of original speed (5x slower)
-                    # Play once on load, then stop
-                    self.movie.frameChanged.connect(self._on_movie_frame_changed)
+                    # Play continuously
                     self.movie.start()
-                    self._is_initial_animation = True
                     self._is_analyzing = False
                 else:
                     # Fallback: use default size
@@ -5746,10 +5742,8 @@ class StartupWindow(QWidget):
                     self.movie.setScaledSize(default_size)
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(default_size)
-                    # Play once on load, then stop
-                    self.movie.frameChanged.connect(self._on_movie_frame_changed)
+                    # Play continuously
                     self.movie.start()
-                    self._is_initial_animation = True
                     self._is_analyzing = False
             else:
                 self.scanner_label.setText("Error loading GIF: Invalid movie format")
@@ -5769,7 +5763,7 @@ class StartupWindow(QWidget):
         process_button = QPushButton("Convert Scans")
         process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         process_button.setMinimumHeight(60)
-        process_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
+        process_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
         process_button.clicked.connect(self.show_processing_window)
         button_layout.addWidget(process_button)
 
@@ -5777,14 +5771,14 @@ class StartupWindow(QWidget):
         self.extract_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.extract_button.setMinimumHeight(60)
         self.extract_button.setEnabled(True)
-        self.extract_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
+        self.extract_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
         self.extract_button.clicked.connect(self._process_pdfs)
         button_layout.addWidget(self.extract_button)
 
         settings_button = QPushButton("Change Settings")
         settings_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         settings_button.setMinimumHeight(60)
-        settings_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
+        settings_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
         settings_button.clicked.connect(self.show_settings_window)
         button_layout.addWidget(settings_button)
 
@@ -5792,21 +5786,21 @@ class StartupWindow(QWidget):
         analyze_button = QPushButton("🔍 Analyze Documents")
         analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         analyze_button.setMinimumHeight(60)
-        analyze_button.setStyleSheet("QPushButton { background-color: #059669; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #047857; }")
+        analyze_button.setStyleSheet("QPushButton { background-color: #059669; color: white; border: 2px solid #047857; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #047857; }")
         analyze_button.clicked.connect(self.manual_analyze_documents)
         button_layout.addWidget(analyze_button)
 
         analysis_status_button = QPushButton("📊 Analysis Status")
         analysis_status_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         analysis_status_button.setMinimumHeight(60)
-        analysis_status_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
+        analysis_status_button.setStyleSheet("QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }")
         analysis_status_button.clicked.connect(self.show_analysis_status)
         button_layout.addWidget(analysis_status_button)
 
         quit_button = QPushButton("Quit")
         quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         quit_button.setMinimumHeight(60)
-        quit_button.setStyleSheet("QPushButton { background-color: #DC2626; color: white; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #B91C1C; }")
+        quit_button.setStyleSheet("QPushButton { background-color: #DC2626; color: white; border: 2px solid #B91C1C; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #B91C1C; }")
         quit_button.clicked.connect(self.quit_application)
         button_layout.addWidget(quit_button)
 
@@ -5939,35 +5933,21 @@ class StartupWindow(QWidget):
             self.processing_window = None
         self.show()
 
-    def _on_movie_frame_changed(self, frame_number):
-        """Handle movie frame changes to control initial vs continuous animation"""
-        if hasattr(self, '_is_initial_animation') and self._is_initial_animation:
-            # Check if we've looped back to frame 0 (completed one cycle)
-            if frame_number == 0 and hasattr(self, '_movie_started'):
-                # Initial animation complete, stop at first frame
-                self.movie.stop()
-                self.movie.jumpToFrame(0)
-                self._is_initial_animation = False
-            else:
-                # Mark that movie has started (not first frame anymore)
-                self._movie_started = True
-
     def _update_scanner_animation(self, is_analyzing: bool):
         """
         Control scanner GIF animation based on analysis state.
+        Animation now runs continuously regardless of analysis state.
 
         Args:
-            is_analyzing: True to start animation (continuous loop), False to stop
+            is_analyzing: True if analyzing (kept for compatibility but animation always runs)
         """
+        # Animation runs continuously now, so this method is kept for compatibility
+        # but doesn't stop/start the movie anymore
         if hasattr(self, 'movie') and self.movie.isValid():
             self._is_analyzing = is_analyzing
-            self._is_initial_animation = False  # Disable initial animation mode
-            self._movie_started = False
-            if is_analyzing:
-                self.movie.start()  # Continuous loop while analyzing
-            else:
-                self.movie.stop()
-                self.movie.jumpToFrame(0)  # Show first frame when not analyzing
+            # Keep animation running continuously
+            if not self.movie.state() == QMovie.MovieState.Running:
+                self.movie.start()
 
     def _format_relative_time(self, iso_timestamp: str) -> str:
         """
