@@ -133,6 +133,7 @@ class AnalysisStatusWindow(QDialog):
         header_layout.addStretch()
 
         self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.setStyleSheet(get_primary_button_style())
         self.refresh_button.clicked.connect(self._refresh_all)
         header_layout.addWidget(self.refresh_button)
 
