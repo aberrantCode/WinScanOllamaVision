@@ -269,12 +269,41 @@ class AnalysisStatusWindow(QDialog):
         button_layout = QHBoxLayout()
 
         self.start_analysis_button = QPushButton("Start Analysis")
-        self.start_analysis_button.setStyleSheet(get_success_button_style())
+        self.start_analysis_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.SUCCESS};
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 16px;
+                font-size: 10pt;
+                min-width: 100px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.SUCCESS_HOVER};
+            }}
+            QPushButton:disabled {{
+                background-color: #9CA3AF;
+            }}
+        """)
         self.start_analysis_button.clicked.connect(self._start_analysis)
         button_layout.addWidget(self.start_analysis_button)
 
         self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setStyleSheet(get_danger_button_style())
+        self.cancel_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.DANGER};
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 16px;
+                font-size: 10pt;
+                min-width: 100px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.DANGER_HOVER};
+            }}
+        """)
         self.cancel_button.clicked.connect(self._cancel_analysis)
         self.cancel_button.setVisible(False)
         button_layout.addWidget(self.cancel_button)
