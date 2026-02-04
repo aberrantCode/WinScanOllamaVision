@@ -38,6 +38,12 @@ class AnalysisStatusWindow(QDialog):
         self.analysis_start_time = None
         self.elapsed_timer = None
 
+        # Determine theme
+        self.is_dark_mode = False
+        if self.config_manager:
+            theme = self.config_manager.get_setting("Theme", "theme", "light")
+            self.is_dark_mode = (theme == "dark")
+
         self._init_ui()
         self._load_all_data()
 
@@ -46,27 +52,70 @@ class AnalysisStatusWindow(QDialog):
             # Use QTimer to defer start until after window is shown
             QTimer.singleShot(100, self._start_analysis)
 
+    def _get_theme_colors(self):
+        """Return color palette based on current theme"""
+        if self.is_dark_mode:
+            return {
+                'bg_primary': '#1E1E1E',
+                'bg_secondary': '#2D2D2D',
+                'bg_tertiary': '#3A3A3A',
+                'text_primary': '#E0E0E0',
+                'text_secondary': '#B0B0B0',
+                'text_tertiary': '#808080',
+                'border': '#4A4A4A',
+                'tab_active_bg': '#2D2D2D',
+                'tab_inactive_bg': '#1E1E1E',
+                'tab_hover_bg': '#3A3A3A',
+                'input_bg': '#2D2D2D',
+                'input_border': '#4A4A4A',
+                'table_header_bg': '#2D2D2D',
+                'table_row_alt': '#252525',
+                'info_panel_bg': '#2D2D2D',
+            }
+        else:
+            return {
+                'bg_primary': '#F9FAFB',
+                'bg_secondary': '#FFFFFF',
+                'bg_tertiary': '#F3F4F6',
+                'text_primary': '#111827',
+                'text_secondary': '#374151',
+                'text_tertiary': '#6B7280',
+                'border': '#E5E7EB',
+                'tab_active_bg': '#FFFFFF',
+                'tab_inactive_bg': '#F3F4F6',
+                'tab_hover_bg': '#E5E7EB',
+                'input_bg': '#FFFFFF',
+                'input_border': '#E5E7EB',
+                'table_header_bg': '#F3F4F6',
+                'table_row_alt': '#F9FAFB',
+                'info_panel_bg': '#FFFFFF',
+            }
+
     def _init_ui(self):
         """Initialize the user interface"""
         self.setWindowTitle("Analysis Status")
         self.setMinimumSize(900, 700)
         self.setModal(False)
 
+        # Store theme colors as instance variables for use throughout tabs
+        self.theme_colors = self._get_theme_colors()
+        colors = self.theme_colors
+
         # Apply consistent styling
         self.setStyleSheet(f"""
             QDialog {{
-                background-color: #F9FAFB;
+                background-color: {colors['bg_primary']};
             }}
             QTabWidget::pane {{
-                border: 1px solid #E5E7EB;
+                border: 1px solid {colors['border']};
                 border-radius: 8px;
-                background-color: white;
+                background-color: {colors['bg_secondary']};
                 top: -1px;
             }}
             QTabBar::tab {{
-                background-color: #F3F4F6;
-                color: #6B7280;
-                border: 1px solid #E5E7EB;
+                background-color: {colors['tab_inactive_bg']};
+                color: {colors['text_tertiary']};
+                border: 1px solid {colors['border']};
                 border-bottom: none;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
@@ -74,13 +123,13 @@ class AnalysisStatusWindow(QDialog):
                 margin-right: 2px;
             }}
             QTabBar::tab:selected {{
-                background-color: white;
+                background-color: {colors['tab_active_bg']};
                 color: {Colors.PRIMARY};
-                border-color: #E5E7EB;
-                border-bottom: 1px solid white;
+                border-color: {colors['border']};
+                border-bottom: 1px solid {colors['tab_active_bg']};
             }}
             QTabBar::tab:hover:!selected {{
-                background-color: #E5E7EB;
+                background-color: {colors['tab_hover_bg']};
             }}
             QPushButton {{
                 background-color: {Colors.PRIMARY};
@@ -98,24 +147,48 @@ class AnalysisStatusWindow(QDialog):
                 background-color: #9CA3AF;
             }}
             QLineEdit, QComboBox {{
-                border: 1px solid #D1D5DB;
+                border: 1px solid {colors['input_border']};
                 border-radius: 4px;
                 padding: 6px;
-                background-color: white;
+                background-color: {colors['input_bg']};
+                color: {colors['text_primary']};
             }}
             QTableWidget {{
-                border: 1px solid #D1D5DB;
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
-                background-color: white;
-                gridline-color: #E5E7EB;
+                background-color: {colors['bg_secondary']};
+                gridline-color: {colors['border']};
+                color: {colors['text_primary']};
             }}
             QHeaderView::section {{
-                background-color: #F3F4F6;
-                color: #374151;
+                background-color: {colors['table_header_bg']};
+                color: {colors['text_secondary']};
                 padding: 8px;
                 border: none;
-                border-bottom: 2px solid #D1D5DB;
+                border-bottom: 2px solid {colors['border']};
                 font-weight: bold;
+            }}
+            QTableWidget::item {{
+                color: {colors['text_primary']};
+                padding: 4px;
+            }}
+            QTableWidget::item:alternate {{
+                background-color: {colors['table_row_alt']};
+            }}
+            QLabel {{
+                color: {colors['text_primary']};
+            }}
+            QTextEdit {{
+                background-color: {colors['input_bg']};
+                border: 1px solid {colors['input_border']};
+                color: {colors['text_primary']};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['input_bg']};
+                border: 1px solid {colors['border']};
+                selection-background-color: {Colors.PRIMARY};
+                selection-color: white;
+                color: {colors['text_primary']};
             }}
         """)
 
@@ -127,7 +200,7 @@ class AnalysisStatusWindow(QDialog):
         header_layout = QHBoxLayout()
 
         title_label = QLabel("Analysis Status")
-        title_label.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1F2937; background-color: transparent;")
+        title_label.setStyleSheet(f"font-size: 16pt; font-weight: bold; color: {colors['text_primary']}; background-color: transparent;")
         header_layout.addWidget(title_label)
 
         header_layout.addStretch()
@@ -176,30 +249,30 @@ class AnalysisStatusWindow(QDialog):
     def _create_current_status_tab(self) -> QWidget:
         """Create the Current Status tab"""
         widget = QWidget()
-        widget.setStyleSheet("QWidget { background-color: white; }")
+        widget.setStyleSheet(f"QWidget {{ background-color: {self.theme_colors['bg_secondary']}; }}")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
 
         # Status indicator
         self.status_label = QLabel("Status: Idle")
-        self.status_label.setStyleSheet(f"font-size: 14pt; font-weight: bold; color: {Colors.GRAY_500};")
+        self.status_label.setStyleSheet(f"font-size: 14pt; font-weight: bold; color: {self.theme_colors['text_tertiary']};")
         layout.addWidget(self.status_label)
 
         # Info frame
         info_frame = QFrame()
-        info_frame.setStyleSheet("""
-            QFrame {
-                background-color: #F3F4F6;
-                border: 1px solid #D1D5DB;
+        info_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.theme_colors['info_panel_bg']};
+                border: 1px solid {self.theme_colors['border']};
                 border-radius: 8px;
                 padding: 15px;
-            }
+            }}
         """)
         info_layout = QVBoxLayout(info_frame)
 
         self.current_info_label = QLabel("No analysis currently running.")
-        self.current_info_label.setStyleSheet("color: #374151; font-size: 11pt;")
+        self.current_info_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']}; font-size: 11pt;")
         self.current_info_label.setWordWrap(True)
         info_layout.addWidget(self.current_info_label)
 
@@ -208,31 +281,35 @@ class AnalysisStatusWindow(QDialog):
         # Active analysis frame (initially hidden)
         self.active_analysis_frame = QFrame()
         self.active_analysis_frame.setVisible(False)
-        self.active_analysis_frame.setStyleSheet("""
-            QFrame {
-                background-color: #F0F9FF;
-                border: 1px solid #BFDBFE;
+        active_bg = '#2D4A6E' if self.is_dark_mode else '#F0F9FF'
+        active_border = '#4A6FA5' if self.is_dark_mode else '#BFDBFE'
+        self.active_analysis_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {active_bg};
+                border: 1px solid {active_border};
                 border-radius: 8px;
                 padding: 15px;
-            }
+            }}
         """)
         active_layout = QVBoxLayout(self.active_analysis_frame)
 
         # Current file label
         self.current_file_label = QLabel("Current: --")
-        self.current_file_label.setStyleSheet(f"color: {Colors.PRIMARY}; font-size: 10pt; font-weight: bold;")
+        self.current_file_label.setStyleSheet(f"color: {Colors.PRIMARY if not self.is_dark_mode else '#90CAF9'}; font-size: 10pt; font-weight: bold;")
         self.current_file_label.setWordWrap(True)
         active_layout.addWidget(self.current_file_label)
 
         # Progress bar
+        progress_bg = self.theme_colors['input_bg']
         self.current_progress_bar = QProgressBar()
         self.current_progress_bar.setStyleSheet(f"""
             QProgressBar {{
-                border: 1px solid #D1D5DB;
+                border: 1px solid {self.theme_colors['border']};
                 border-radius: 4px;
                 text-align: center;
-                background-color: white;
+                background-color: {progress_bg};
                 height: 24px;
+                color: {self.theme_colors['text_primary']};
             }}
             QProgressBar::chunk {{
                 background-color: {Colors.PRIMARY};
@@ -242,12 +319,12 @@ class AnalysisStatusWindow(QDialog):
 
         # Real-time stats label
         self.realtime_stats_label = QLabel("Analyzed: 0 | Cached: 0 | Errors: 0")
-        self.realtime_stats_label.setStyleSheet("color: #374151; font-size: 10pt;")
+        self.realtime_stats_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']}; font-size: 10pt;")
         active_layout.addWidget(self.realtime_stats_label)
 
         # Elapsed time label
         self.elapsed_time_label = QLabel("Elapsed: 0s")
-        self.elapsed_time_label.setStyleSheet("color: #6B7280; font-size: 9pt;")
+        self.elapsed_time_label.setStyleSheet(f"color: {self.theme_colors['text_tertiary']}; font-size: 9pt;")
         active_layout.addWidget(self.elapsed_time_label)
 
         layout.addWidget(self.active_analysis_frame)
@@ -287,13 +364,13 @@ class AnalysisStatusWindow(QDialog):
     def _create_recent_runs_tab(self) -> QWidget:
         """Create the Recent Runs tab"""
         widget = QWidget()
-        widget.setStyleSheet("QWidget { background-color: white; }")
+        widget.setStyleSheet(f"QWidget {{ background-color: {self.theme_colors['bg_secondary']}; }}")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
 
         label = QLabel("Recent Analysis Runs")
-        label.setStyleSheet("font-size: 12pt; font-weight: bold; color: #1F2937;")
+        label.setStyleSheet(f"font-size: 12pt; font-weight: bold; color: {self.theme_colors['text_primary']};")
         layout.addWidget(label)
 
         # Scroll area for runs
@@ -314,7 +391,7 @@ class AnalysisStatusWindow(QDialog):
     def _create_file_details_tab(self) -> QWidget:
         """Create the File Details tab"""
         widget = QWidget()
-        widget.setStyleSheet("QWidget { background-color: white; }")
+        widget.setStyleSheet(f"QWidget {{ background-color: {self.theme_colors['bg_secondary']}; }}")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
@@ -325,7 +402,7 @@ class AnalysisStatusWindow(QDialog):
 
         # Filter label
         filter_label = QLabel("Filter:")
-        filter_label.setStyleSheet("color: #374151; font-size: 10pt; font-weight: 600; background-color: transparent;")
+        filter_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']}; font-size: 10pt; font-weight: 600; background-color: transparent;")
         filter_layout.addWidget(filter_label)
 
         # Filter combo box
@@ -500,7 +577,7 @@ class AnalysisStatusWindow(QDialog):
 
         if not runs:
             self.status_label.setText("Status: Idle")
-            self.status_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #6B7280;")
+            self.status_label.setStyleSheet(f"font-size: 14pt; font-weight: bold; color: {self.theme_colors['text_tertiary']};")
             self.current_info_label.setText("No analysis has been run yet.")
             self.current_progress_bar.setVisible(False)
         else:
@@ -509,7 +586,8 @@ class AnalysisStatusWindow(QDialog):
             time_ago = self._format_relative_time(timestamp)
 
             self.status_label.setText("Status: Idle")
-            self.status_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #059669;")
+            status_color = '#4ADE80' if self.is_dark_mode else '#059669'
+            self.status_label.setStyleSheet(f"font-size: 14pt; font-weight: bold; color: {status_color};")
 
             info_text = f"""Last analysis: {time_ago}
 • {run['total_files']} files processed
@@ -541,7 +619,7 @@ class AnalysisStatusWindow(QDialog):
 
         if not runs:
             no_data = QLabel("No analysis runs found.")
-            no_data.setStyleSheet("color: #6B7280; font-size: 11pt; padding: 20px;")
+            no_data.setStyleSheet(f"color: {self.theme_colors['text_tertiary']}; font-size: 11pt; padding: 20px;")
             no_data.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.runs_layout.insertWidget(0, no_data)
 
@@ -605,7 +683,7 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
                 self.breakdown_layout.addWidget(bar_widget)
         else:
             no_data = QLabel("No document data available.")
-            no_data.setStyleSheet("color: #6B7280; font-size: 10pt;")
+            no_data.setStyleSheet(f"color: {self.theme_colors['text_tertiary']}; font-size: 10pt;")
             self.breakdown_layout.addWidget(no_data)
 
     def _apply_file_filter(self):
@@ -707,13 +785,13 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         widget.setCursor(Qt.CursorShape.PointingHandCursor)
         widget.setStyleSheet(f"""
             QFrame {{
-                background-color: white;
-                border: 1px solid #D1D5DB;
+                background-color: {self.theme_colors['bg_secondary']};
+                border: 1px solid {self.theme_colors['border']};
                 border-radius: 8px;
                 padding: 12px;
             }}
             QFrame:hover {{
-                background-color: #F9FAFB;
+                background-color: {self.theme_colors['bg_tertiary']};
                 border-color: {Colors.PRIMARY};
             }}
         """)
@@ -725,7 +803,9 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
 
         # Status icon
         status_icon = QLabel("✓" if run['errors'] == 0 else "⚠")
-        status_icon.setStyleSheet(f"font-size: 18pt; color: {'#059669' if run['errors'] == 0 else '#F59E0B'};")
+        success_color = '#4ADE80' if self.is_dark_mode else '#059669'
+        warning_color = '#FCD34D' if self.is_dark_mode else '#F59E0B'
+        status_icon.setStyleSheet(f"font-size: 18pt; color: {success_color if run['errors'] == 0 else warning_color};")
         layout.addWidget(status_icon)
 
         # Info
@@ -735,24 +815,25 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         time_text = self._format_relative_time(timestamp)
 
         title = QLabel(time_text)
-        title.setStyleSheet("font-weight: bold; color: #1F2937; font-size: 11pt;")
+        title.setStyleSheet(f"font-weight: bold; color: {self.theme_colors['text_primary']}; font-size: 11pt;")
         info_layout.addWidget(title)
 
         details = QLabel(
             f"{run['total_files']} files • {run['analyzed']} analyzed • "
             f"{run['cached']} cached • {run['errors']} errors"
         )
-        details.setStyleSheet("color: #6B7280; font-size: 9pt;")
+        details.setStyleSheet(f"color: {self.theme_colors['text_tertiary']}; font-size: 9pt;")
         info_layout.addWidget(details)
 
         duration_text = QLabel(f"Duration: {self._format_duration(run['duration_seconds'])}")
-        duration_text.setStyleSheet("color: #6B7280; font-size: 9pt;")
+        duration_text.setStyleSheet(f"color: {self.theme_colors['text_tertiary']}; font-size: 9pt;")
         info_layout.addWidget(duration_text)
 
         # Hint to click for error details
         if run['errors'] > 0:
             hint = QLabel("Click to view error details →")
-            hint.setStyleSheet(f"color: {Colors.PRIMARY}; font-size: 9pt; font-style: italic;")
+            link_color = '#90CAF9' if self.is_dark_mode else Colors.PRIMARY
+            hint.setStyleSheet(f"color: {link_color}; font-size: 9pt; font-style: italic;")
             info_layout.addWidget(hint)
 
         layout.addLayout(info_layout, 1)
@@ -768,7 +849,7 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
 
         # Label
         label = QLabel(f"{doc_type}: {count} ({percentage:.0f}%)")
-        label.setStyleSheet("color: #374151; font-size: 10pt;")
+        label.setStyleSheet(f"color: {self.theme_colors['text_secondary']}; font-size: 10pt;")
         layout.addWidget(label)
 
         # Progress bar as visual indicator
@@ -779,9 +860,9 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         bar.setFixedHeight(20)
         bar.setStyleSheet(f"""
             QProgressBar {{
-                border: 1px solid #D1D5DB;
+                border: 1px solid {self.theme_colors['border']};
                 border-radius: 4px;
-                background-color: #F3F4F6;
+                background-color: {self.theme_colors['bg_tertiary']};
             }}
             QProgressBar::chunk {{
                 background-color: {Colors.PRIMARY};
