@@ -133,7 +133,6 @@ class AnalysisStatusWindow(QDialog):
         header_layout.addStretch()
 
         self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.setStyleSheet(get_primary_button_style())
         self.refresh_button.clicked.connect(self._refresh_all)
         header_layout.addWidget(self.refresh_button)
 
@@ -158,19 +157,30 @@ class AnalysisStatusWindow(QDialog):
         footer_layout = QHBoxLayout()
 
         self.export_button = QPushButton("Export Report")
-        self.export_button.setStyleSheet(get_primary_button_style())
         self.export_button.clicked.connect(self._export_report)
         footer_layout.addWidget(self.export_button)
 
         self.clear_history_button = QPushButton("Clear History")
-        self.clear_history_button.setStyleSheet(get_danger_button_style())
+        self.clear_history_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.DANGER};
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 16px;
+                font-size: 10pt;
+                min-width: 100px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.DANGER_HOVER};
+            }}
+        """)
         self.clear_history_button.clicked.connect(self._clear_history)
         footer_layout.addWidget(self.clear_history_button)
 
         footer_layout.addStretch()
 
         close_button = QPushButton("Close")
-        close_button.setStyleSheet(get_primary_button_style())
         close_button.clicked.connect(self.accept)
         footer_layout.addWidget(close_button)
 
