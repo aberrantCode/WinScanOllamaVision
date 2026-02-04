@@ -862,6 +862,7 @@ class AnalysisDB:
         cursor = self.connection.cursor()
 
         # Get runs from the new analysis_runs table
+        # Filter out stale 'running' status (runs older than 5 minutes that never completed)
         cursor.execute("""
             SELECT
                 run_id,
@@ -875,6 +876,8 @@ class AnalysisDB:
                 duration_ms,
                 status
             FROM analysis_runs
+            WHERE status != 'running'
+               OR (status = 'running' AND datetime(started_at) > datetime('now', '-5 minutes'))
             ORDER BY started_at DESC
             LIMIT ?
         """, (limit,))
