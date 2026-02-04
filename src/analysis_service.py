@@ -25,41 +25,6 @@ except ImportError:
 class AnalysisService:
     """Manages automatic startup analysis of document pages"""
 
-    # Comprehensive analysis prompt
-    DEFAULT_ANALYSIS_PROMPT = """Analyze this document page comprehensively.
-
-Respond with ONLY valid JSON in this exact format:
-{
-  "document_type": "Invoice|Statement|Report|Letter|Contract|Receipt|Bill|Agreement|Form|Other",
-  "company": "organization name or null",
-  "document_date": "YYYY-MM-DD or null",
-  "page_number": <integer or null>,
-  "total_pages": <integer or null>,
-  "belongs_to_same_doc": true or false,
-  "confidence_score": <0.0 to 1.0>,
-  "rotation_needed": true or false,
-  "suggested_rotation": <0|90|180|270>,
-  "rotation_confidence": "high|medium|low",
-  "extracted_text_summary": "brief summary of key text",
-  "additional": {}
-}
-
-Extraction Rules:
-1. document_type: Classify the document (use one of the types listed above)
-2. company: Extract company/organization name from headers, footers, logos
-3. document_date: Primary document date (not print date) in YYYY-MM-DD format
-4. page_number: Current page number if visible (from text like "Page 3")
-5. total_pages: Total pages if indicated (from text like "Page 3 of 6")
-6. belongs_to_same_doc: Always false for single-page analysis
-7. confidence_score: 0.0 to 1.0 indicating extraction confidence
-8. rotation_needed: Whether page appears to need rotation
-9. suggested_rotation: Degrees to rotate (0, 90, 180, or 270)
-10. rotation_confidence: Confidence in rotation suggestion
-11. extracted_text_summary: Brief summary of key visible text (max 200 chars)
-12. additional: Any other useful metadata (invoice #, account #, etc.)
-
-Return ONLY the JSON object."""
-
     def __init__(
         self,
         config_manager: ConfigManager,
@@ -263,11 +228,17 @@ Return ONLY the JSON object."""
             provider = self._get_provider()
             self._log(f"[ANALYSIS] Provider obtained: {provider.provider_name}")
 
+            # Get metadata extraction prompt from settings
+            metadata_prompt = self.config.get_setting('Prompts', 'document_metadata')
+            if not metadata_prompt:
+                # Fallback to a basic prompt if not configured
+                metadata_prompt = "Analyze this document and extract metadata."
+
             # Perform analysis
             self._log(f"[ANALYSIS] Calling provider.analyze_images()...")
             result = provider.analyze_images(
                 image_paths=[image_path],
-                prompt=self.DEFAULT_ANALYSIS_PROMPT
+                prompt=metadata_prompt
             )
             self._log(f"[ANALYSIS] Provider returned: success={result.get('success')}")
 

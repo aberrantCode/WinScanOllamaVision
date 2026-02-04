@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
+from styles import show_information, show_warning, show_critical, show_question
 
 # Import existing components
 try:
@@ -1289,7 +1290,32 @@ class EnhancedSettingsWindow(QDialog):
         # Document Pages Prompt
         prompts_layout.addWidget(QLabel("Document Validation Prompt:"))
         self.pages_prompt_edit = ExpandablePromptEdit()
-        pages_prompt_default = """You are an expert document analyst. Examine the provided images. Determine if all pages belong to the *same continuous physical document*. Respond ONLY with 'YES' if all pages are from the same document, or 'NO' if they are not. Do not add any other text or explanation."""
+        pages_prompt_default = """You are an expert document analyst. Examine the provided images and determine which pages belong to the same continuous physical document.
+
+The first image should ALWAYS be considered as belonging to the document (it's the anchor page). Analyze each subsequent page to determine if it belongs with the first page or not.
+
+Respond ONLY with valid JSON in this format:
+{
+  "all_belong": boolean,
+  "doc_page_count": integer,
+  "do_not_belong": [array of integers]
+}
+
+Where:
+- **all_belong**: true if all provided pages belong together, false if any page doesn't belong
+- **doc_page_count**: number of pages that belong together (including the first page)
+- **do_not_belong**: array of page indices (1-based) that don't belong. The first page (index 1) should NEVER be in this array.
+
+Examples:
+
+If all 3 pages belong together:
+{ "all_belong": true, "doc_page_count": 3, "do_not_belong": [] }
+
+If 3 pages provided and page 2 doesn't belong:
+{ "all_belong": false, "doc_page_count": 2, "do_not_belong": [2] }
+
+If 5 pages provided and pages 3 and 5 don't belong:
+{ "all_belong": false, "doc_page_count": 3, "do_not_belong": [3, 5] }"""
         pages_prompt = self.config_manager.get_setting("Prompts", "document_pages", pages_prompt_default)
         self.pages_prompt_edit.setPlainText(pages_prompt)
         prompts_layout.addWidget(self.pages_prompt_edit)
@@ -1307,16 +1333,57 @@ class EnhancedSettingsWindow(QDialog):
         # Document Metadata Prompt
         prompts_layout.addWidget(QLabel("Metadata Extraction Prompt:"))
         self.metadata_prompt_edit = ExpandablePromptEdit()
-        metadata_prompt_default = """You are an expert at extracting key information from scanned documents.
-Analyze the provided images to identify the following:
-1. **Source Company:** The name of the organization that issued the document. Look at headers, footers, logos, or return addresses.
-2. **Document Title:** The main purpose or type of the document (e.g., Invoice, Statement, Bill, Receipt, Report, Contract, Agreement).
-3. **Relevant Date:** The primary date associated with the document (e.g., issue date, statement date, invoice date, contract date). Prioritize the most prominent and relevant date.
+        metadata_prompt_default = """You are an expert at analyzing scanned documents and extracting comprehensive metadata.
 
-Respond ONLY in JSON format. Your JSON should contain three keys: 'company', 'title', and 'date'.
-If any information cannot be found, use null for its value.
+Analyze the provided image(s) and extract the following information:
 
-Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
+**Document Identification:**
+1. **company** (string): Organization name from logos, headers, footers, or return addresses. Use null if not found.
+2. **document_type** (string): Document purpose (e.g., Invoice, Statement, Bill, Receipt, Report, Contract, Agreement, Letter). Use null if unclear.
+3. **document_date** (string): Primary date in YYYY-MM-DD format (invoice date, statement date, issue date). Use null if not found.
+
+**Page Information:**
+4. **page_number** (integer): Current page number if shown. Use null if not found.
+5. **total_pages** (integer): Total page count if indicated (e.g., "Page 1 of 3"). Use null if not found.
+6. **belongs_to_same_doc** (boolean): Does this SINGLE page show indicators it's likely part of a multi-page document? Look for:
+   - Text starts or ends mid-sentence (incomplete thoughts)
+   - Explicit page indicators ("Page 1 of 3", "Continued on next page")
+   - References to unseen content ("as mentioned above", "see below", "continued from previous page")
+   - Partial tables, lists, or paragraphs that appear cut off
+   - Total page count > 1
+   Set to true if ANY indicators present, false if page appears complete and standalone.
+
+**Image Quality & Rotation:**
+7. **rotation_needed** (boolean): Does the image need rotation to be upright and readable? Check if text appears sideways or upside-down.
+8. **suggested_rotation** (integer): If rotation needed, specify degrees clockwise: 90, 180, or 270. Use 0 if no rotation needed.
+9. **rotation_confidence** (string): Confidence in rotation assessment: "high", "medium", or "low".
+10. **legibility** (string): Image readability: "clear" (easily readable), "degraded" (readable but poor quality), "illegible" (cannot read).
+11. **resolution_assessment** (string): Estimated quality: "high" (300+ DPI), "medium" (150-300 DPI), "low" (<150 DPI), or "unknown".
+
+**Overall Confidence:**
+12. **confidence_score** (float): Your overall confidence in the extracted data (0.0 to 1.0).
+   - 0.9-1.0: Very confident in all fields
+   - 0.7-0.9: Confident in most fields, some uncertainty
+   - 0.5-0.7: Moderate confidence, several unclear fields
+   - 0.0-0.5: Low confidence, many fields unclear or guessed
+
+**IMPORTANT:** Respond ONLY with valid JSON. Use null for any field you cannot determine. Do not include explanations outside the JSON structure.
+
+Example response:
+{
+  "company": "Acme Corporation",
+  "document_type": "Invoice",
+  "document_date": "2024-01-15",
+  "page_number": 1,
+  "total_pages": 3,
+  "belongs_to_same_doc": true,
+  "rotation_needed": false,
+  "suggested_rotation": 0,
+  "rotation_confidence": "high",
+  "legibility": "clear",
+  "resolution_assessment": "high",
+  "confidence_score": 0.92
+}"""
         metadata_prompt = self.config_manager.get_setting("Prompts", "document_metadata", metadata_prompt_default)
         self.metadata_prompt_edit.setPlainText(metadata_prompt)
         prompts_layout.addWidget(self.metadata_prompt_edit)
@@ -1370,8 +1437,10 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
         )
         layout.addWidget(self.ollama_timeout_spin, 2, 1)
 
-        # Load Ollama models
-        self._load_ollama_models()
+        # Load Ollama models asynchronously after window is shown
+        # This prevents the blank window issue during initialization
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self._load_ollama_models)
 
         return widget
 
@@ -1703,11 +1772,11 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
                 self.ollama_model_combo.setCurrentIndex(index)
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to load Ollama models: {e}")
+            show_warning(self, "Error", f"Failed to load Ollama models: {e}")
 
     def _download_ollama_model(self):
         """Download an Ollama model"""
-        QMessageBox.information(
+        show_information(
             self, "Download Model",
             "Model download functionality will be implemented in next phase.\n"
             "For now, use 'ollama pull <model-name>' in terminal."
@@ -1719,7 +1788,7 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
 
         # Validation
         if not current_prompt:
-            QMessageBox.warning(
+            show_warning(
                 self, "Empty Prompt",
                 "Cannot optimize an empty prompt. Please enter a prompt first."
             )
@@ -1734,19 +1803,18 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
                 'gemini_cli': 'Gemini CLI'
             }.get(active_provider, active_provider)
         except Exception as e:
-            QMessageBox.critical(
+            show_critical(
                 self, "Configuration Error",
                 f"Failed to get active provider: {str(e)}"
             )
             return
 
         # Confirm action
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Optimize Prompt",
             f"This will send your current prompt to {provider_display_name} for optimization.\n\n"
             "The AI will suggest improvements while preserving JSON schema requirements.\n\n"
-            "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "Continue?"
         )
 
         if reply != QMessageBox.StandardButton.Yes:
@@ -1806,7 +1874,7 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
             elif "connection" in error_detail.lower():
                 error_detail += "\n\nCannot connect to the LLM provider. Please check your configuration."
 
-            QMessageBox.critical(
+            show_critical(
                 self, "Optimization Failed",
                 f"Failed to optimize prompt:\n\n{error_detail}"
             )
@@ -1814,7 +1882,7 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
 
         # Validate optimized prompt
         if not optimized_prompt or not optimized_prompt.strip():
-            QMessageBox.warning(
+            show_warning(
                 self, "Invalid Response",
                 "The LLM returned an empty response. Please try again or edit manually."
             )
@@ -1833,7 +1901,7 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
             final_prompt = comparison_dialog.get_final_prompt()
             self.optimization_prompt_edit.setPlainText(final_prompt)
 
-            QMessageBox.information(
+            show_information(
                 self, "Prompt Updated",
                 "The prompt has been updated with the optimized version.\n\n"
                 "Don't forget to click 'OK' to save your settings."
@@ -1847,7 +1915,7 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
             # Check if already in list
             for i in range(self.directories_list.count()):
                 if self.directories_list.item(i).text() == directory:
-                    QMessageBox.information(
+                    show_information(
                         self, "Already Added",
                         "This directory is already in the list."
                     )
@@ -1859,10 +1927,9 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
         """Remove selected directory from list"""
         current_item = self.directories_list.currentItem()
         if current_item:
-            reply = QMessageBox.question(
+            reply = show_question(
                 self, "Remove Directory",
-                f"Remove this directory from monitoring?\n\n{current_item.text()}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                f"Remove this directory from monitoring?\n\n{current_item.text()}"
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.directories_list.takeItem(self.directories_list.currentRow())
@@ -1897,12 +1964,12 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
         """Create database backup"""
         try:
             backup_path = self.metadata_db.create_backup()
-            QMessageBox.information(
+            show_information(
                 self, "Backup Created",
                 f"Database backup created successfully:\n\n{backup_path}"
             )
         except Exception as e:
-            QMessageBox.critical(
+            show_critical(
                 self, "Backup Failed",
                 f"Failed to create database backup:\n\n{e}"
             )
@@ -1916,11 +1983,10 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
             "all": "ALL DATA"
         }
 
-        reply = QMessageBox.warning(
+        reply = show_question(
             self, "Confirm Purge",
             f"Are you sure you want to purge {type_names[data_type]}?\n\n"
-            "This action cannot be undone!",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "This action cannot be undone!"
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -1939,11 +2005,11 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
                     self.analysis_db.connection.execute("DELETE FROM document_bundles")
                     self.analysis_db.connection.commit()
 
-                QMessageBox.information(self, "Purge Complete", f"Successfully purged {type_names[data_type]}.")
+                show_information(self, "Purge Complete", f"Successfully purged {type_names[data_type]}.")
                 self._show_database_statistics()  # Refresh stats
 
             except Exception as e:
-                QMessageBox.critical(self, "Purge Failed", f"Failed to purge data:\n\n{e}")
+                show_critical(self, "Purge Failed", f"Failed to purge data:\n\n{e}")
 
     def save_settings(self):
         """Save all settings"""
@@ -1997,11 +2063,13 @@ Example: { "company": "Acme Corp", "title": "Invoice", "date": "2023-10-26" }"""
             self.config_manager.set_setting("SystemTray", "close_to_tray",
                                            "true" if self.close_to_tray_checkbox.isChecked() else "false")
 
-            QMessageBox.information(self, "Settings Saved", "Your settings have been saved successfully.")
+            from styles import show_information, show_critical
+            show_information(self, "Settings Saved", "Your settings have been saved successfully.")
             self.accept()
 
         except Exception as e:
-            QMessageBox.critical(self, "Save Failed", f"Failed to save settings:\n\n{e}")
+            from styles import show_critical
+            show_critical(self, "Save Failed", f"Failed to save settings:\n\n{e}")
 
 
 # For backward compatibility, alias to old name

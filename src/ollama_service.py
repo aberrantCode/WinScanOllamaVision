@@ -165,70 +165,52 @@ class OllamaService:
 
     def validate_grouping_with_page_number(self, model_name: str, image_paths: List[str], custom_prompt: str = None) -> Dict[str, Any]:
         """
-        Validates if images belong to same document AND extracts comprehensive metadata from last image.
+        Validates which images belong to same document using improved JSON format.
+
+        Now uses the Document Validation Prompt which returns structured data about
+        which pages belong together and which don't.
 
         Args:
             model_name: The vision model to use
-            image_paths: List of image paths for the document pages
-            custom_prompt: Optional custom prompt override
+            image_paths: List of image paths for the document pages (first is anchor)
+            custom_prompt: Optional custom prompt override from settings
 
         Returns:
             {
-                'belongs': bool,
-                'page_number': Optional[int],
-                'total_pages': Optional[int],
-                'page_position': Optional[str],  # e.g., "4 of 6"
+                'belongs': bool,  # True if ALL pages belong, False if any don't
+                'doc_page_count': int,  # Number of pages that belong together
+                'do_not_belong': List[int],  # 1-based indices of pages that don't belong
+                'page_number': Optional[int],  # For backward compatibility
+                'total_pages': Optional[int],  # For backward compatibility
+                'page_position': Optional[str],
                 'confidence': str,
                 'company': Optional[str],
                 'document_type': Optional[str],
                 'document_date': Optional[str],
-                'additional': Dict[str, Any]  # Any other extracted info
+                'additional': Dict[str, Any]
             }
         """
-        if custom_prompt:
-            prompt = custom_prompt
-        else:
-            prompt = """You are an expert document analyst. Examine the provided images.
+        # Use custom prompt from settings if provided
+        prompt = custom_prompt if custom_prompt else None
 
-Task 1: Determine if all pages belong to the *same continuous physical document*.
-Task 2: Extract comprehensive metadata from the LAST image.
+        if not prompt:
+            # Fallback to default if no custom prompt (shouldn't happen)
+            prompt = """You are an expert document analyst. Examine the provided images and determine which pages belong to the same continuous physical document.
 
-Respond ONLY with valid JSON in this exact format:
+The first image should ALWAYS be considered as belonging to the document (it's the anchor page). Analyze each subsequent page to determine if it belongs with the first page or not.
+
+Respond ONLY with valid JSON in this format:
 {
-  "belongs": "YES" or "NO",
-  "page_number": <integer or null>,
-  "total_pages": <integer or null>,
-  "page_position": <string or null>,
-  "confidence": "high" or "medium" or "low",
-  "company": <string or null>,
-  "document_type": <string or null>,
-  "document_date": <string or null>,
-  "additional": {}
-}
-
-Extraction Rules for LAST image only:
-1. belongs: "YES" if all pages from same document, "NO" otherwise
-2. page_number: Current page number (from text like "Page 3", "3", or position in sequence)
-3. total_pages: Total page count (from text like "Page 3 of 6", "6 pages total", etc.)
-4. page_position: Exact text showing position (e.g., "4 of 6", "Page 3/6", null if not found)
-5. confidence: "high" if clearly visible, "medium" if partially visible, "low" if inferred
-6. company: Organization/company name (from headers, footers, logos)
-7. document_type: Type of document (Invoice, Statement, Report, Letter, etc.)
-8. document_date: Document date in YYYY-MM-DD format (primary date, not print date)
-9. additional: Any other useful metadata (invoice numbers, account numbers, totals, etc.)
-
-Examples:
-- Page with "Page 4 of 6" → {"page_number": 4, "total_pages": 6, "page_position": "4 of 6"}
-- Page with "Invoice" and "Acme Corp" → {"document_type": "Invoice", "company": "Acme Corp"}
-- Use null for any field not found or unclear
-
-Return ONLY the JSON object, no explanations."""
+  "all_belong": boolean,
+  "doc_page_count": integer,
+  "do_not_belong": [array of integers]
+}"""
 
         try:
             response = self.chat_with_vision_model(model_name, image_paths, prompt, format_json=True)
             content = response.get("content", "{}")
 
-            # Clean JSON (similar to extract_document_info)
+            # Clean JSON
             content = content.strip()
             if content.startswith("```"):
                 lines = content.split('\n')
@@ -238,26 +220,41 @@ Return ONLY the JSON object, no explanations."""
             parsed = json.loads(content)
 
             # Debug output
-            print(f"\n=== DEBUG: Comprehensive Metadata Extraction ===")
+            print(f"\n=== DEBUG: Document Validation (New Format) ===")
             print(f"Raw response: {content}")
             print(f"Parsed: {parsed}")
-            print("==============================================\n")
+            print("=============================================\n")
+
+            # Extract new format fields
+            all_belong = parsed.get('all_belong', False)
+            doc_page_count = parsed.get('doc_page_count', 1)
+            do_not_belong = parsed.get('do_not_belong', [])
+
+            # For backward compatibility, set belongs to True only if ALL belong
+            belongs = all_belong
 
             return {
-                'belongs': parsed.get('belongs', 'NO').upper() == 'YES',
-                'page_number': parsed.get('page_number'),
-                'total_pages': parsed.get('total_pages'),
-                'page_position': parsed.get('page_position'),
-                'confidence': parsed.get('confidence', 'low'),
-                'company': parsed.get('company'),
-                'document_type': parsed.get('document_type'),
-                'document_date': parsed.get('document_date'),
-                'additional': parsed.get('additional', {})
+                'belongs': belongs,
+                'doc_page_count': doc_page_count,
+                'do_not_belong': do_not_belong,
+                # Legacy fields for backward compatibility (extract from last belonging page)
+                'page_number': None,  # Would need separate metadata extraction
+                'total_pages': doc_page_count if all_belong else None,
+                'page_position': None,
+                'confidence': 'high' if all_belong else 'medium',
+                'company': None,  # Metadata extraction is separate now
+                'document_type': None,
+                'document_date': None,
+                'additional': {}
             }
         except Exception as e:
             print(f"Error in validate_grouping_with_page_number: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'belongs': False,
+                'doc_page_count': 1,
+                'do_not_belong': list(range(2, len(image_paths) + 1)),  # Assume only first belongs
                 'page_number': None,
                 'total_pages': None,
                 'page_position': None,

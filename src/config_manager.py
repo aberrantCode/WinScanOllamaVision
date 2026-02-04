@@ -18,6 +18,9 @@ class ConfigManager:
     def _load_config(self):
         if os.path.exists(self.config_file):
             self.config.read(self.config_file)
+            # Ensure all default sections exist (for config files created before new providers added)
+            self._create_default_config()
+            self._save_config()
         else:
             self._create_default_config()
             self._save_config()

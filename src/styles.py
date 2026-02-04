@@ -561,3 +561,77 @@ def apply_lift_animation(widget):
     # def leaveEvent(self, event):
     #     self.setStyleSheet(normal_style)
     pass
+
+
+def get_themed_message_box_style():
+    """Get stylesheet for themed message boxes"""
+    return f"""
+        QMessageBox {{
+            background-color: {Colors.WHITE};
+        }}
+        QMessageBox QLabel {{
+            color: {Colors.GRAY_900};
+            background-color: transparent;
+            font-size: 13px;
+        }}
+        QMessageBox QPushButton {{
+            background-color: {Colors.PRIMARY};
+            color: {Colors.WHITE};
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-weight: 600;
+            min-width: 80px;
+        }}
+        QMessageBox QPushButton:hover {{
+            background-color: {Colors.PRIMARY_HOVER};
+        }}
+        QMessageBox QPushButton:pressed {{
+            background-color: {Colors.PRIMARY_HOVER};
+        }}
+    """
+
+
+def show_information(parent, title, text):
+    """Show themed information message box"""
+    from PyQt6.QtWidgets import QMessageBox
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Icon.Information)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setStyleSheet(get_themed_message_box_style())
+    msg_box.exec()
+
+
+def show_warning(parent, title, text):
+    """Show themed warning message box"""
+    from PyQt6.QtWidgets import QMessageBox
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Icon.Warning)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setStyleSheet(get_themed_message_box_style())
+    msg_box.exec()
+
+
+def show_critical(parent, title, text):
+    """Show themed critical/error message box"""
+    from PyQt6.QtWidgets import QMessageBox
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Icon.Critical)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setStyleSheet(get_themed_message_box_style())
+    msg_box.exec()
+
+
+def show_question(parent, title, text):
+    """Show themed question message box with Yes/No buttons"""
+    from PyQt6.QtWidgets import QMessageBox
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Icon.Question)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    msg_box.setStyleSheet(get_themed_message_box_style())
+    return msg_box.exec()

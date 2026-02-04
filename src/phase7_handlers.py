@@ -3,6 +3,9 @@ Phase 7 Handler Methods for ConvertImagesWindow
 These methods will be added to the ConvertImagesWindow class
 """
 
+from styles import show_information, show_question
+from PyQt6.QtWidgets import QMessageBox
+
 # Add these methods to ConvertImagesWindow class:
 
 def _load_and_show_bundle_suggestions(self):
@@ -56,7 +59,7 @@ def _on_bundle_accepted(self, bundle_data):
 
         # Remove accepted bundle from view
         # (Bundles will be regenerated when view refreshes)
-        QMessageBox.information(
+        show_information(
             self,
             "Bundle Accepted",
             f"Accepted {len(file_paths)} page(s) for '{bundle_data.get('document_type')}'.\n\n"
@@ -94,9 +97,9 @@ def _on_bundle_rejected(self, bundle_data):
 
     # Mark files as excluded/rejected (optional - could add to a reject list)
     # For now, just remove from suggestions
-    QMessageBox.information(
+    show_information(
         self,
-            "Bundle Rejected",
+        "Bundle Rejected",
         f"Rejected bundle for '{bundle_data.get('document_type')}'.\n\n"
         "These pages will remain available for manual processing."
     )
@@ -107,20 +110,18 @@ def _on_accept_all_high_confidence(self):
     high_confidence_bundles = self.bundle_suggestions_view.get_high_confidence_bundles()
 
     if not high_confidence_bundles:
-        QMessageBox.information(
+        show_information(
             self,
             "No High Confidence Bundles",
             "There are no high confidence bundles (>= 80%) to accept automatically."
         )
         return
 
-    from PyQt6.QtWidgets import QMessageBox
-    reply = QMessageBox.question(
+    reply = show_question(
         self,
         "Accept All High Confidence",
         f"Accept {len(high_confidence_bundles)} high confidence bundle(s) automatically?\n\n"
-        "These documents will skip manual stitching and move directly to finalization.",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        "These documents will skip manual stitching and move directly to finalization."
     )
 
     if reply == QMessageBox.StandardButton.Yes:
@@ -137,7 +138,7 @@ def _on_accept_all_high_confidence(self):
                     'date': bundle.get('document_date')
                 }
 
-        QMessageBox.information(
+        show_information(
             self,
             "Bundles Accepted",
             f"Accepted {len(high_confidence_bundles)} high confidence bundle(s).\n\n"
@@ -190,12 +191,11 @@ def _check_remaining_pages_after_bundles(self):
     remaining_files = [f for f in self.all_files if f not in bundled_files]
 
     if remaining_files:
-        reply = QMessageBox.question(
+        reply = show_question(
             self,
             "Remaining Pages",
             f"There are {len(remaining_files)} page(s) remaining that were not bundled.\n\n"
-            "Would you like to process them manually?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "Would you like to process them manually?"
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -209,7 +209,7 @@ def _check_remaining_pages_after_bundles(self):
             self._show_finalization_step()
     else:
         # All pages bundled, go to finalization
-        QMessageBox.information(
+        show_information(
             self,
             "All Pages Bundled",
             "All pages have been bundled! Proceeding to finalization."

@@ -27,6 +27,7 @@ from bundle_widgets import BundleSuggestionsView
 from bundling_service import BundlingService
 from analysis_db import AnalysisDB
 from analysis_status_window import AnalysisStatusWindow
+from styles import show_information, show_warning, show_critical, show_question
 
 class ProgressBannerWidget(QWidget):
     """Non-modal progress banner for analysis progress"""
@@ -733,7 +734,7 @@ class ConvertPDFsWindow(QMainWindow):
 
     def _send_to_conversion(self):
         """Open ConvertImagesWindow with extracted images"""
-        QMessageBox.information(
+        show_information(
             self,
             "Open Convert Scans",
             "Close this window and click 'Convert Scans' to process the extracted images."
@@ -744,7 +745,7 @@ class ConvertPDFsWindow(QMainWindow):
         """Navigate to next step"""
         if self.current_step == 1:
             if not self.selected_pdfs:
-                QMessageBox.warning(self, "No PDFs Selected", "Please select at least one PDF to extract.")
+                show_warning(self, "No PDFs Selected", "Please select at least one PDF to extract.")
                 return
             self.current_step = 2
             self._show_step_2()
@@ -1556,6 +1557,10 @@ class ConvertImagesWindow(QMainWindow):
         # Phase 7: Bundle suggestion services
         self.analysis_db = AnalysisDB()
         self.bundling_service = BundlingService(self.analysis_db)
+
+        # Analysis service for pre-processing files
+        from analysis_service import AnalysisService
+        self.analysis_service = AnalysisService(self.config_manager, self.analysis_db, self.metadata_db)
 
         self.app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{self.app_name} - Convert Images")
@@ -2382,7 +2387,7 @@ class ConvertImagesWindow(QMainWindow):
             print(f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation}° (display-only, source file unchanged)")
 
         except Exception as e:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Rotation Failed",
                 f"Could not save rotation: {e}"
@@ -3143,7 +3148,7 @@ class ConvertImagesWindow(QMainWindow):
         page_numbers = [m['detected_page_number'] for m in pages_with_numbers]
         if len(page_numbers) != len(set(page_numbers)):
             duplicates = [num for num in set(page_numbers) if page_numbers.count(num) > 1]
-            QMessageBox.warning(
+            show_warning(
                 self, "Duplicate Page Numbers",
                 f"Duplicate page numbers detected: {duplicates}\n\nPlease review and reorder manually."
             )
@@ -3166,7 +3171,7 @@ class ConvertImagesWindow(QMainWindow):
                 f"✓ Pages auto-reordered. {len(pages_with_numbers)}/{len(self.page_metadata_list)} pages had numbers."
             )
         except Exception as e:
-            QMessageBox.critical(self, "Reordering Error", f"Failed to auto-reorder pages: {e}")
+            show_critical(self, "Reordering Error", f"Failed to auto-reorder pages: {e}")
 
     def _refresh_page_order_list(self):
         """Refresh the page order list widget from current_group"""
@@ -3191,7 +3196,7 @@ class ConvertImagesWindow(QMainWindow):
         """Move selected page up (-1) or down (+1)"""
         current_row = self.page_order_list.currentRow()
         if current_row < 0:
-            QMessageBox.information(self, "No Selection", "Please select a page to move.")
+            show_information(self, "No Selection", "Please select a page to move.")
             return
 
         new_row = current_row + direction
@@ -3228,10 +3233,9 @@ class ConvertImagesWindow(QMainWindow):
 
     def _reset_page_order(self):
         """Reset to original stitching order"""
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Reset Order",
-            "Reset to original page order from stitching step?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "Reset to original page order from stitching step?"
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.current_group = self.original_page_order.copy()
@@ -3241,7 +3245,7 @@ class ConvertImagesWindow(QMainWindow):
     def _on_approve_page_order(self):
         """User approves page order - move to Step 4"""
         if not self.current_group:
-            QMessageBox.warning(self, "No Pages", "No pages to finalize.")
+            show_warning(self, "No Pages", "No pages to finalize.")
             return
 
         self.status_label.setText(f"Page order approved. {len(self.current_group)} pages ready for PDF.")
@@ -3266,10 +3270,9 @@ class ConvertImagesWindow(QMainWindow):
             self._stop_spinner()
 
         # Confirm with user since this might lose metadata edits
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Return to Stitching?",
-            "Going back will discard any metadata edits. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "Going back will discard any metadata edits. Continue?"
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -3318,10 +3321,9 @@ class ConvertImagesWindow(QMainWindow):
 
     def _offer_content_based_ordering(self):
         """Offer to use Ollama for content-based ordering (Phase 5)"""
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Content-Based Ordering",
-            "No page numbers detected. Would you like Ollama to analyze content flow and suggest page order?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "No page numbers detected. Would you like Ollama to analyze content flow and suggest page order?"
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._start_content_based_ordering()
@@ -3352,7 +3354,7 @@ class ConvertImagesWindow(QMainWindow):
             return
 
         if isinstance(result, Exception):
-            QMessageBox.warning(
+            show_warning(
                 self, "Ordering Failed",
                 f"Content-based ordering failed: {result}\n\nPlease reorder manually."
             )
@@ -3376,7 +3378,7 @@ class ConvertImagesWindow(QMainWindow):
                 except RuntimeError:
                     print("⚠ Status label no longer exists")
         except Exception as e:
-            QMessageBox.critical(
+            show_critical(
                 self, "Ordering Error",
                 f"Failed to apply content-based ordering: {e}"
             )
@@ -3655,7 +3657,7 @@ class ConvertImagesWindow(QMainWindow):
 
             dialog.exec()
         else:
-            QMessageBox.information(
+            show_information(
                 self,
                 "No Data",
                 "No Ollama request/response available yet.\n\nData will be stored after metadata extraction operations."
@@ -3673,7 +3675,7 @@ class ConvertImagesWindow(QMainWindow):
         try:
             models = self.ollama_service.list_models()
             if not models:
-                QMessageBox.warning(
+                show_warning(
                     self,
                     "No Models Available",
                     "Ollama is running but no models are installed.\n\n"
@@ -3689,7 +3691,7 @@ class ConvertImagesWindow(QMainWindow):
 
             # Provide specific troubleshooting based on error
             if "Failed to connect" in error_msg or "Connection refused" in error_msg:
-                QMessageBox.critical(
+                show_critical(
                     self,
                     "Ollama Connection Failed",
                     f"Cannot connect to Ollama server at {base_url}\n\n"
@@ -3700,7 +3702,7 @@ class ConvertImagesWindow(QMainWindow):
                     f"• Check if another process is using port 11434"
                 )
             else:
-                QMessageBox.critical(
+                show_critical(
                     self,
                     "Ollama Error",
                     f"Error connecting to Ollama:\n\n{error_msg}\n\n"
@@ -3712,7 +3714,7 @@ class ConvertImagesWindow(QMainWindow):
                 )
             return False
         except Exception as e:
-            QMessageBox.critical(
+            show_critical(
                 self,
                 "Unexpected Error",
                 f"An unexpected error occurred while connecting to Ollama:\n\n{e}\n\n"
@@ -3733,7 +3735,7 @@ class ConvertImagesWindow(QMainWindow):
             self.all_files = self.file_processor._get_image_files()
 
             if not self.all_files:
-                QMessageBox.information(self, "Scan Complete", "No PNG files found in scan folder.")
+                show_information(self, "Scan Complete", "No PNG files found in scan folder.")
                 self.status_label.setText("No files found.")
                 # Return to loading UI (could add a reset/retry button here)
                 return
@@ -3741,7 +3743,7 @@ class ConvertImagesWindow(QMainWindow):
             # Check model selection
             selected_model = self.config_manager.get_setting('Ollama', 'model')
             if not selected_model:
-                QMessageBox.warning(self, "No Model Selected", "Please select a model from the dropdown above.")
+                show_warning(self, "No Model Selected", "Please select a model from the dropdown above.")
                 self.status_label.setText("No model selected.")
                 # Return to loading UI
                 return
@@ -3760,12 +3762,31 @@ class ConvertImagesWindow(QMainWindow):
             # Phase 7: Setup Step 1 UI first (needed for layout structure)
             self._setup_step1_ui()
 
-            # Phase 7: Start with bundle suggestions (Step 0)
-            self.status_label.setText(f"Found {len(self.all_files)} file(s). Generating bundle suggestions...")
-            self._load_and_show_bundle_suggestions()
+            # Check if files need analysis before bundling
+            unanalyzed_files = []
+            for file_path in self.all_files:
+                if not self.analysis_db.get_analysis(file_path):
+                    unanalyzed_files.append(file_path)
+
+            if unanalyzed_files:
+                # Trigger analysis for unanalyzed files
+                self.status_label.setText(
+                    f"Found {len(self.all_files)} file(s). Analyzing {len(unanalyzed_files)} unanalyzed file(s)..."
+                )
+                print(f"[ConvertImages] Analyzing {len(unanalyzed_files)} unanalyzed files before bundling")
+
+                # Start analysis service
+                self.analysis_worker = SpecificFilesAnalysisWorker(self.analysis_service, unanalyzed_files)
+                self.analysis_worker.progress.connect(self._on_analysis_progress)
+                self.analysis_worker.finished.connect(self._on_analysis_complete_proceed_to_bundling)
+                self.analysis_worker.start()
+            else:
+                # All files already analyzed, proceed to bundling
+                self.status_label.setText(f"Found {len(self.all_files)} file(s). Generating bundle suggestions...")
+                self._load_and_show_bundle_suggestions()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error Scanning", f"An error occurred: {e}")
+            show_critical(self, "Error Scanning", f"An error occurred: {e}")
             self.status_label.setText(f"Error: {e}")
             # Stay in loading UI on error (buttons don't exist yet)
 
@@ -3792,7 +3813,7 @@ class ConvertImagesWindow(QMainWindow):
             if self.current_group:
                 self._on_exclude_page()  # End stitching
             else:
-                QMessageBox.information(self, "No Files", "No files to process.")
+                show_information(self, "No Files", "No files to process.")
                 self._reset_to_start()
             return
 
@@ -3947,6 +3968,8 @@ Files being sent to Ollama:
             additional = {}
         else:
             belongs = result.get('belongs', False) if isinstance(result, dict) else result
+            doc_page_count = result.get('doc_page_count', 0) if isinstance(result, dict) else 0
+            do_not_belong = result.get('do_not_belong', []) if isinstance(result, dict) else []
             page_number = result.get('page_number') if isinstance(result, dict) else None
             total_pages = result.get('total_pages') if isinstance(result, dict) else None
             page_position = result.get('page_position') if isinstance(result, dict) else None
@@ -3956,8 +3979,12 @@ Files being sent to Ollama:
             document_date = result.get('document_date') if isinstance(result, dict) else None
             additional = result.get('additional', {}) if isinstance(result, dict) else {}
 
-            # Build response summary
+            # Build response summary with new validation format
             response_parts = [f"Result: {'YES' if belongs else 'NO'}"]
+            if doc_page_count > 0:
+                response_parts.append(f"Matching pages: {doc_page_count}")
+            if do_not_belong:
+                response_parts.append(f"Non-matching pages: {do_not_belong}")
             if page_number:
                 response_parts.append(f"Page: {page_number}")
             if page_position:
@@ -4058,11 +4085,22 @@ Files being sent to Ollama:
             self._display_page_in_large_preview(evaluated_file)
             self._update_step1_buttons_for_state('excluded')
 
+            # Build detailed exclusion message
+            exclusion_reason = "doesn't match the current document"
+            if do_not_belong:
+                # Check if the newly added page (last one) is in do_not_belong
+                total_pages_checked = len(self.current_group) + 1  # current group + new page
+                if total_pages_checked in do_not_belong:
+                    if doc_page_count > 0:
+                        exclusion_reason = f"doesn't belong (only {doc_page_count} of {total_pages_checked} pages match)"
+                    else:
+                        exclusion_reason = "doesn't belong to this document"
+
             # Safety check: ensure status_label still exists
             if hasattr(self, 'status_label') and self.status_label:
                 try:
                     self.status_label.setText(
-                        f"✗ Ollama suggests excluding this page. "
+                        f"✗ AI suggests excluding: page {exclusion_reason}. "
                         f"Current group: {len(self.current_group)} page(s). "
                         f"Use buttons to Include, Skip, or Finish Group."
                     )
@@ -4189,7 +4227,7 @@ Files being sent to Ollama:
         # TODO: Implement re-analysis functionality
         # This would trigger a new analysis for the specific file
         self.status_label.setText(f"Re-analysis requested for {os.path.basename(file_path)}")
-        QMessageBox.information(
+        show_information(
             self,
             "Re-analyze",
             f"Re-analysis functionality will be implemented in a future phase.\n\nFile: {os.path.basename(file_path)}"
@@ -4217,7 +4255,7 @@ Files being sent to Ollama:
         """User clicked Finish Group button - finalize current group and move to Step 2"""
         # End stitching and move to Step 2 (without modifying current page state)
         if not self.current_group:
-            QMessageBox.information(self, "No Pages", "No pages in current group.")
+            show_information(self, "No Pages", "No pages in current group.")
             self._reset_to_start()
             return
 
@@ -4299,7 +4337,7 @@ Files being sent to Ollama:
         else:
             # No more files - need to finish stitching
             if not self.current_group:
-                QMessageBox.information(self, "No Pages", "No pages in current group.")
+                show_information(self, "No Pages", "No pages in current group.")
                 self._reset_to_start()
                 return
 
@@ -4361,11 +4399,9 @@ Files being sent to Ollama:
             if hasattr(self, 'step1_spinner_timer'):
                 self.step1_spinner_timer.stop()
 
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Abort Document Stitching",
-            "Are you sure you want to abort?\n\nAll progress will be lost.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            "Are you sure you want to abort?\n\nAll progress will be lost."
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.close()
@@ -4401,10 +4437,9 @@ Files being sent to Ollama:
         current_page = self.current_page_path
 
         # Confirm with user
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Refresh Metadata",
-            f"Clear cached metadata for this page and request fresh analysis from Ollama?\n\n{os.path.basename(current_page)}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            f"Clear cached metadata for this page and request fresh analysis from Ollama?\n\n{os.path.basename(current_page)}"
         )
 
         if reply != QMessageBox.StandardButton.Yes:
@@ -4884,7 +4919,7 @@ Files being sent to Ollama:
 
         selected_model = self.config_manager.get_setting('Ollama', 'model')
         if not selected_model:
-            QMessageBox.warning(self, "No Model Selected", "Please select a model.")
+            show_warning(self, "No Model Selected", "Please select a model.")
             return
 
         # Enable cancel button during processing
@@ -4955,7 +4990,7 @@ Files being sent to Ollama:
             return
 
         if isinstance(result, Exception):
-            QMessageBox.warning(
+            show_warning(
                 self, "Extraction Failed",
                 f"Ollama failed to extract metadata.\n\nError: {result}\n\n"
                 f"Please fill in the fields manually."
@@ -5016,11 +5051,11 @@ Files being sent to Ollama:
         title = self.title_edit.currentText().strip()
 
         if not company:
-            QMessageBox.warning(self, "Missing Information", "Please enter a Company name.")
+            show_warning(self, "Missing Information", "Please enter a Company name.")
             return
 
         if not title:
-            QMessageBox.warning(self, "Missing Information", "Please enter a Document Title.")
+            show_warning(self, "Missing Information", "Please enter a Document Title.")
             return
 
         # Update extracted metadata with user edits
@@ -5047,10 +5082,9 @@ Files being sent to Ollama:
 
     def _on_abort(self):
         """User clicked Abort - return to main window"""
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Abort Processing",
-            "Are you sure you want to abort? All progress will be lost.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "Are you sure you want to abort? All progress will be lost."
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.close()
@@ -5060,7 +5094,7 @@ Files being sent to Ollama:
     def _create_pdf_for_preview(self):
         """Create PDF and display preview"""
         if not self.current_group or not self.extracted_metadata:
-            QMessageBox.warning(self, "Error", "No document data to create PDF.")
+            show_warning(self, "Error", "No document data to create PDF.")
             return
 
         try:
@@ -5108,7 +5142,7 @@ Files being sent to Ollama:
             self._start_auto_approval(self.accept_delete_button, "✓ Accept & Delete Sources")
 
         except Exception as e:
-            QMessageBox.critical(self, "PDF Creation Error", f"Failed to create PDF.\n\nError: {e}")
+            show_critical(self, "PDF Creation Error", f"Failed to create PDF.\n\nError: {e}")
             self.status_label.setText(f"Error creating PDF: {e}")
 
     def _update_step4_file_info(self):
@@ -5205,7 +5239,7 @@ Files being sent to Ollama:
     def _finalize_document(self, delete_sources):
         """Finalize document - handle PDF, archive metadata, and source files"""
         if not hasattr(self, 'created_pdf_path'):
-            QMessageBox.warning(self, "Error", "No PDF created yet.")
+            show_warning(self, "Error", "No PDF created yet.")
             return
 
         try:
@@ -5253,7 +5287,7 @@ Files being sent to Ollama:
                 self.close()
 
         except Exception as e:
-            QMessageBox.critical(self, "Finalization Error", f"Error: {e}")
+            show_critical(self, "Finalization Error", f"Error: {e}")
 
     def _on_reject_pdf(self):
         """User clicked Reject - delete PDF and return"""
@@ -5262,12 +5296,11 @@ Files being sent to Ollama:
                 os.remove(self.created_pdf_path)
                 self.status_label.setText("PDF rejected and deleted.")
             except Exception as e:
-                QMessageBox.warning(self, "Delete Error", f"Could not delete PDF: {e}")
+                show_warning(self, "Delete Error", f"Could not delete PDF: {e}")
 
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "PDF Rejected",
-            "PDF has been rejected. Start over with this document?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "PDF has been rejected. Start over with this document?"
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -5290,6 +5323,23 @@ Files being sent to Ollama:
     # All replaced by Step 2 and Step 3 handlers in the new 3-step workflow
 
     # ===== PHASE 7: Bundle Suggestion Methods =====
+
+    def _on_analysis_progress(self, status_text, current, total):
+        """Update status during analysis"""
+        if hasattr(self, 'status_label') and self.status_label:
+            self.status_label.setText(
+                f"Analyzing files: {current}/{total} - {status_text}"
+            )
+
+    def _on_analysis_complete_proceed_to_bundling(self, stats):
+        """Analysis complete - proceed to bundle suggestions"""
+        print(f"[ConvertImages] Analysis complete: {stats}")
+        if hasattr(self, 'status_label') and self.status_label:
+            self.status_label.setText(
+                f"Analysis complete. Generating bundle suggestions for {len(self.all_files)} file(s)..."
+            )
+        # Proceed to bundle suggestions
+        QTimer.singleShot(500, self._load_and_show_bundle_suggestions)
 
     def _load_and_show_bundle_suggestions(self):
         """Generate and display bundle suggestions (Step 0)"""
@@ -5320,7 +5370,7 @@ Files being sent to Ollama:
             import traceback
             traceback.print_exc()
             # Fall back to manual workflow
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Bundle Suggestions Failed",
                 f"Could not generate bundle suggestions: {e}\n\nProceeding to manual workflow."
@@ -5341,7 +5391,7 @@ Files being sent to Ollama:
                 'title': bundle_data.get('document_type'),
                 'date': bundle_data.get('document_date')
             }
-            QMessageBox.information(
+            show_information(
                 self, "Bundle Accepted",
                 f"Accepted {len(file_paths)} page(s) for '{bundle_data.get('document_type')}'.\n\n"
                 "Regenerating suggestions for remaining pages..."
@@ -5385,7 +5435,7 @@ Files being sent to Ollama:
         self.current_group = list(file_paths)
 
         # Show notification
-        QMessageBox.information(
+        show_information(
             self,
             "Modify Bundle",
             f"Loading {len(file_paths)} page(s) into manual stitching view.\n\n"
@@ -5425,7 +5475,7 @@ Files being sent to Ollama:
         file_paths = bundle_data.get('file_paths', [])
 
         # Display confirmation
-        QMessageBox.information(
+        show_information(
             self, "Bundle Rejected",
             f"Rejected bundle for '{bundle_data.get('document_type')}'.\n\n"
             f"{len(file_paths)} page(s) will remain available for manual processing or re-bundling."
@@ -5455,16 +5505,15 @@ Files being sent to Ollama:
         """Accept all high confidence bundles automatically"""
         high_confidence_bundles = self.bundle_suggestions_view.get_high_confidence_bundles()
         if not high_confidence_bundles:
-            QMessageBox.information(
+            show_information(
                 self, "No High Confidence Bundles",
                 "There are no high confidence bundles (>= 80%) to accept."
             )
             return
 
-        reply = QMessageBox.question(
+        reply = show_question(
             self, "Accept All High Confidence",
-            f"Accept {len(high_confidence_bundles)} high confidence bundle(s)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            f"Accept {len(high_confidence_bundles)} high confidence bundle(s)?"
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -5478,7 +5527,7 @@ Files being sent to Ollama:
                         'title': bundle.get('document_type'),
                         'date': bundle.get('document_date')
                     }
-            QMessageBox.information(
+            show_information(
                 self, "Bundles Accepted",
                 f"Accepted {len(high_confidence_bundles)} high confidence bundle(s)."
             )
@@ -5497,12 +5546,11 @@ Files being sent to Ollama:
         remaining_files = [f for f in self.all_files if f not in bundled_files]
 
         if remaining_files:
-            reply = QMessageBox.question(
+            reply = show_question(
                 self,
                 "Remaining Pages",
                 f"There are {len(remaining_files)} page(s) remaining that were not bundled.\n\n"
-                "Would you like to process them manually?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                "Would you like to process them manually?"
             )
 
             if reply == QMessageBox.StandardButton.Yes:
@@ -5519,7 +5567,7 @@ Files being sent to Ollama:
         else:
             # All pages bundled, go to finalization
             if self.completed_groups:
-                QMessageBox.information(
+                show_information(
                     self,
                     "All Pages Bundled",
                     "All pages have been bundled! Proceeding to finalization."
@@ -5623,16 +5671,7 @@ class StartupWindow(QWidget):
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
-        # Progress banner (initially hidden)
-        self.progress_banner = ProgressBannerWidget(self)
-        self.progress_banner.setVisible(False)
-        self.progress_banner.cancelled.connect(self._cancel_analysis)
-        self.progress_banner.clicked.connect(self.show_analysis_status)
-        self.progress_banner.details_toggled.connect(self._on_banner_details_toggled)
-        main_layout.addWidget(self.progress_banner)
-
-        # Add spacing after banner
-        main_layout.addSpacing(10)
+        # No progress banner - analysis is managed in status window
 
         # Center content layout
         center_layout = QVBoxLayout()
@@ -5852,7 +5891,7 @@ class StartupWindow(QWidget):
         self._settings_window = settings_window
 
     def manual_analyze_documents(self):
-        """Manually trigger document analysis"""
+        """Manually trigger document analysis - opens status window with auto-start"""
         # Initialize analysis service if not already done
         if not hasattr(self, 'analysis_service') or self.analysis_service is None:
             from config_manager import ConfigManager
@@ -5865,46 +5904,53 @@ class StartupWindow(QWidget):
             metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
 
-        # Call the check method which will show the dialog
-        self.check_for_unanalyzed_files(self.analysis_service)
-
-    def _on_banner_details_toggled(self, expanded: bool):
-        """Handle when user toggles details on the progress banner"""
-        # No action needed - banner stays visible until manually closed
-        pass
-
-    def show_analysis_status(self):
-        """Show the Analysis Status window"""
-        status_window = AnalysisStatusWindow(self, self.analysis_service)
+        # Open status window with auto-start
+        status_window = AnalysisStatusWindow(
+            parent=self,
+            analysis_service=self.analysis_service,
+            config_manager=self.config_manager,
+            auto_start_analysis=True
+        )
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-
-        # When window closes, hide the banner and restore everything
-        def on_close():
-            if hasattr(self, 'progress_banner'):
-                self.progress_banner.hide()
-            # Restore GIF to original size
-            if hasattr(self, 'movie') and self.movie.isValid():
-                restored_size = QSize(350, 350)
-                self.movie.setScaledSize(restored_size)
-                self.scanner_label.setFixedSize(restored_size)
-            # Show stats label again
-            if hasattr(self, 'scanner_stats_label'):
-                self.scanner_stats_label.setVisible(True)
-        status_window.finished.connect(on_close)
-
+        status_window.setModal(False)
         status_window.show()
 
         # Keep reference to prevent garbage collection
-        self._status_window = status_window
+        self._analysis_status_window = status_window
+
+    def show_analysis_status(self):
+        """Show the Analysis Status window"""
+        # Initialize analysis service if needed
+        if not hasattr(self, 'analysis_service') or self.analysis_service is None:
+            from config_manager import ConfigManager
+            from analysis_db import AnalysisDB
+            from metadata_db import MetadataDB
+            from analysis_service import AnalysisService
+
+            config_manager = ConfigManager()
+            analysis_db = AnalysisDB()
+            metadata_db = MetadataDB()
+            self.analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
+
+        status_window = AnalysisStatusWindow(
+            parent=self,
+            analysis_service=self.analysis_service,
+            config_manager=self.config_manager,
+            auto_start_analysis=False
+        )
+        status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        status_window.setModal(False)
+        status_window.show()
+
+        # Keep reference to prevent garbage collection
+        self._analysis_status_window = status_window
 
     def quit_application(self):
         """Handle Quit button click with confirmation"""
-        reply = QMessageBox.question(
+        reply = show_question(
             self,
             'Quit Application',
-            'Are you sure you want to quit?',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            'Are you sure you want to quit?'
         )
 
         if reply == QMessageBox.StandardButton.Yes:
@@ -5914,123 +5960,6 @@ class StartupWindow(QWidget):
         if self.processing_window:
             self.processing_window = None
         self.show()
-
-    def start_analysis(self, analysis_service):
-        """Start automatic analysis with progress banner"""
-        self.analysis_service = analysis_service
-
-        # Show progress banner
-        self.progress_banner.setVisible(True)
-        self.progress_banner.update_progress(0, 0, "Starting analysis...")
-
-        # Hide stats label since banner shows the same info
-        if hasattr(self, 'scanner_stats_label'):
-            self.scanner_stats_label.setVisible(False)
-
-        # Reduce GIF size to make room for banner
-        if hasattr(self, 'movie') and self.movie.isValid():
-            reduced_size = QSize(280, 280)  # Reduced size when banner is visible
-            self.movie.setScaledSize(reduced_size)
-            self.scanner_label.setFixedSize(reduced_size)
-
-        # Start scanner animation
-        self._update_scanner_animation(True)
-
-        # Start timer for elapsed time updates
-        import time
-        self.analysis_start_time = time.time()
-        self.analysis_timer = QTimer(self)
-        self.analysis_timer.timeout.connect(self._update_analysis_time)
-        self.analysis_timer.start(1000)
-
-        # Create worker thread with config_manager to avoid SQLite thread errors
-        self.analysis_worker = AnalysisWorker(self.config_manager)
-        self.analysis_worker.progress.connect(self._on_analysis_progress)
-        self.analysis_worker.finished.connect(self._on_analysis_finished)
-        self.analysis_worker.start()
-
-    def _on_analysis_progress(self, status_text, current, total, stats):
-        """Update progress banner with analysis progress"""
-        self.progress_banner.update_progress(current, total, status_text)
-        self.progress_banner.update_stats(
-            stats.get('analyzed', 0),
-            stats.get('cached', 0),
-            stats.get('errors', 0)
-        )
-        # Update scanner stats in real-time
-        self._update_scanner_stats(
-            status=f"Analyzing {current}/{total}...",
-            stats=stats
-        )
-
-    def _update_analysis_time(self):
-        """Update elapsed time display"""
-        import time
-        if self.analysis_start_time:
-            elapsed = int(time.time() - self.analysis_start_time)
-            self.progress_banner.update_time(elapsed)
-
-    def _on_analysis_finished(self, stats):
-        """Handle analysis completion"""
-        self.analysis_timer.stop()
-
-        # Stop scanner animation
-        self._update_scanner_animation(False)
-
-        if stats.get('total_files', 0) == 0:
-            self.progress_banner.show_completion(
-                False,
-                stats.get('message', 'No files to analyze')
-            )
-        elif stats.get('errors', 0) == stats.get('total_files', 0):
-            self.progress_banner.show_completion(
-                False,
-                f"Analysis failed for all {stats['total_files']} files"
-            )
-        else:
-            analyzed = stats.get('analyzed', 0)
-            cached = stats.get('cached', 0)
-            total = stats.get('total_files', 0)
-            errors = stats.get('errors', 0)
-
-            if errors > 0:
-                message = f"Analysis complete: {analyzed + cached}/{total} pages ({errors} errors)"
-            else:
-                message = f"Analysis complete: {analyzed + cached}/{total} pages"
-
-            self.progress_banner.show_completion(True, message)
-
-        # Update scanner stats
-        self._update_scanner_stats()
-
-        # Don't auto-dismiss - let user close it manually when done
-        # (They can click the X button or it will hide when opening status window)
-
-        self.analysis_worker = None
-
-    def _cancel_analysis(self):
-        """Cancel ongoing analysis"""
-        if self.analysis_worker and self.analysis_worker.isRunning():
-            reply = QMessageBox.question(
-                self,
-                'Cancel Analysis?',
-                'Analysis is in progress. Do you want to cancel?\n\n'
-                'Already analyzed pages will be kept.',
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                self.analysis_worker.cancel()
-                self.analysis_timer.stop()
-                # Stop scanner animation
-                self._update_scanner_animation(False)
-                self.progress_banner.show_completion(False, "Analysis cancelled")
-
-                # Don't auto-dismiss - let user close it manually
-
-                # Update scanner stats
-                self._update_scanner_stats()
 
     def _on_movie_frame_changed(self, frame_number):
         """Handle movie frame changes to control initial vs continuous animation"""
@@ -6062,67 +5991,47 @@ class StartupWindow(QWidget):
                 self.movie.stop()
                 self.movie.jumpToFrame(0)  # Show first frame when not analyzing
 
-    def _update_scanner_stats(self, status: str = None, stats: dict = None):
+    def _update_scanner_stats(self):
         """
         Update the stats label below the scanner GIF.
-
-        Args:
-            status: Current status text (e.g., "Analyzing 23/47...")
-            stats: Optional dict with 'analyzed', 'cached', 'errors' keys for real-time updates
+        Shows static database statistics when idle.
         """
         if not hasattr(self, 'scanner_stats_label'):
             return
 
-        # If no stats provided, query database for latest
-        if stats is None:
-            try:
-                db_stats = self.analysis_db.get_analysis_statistics()
-                total_files = db_stats.get('total_files', 0)
-                cached_files = db_stats.get('cached_files', 0)
-                failed_files = db_stats.get('failed_files', 0)
+        try:
+            db_stats = self.analysis_db.get_analysis_statistics()
+            total_files = db_stats.get('total_files', 0)
+            cached_files = db_stats.get('cached_files', 0)
+            failed_files = db_stats.get('failed_files', 0)
 
-                # Get last analysis time from recent runs
-                recent_runs = self.analysis_db.get_recent_runs(limit=1)
-                if recent_runs:
-                    last_run = recent_runs[0]
-                    last_time_str = self._format_relative_time(last_run['timestamp'])
-                else:
-                    last_time_str = "Never"
+            # Get last analysis time from recent runs
+            recent_runs = self.analysis_db.get_recent_runs(limit=1)
+            if recent_runs:
+                last_run = recent_runs[0]
+                last_time_str = self._format_relative_time(last_run['timestamp'])
+            else:
+                last_time_str = "Never"
 
-                # Determine status based on current state
-                if status is None:
-                    if hasattr(self, 'analysis_worker') and self.analysis_worker and self.analysis_worker.isRunning():
-                        status_color = "#2563EB"  # Blue
-                        status_text = "Status: Analyzing..."
-                    elif total_files == 0:
-                        status_color = "#6B7280"  # Gray
-                        status_text = "Status: No files analyzed"
-                    elif failed_files > 0:
-                        status_color = "#DC2626"  # Red
-                        status_text = f"Status: Complete ({failed_files} errors)"
-                    else:
-                        status_color = "#059669"  # Green
-                        status_text = "Status: Idle"
-                else:
-                    status_color = "#2563EB"  # Blue for active analysis
-                    status_text = f"Status: {status}"
+            # Determine status based on database state
+            if total_files == 0:
+                status_color = "#6B7280"  # Gray
+                status_text = "Status: No files analyzed"
+            elif failed_files > 0:
+                status_color = "#DC2626"  # Red
+                status_text = f"Status: Complete ({failed_files} errors)"
+            else:
+                status_color = "#059669"  # Green
+                status_text = "Status: Idle"
 
-            except Exception as e:
-                # Fallback if database query fails
-                total_files = 0
-                cached_files = 0
-                failed_files = 0
-                last_time_str = "Unknown"
-                status_color = "#6B7280"
-                status_text = "Status: Unknown"
-        else:
-            # Use provided stats for real-time updates
-            total_files = stats.get('analyzed', 0) + stats.get('cached', 0)
-            cached_files = stats.get('cached', 0)
-            failed_files = stats.get('errors', 0)
-            last_time_str = "In progress"
-            status_color = "#2563EB"  # Blue
-            status_text = f"Status: {status}" if status else "Status: Analyzing..."
+        except Exception as e:
+            # Fallback if database query fails
+            total_files = 0
+            cached_files = 0
+            failed_files = 0
+            last_time_str = "Unknown"
+            status_color = "#6B7280"
+            status_text = "Status: Unknown"
 
         # Calculate cache percentage
         cache_pct = int((cached_files / total_files * 100)) if total_files > 0 else 0
@@ -6247,22 +6156,30 @@ class StartupWindow(QWidget):
                 log(f"[DEBUG] Calling raise_()")
                 self.raise_()
 
-                log(f"[DEBUG] About to call QMessageBox.question()")
-                reply = QMessageBox.question(
+                log(f"[DEBUG] About to call show_question()")
+                reply = show_question(
                     self,
                     'Analyze Documents?',
                     f'Found {unanalyzed_count} unanalyzed pages in your scan folder.\n\n'
                     f'Would you like to analyze them now?\n\n'
                     f'Estimated time: {time_estimate}\n\n'
-                    f'Analysis enables AI-powered bundle suggestions and automatic document organization.',
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes
+                    f'Analysis enables AI-powered bundle suggestions and automatic document organization.'
                 )
                 log(f"[DEBUG] Dialog closed, reply: {reply}")
 
                 if reply == QMessageBox.StandardButton.Yes:
                     log(f"[DEBUG] User clicked Yes, starting analysis")
-                    self.start_analysis(analysis_service)
+                    # Open status window with auto-start
+                    status_window = AnalysisStatusWindow(
+                        parent=self,
+                        analysis_service=analysis_service,
+                        config_manager=self.config_manager,
+                        auto_start_analysis=True
+                    )
+                    status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+                    status_window.setModal(False)
+                    status_window.show()
+                    self._analysis_status_window = status_window
                 else:
                     log(f"[DEBUG] User clicked No, skipping analysis")
             except Exception as e:
@@ -6330,6 +6247,57 @@ class AnalysisWorker(QThread):
             traceback.print_exc()
             self.finished.emit({
                 'total_files': 0,
+                'analyzed': 0,
+                'cached': 0,
+                'errors': 1,
+                'message': f'Analysis error: {str(e)}'
+            })
+
+    def cancel(self):
+        """Cancel the analysis"""
+        self._cancelled = True
+
+
+class SpecificFilesAnalysisWorker(QThread):
+    """Worker thread for analyzing specific files in background"""
+    progress = pyqtSignal(str, int, int)
+    finished = pyqtSignal(dict)
+
+    def __init__(self, analysis_service, file_paths):
+        super().__init__()
+        self.analysis_service = analysis_service
+        self.file_paths = file_paths
+        self._cancelled = False
+
+    def run(self):
+        """Run analysis for specific files in background thread"""
+        try:
+            def progress_callback(status_text, current, total):
+                if self._cancelled:
+                    raise InterruptedError("Analysis cancelled by user")
+                self.progress.emit(status_text, current, total)
+
+            stats = self.analysis_service.analyze_specific_files(
+                file_paths=self.file_paths,
+                force_reanalysis=False,
+                progress_callback=progress_callback
+            )
+
+            self.finished.emit(stats)
+
+        except InterruptedError:
+            self.finished.emit({
+                'total_files': len(self.file_paths),
+                'analyzed': 0,
+                'cached': 0,
+                'errors': 0,
+                'message': 'Analysis cancelled'
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.finished.emit({
+                'total_files': len(self.file_paths),
                 'analyzed': 0,
                 'cached': 0,
                 'errors': 1,
