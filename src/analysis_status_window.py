@@ -636,38 +636,14 @@ Average Time per Page: {stats['avg_processing_time_ms']/1000:.1f} seconds"""
         self.files_table.setRowCount(len(filtered_files))
 
         for row, file_data in enumerate(filtered_files):
-            # File name - handle None or empty paths
-            file_path = file_data.get('file_path', '')
-
-            # Debug: Log if file_path is empty
-            if not file_path:
-                print(f"Warning: Row {row} has no file_path. Data: {file_data}")
-                filename = 'Unknown'
-                full_path = 'Unknown path'
-            else:
-                try:
-                    filename = os.path.basename(file_path)
-                    full_path = file_path
-                except Exception as e:
-                    print(f"Error getting basename for {file_path}: {e}")
-                    filename = str(file_path)
-                    full_path = str(file_path)
-
-            # Ensure filename is not empty
-            if not filename or filename.strip() == '':
-                filename = f"File {row + 1}"
+            # File name
+            file_path = file_data.get('file_path', 'Unknown')
+            filename = os.path.basename(file_path) if file_path and file_path != 'Unknown' else 'Unknown'
 
             file_item = QTableWidgetItem(filename)
-            file_item.setToolTip(full_path)  # Full path in tooltip
-            file_item.setData(Qt.ItemDataRole.UserRole, file_data)  # Store data for details
+            file_item.setToolTip(file_path)
+            file_item.setData(Qt.ItemDataRole.UserRole, file_data)
             self.files_table.setItem(row, 0, file_item)
-
-            # Debug: Verify item was set
-            check_item = self.files_table.item(row, 0)
-            if check_item:
-                print(f"Row {row}: Set filename to '{check_item.text()}'")
-            else:
-                print(f"Row {row}: Failed to set item!")
 
             # Status
             if file_data.get('status') == 'Failed':
