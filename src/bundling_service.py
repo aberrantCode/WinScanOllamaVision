@@ -82,11 +82,13 @@ class BundlingService:
 
         # Save bundles to database
         for bundle in scored_bundles:
-            self.analysis_db.save_bundle_suggestion(
+            bundle_id = self.analysis_db.save_bundle_suggestion(
                 file_paths=bundle['file_paths'],
                 bundle_metadata=bundle,
                 confidence_score=bundle['confidence_score']
             )
+            # Attach the database ID to the bundle dict for caller convenience
+            bundle['id'] = bundle_id
 
         return scored_bundles
 

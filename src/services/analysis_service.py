@@ -19,6 +19,12 @@ from config.config_manager import ConfigManager
 class AnalysisService:
     """Manages automatic startup analysis of document pages"""
 
+    DEFAULT_ANALYSIS_PROMPT = (
+        "Please analyze the page and extract the following fields: document_type, company, "
+        "document_date, page_number, total_pages, rotation, and confidence_score. "
+        "Return the results in a concise JSON-friendly format or key/value pairs."
+    )
+
     def __init__(
         self,
         config_manager: ConfigManager,

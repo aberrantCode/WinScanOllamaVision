@@ -13,13 +13,17 @@ if sys.platform == 'win32':
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
     sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add src and tests root to path
+tests_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(repo_root, 'src'))
+sys.path.insert(0, repo_root)
+sys.path.insert(0, tests_root)
 
-# Import test modules
-import test_phase1_database
-import test_phase2_providers
-import test_phase3_services
+# Import test modules from reorganized subpackages
+from tests.db import test_phase1_database
+from tests.llm_providers import test_phase2_providers
+from tests.services import test_phase3_services
 
 
 def print_header():
