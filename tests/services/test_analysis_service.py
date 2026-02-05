@@ -1,0 +1,913 @@
+"""
+Comprehensive tests for AnalysisService.
+
+Tests analysis orchestration, caching, error handling, and run tracking.
+"""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from services.analysis_service import AnalysisService
+
+
+# Mock get_logger at module level to avoid LoggingService initialization
+@pytest.fixture(autouse=True)
+def mock_get_logger():
+    with patch("services.analysis_service.get_logger") as mock:
+        mock.return_value = MagicMock()
+        yield mock
+
+
+class TestAnalysisServiceInitialization:
+    """Tests for AnalysisService initialization"""
+
+    @pytest.fixture
+    def mock_config(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    def test_init_stores_dependencies(self, mock_config, mock_analysis_db, mock_metadata_db):
+        # Act
+        service = AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+        # Assert
+        assert service.config is mock_config
+        assert service.analysis_db is mock_analysis_db
+        assert service.metadata_db is mock_metadata_db
+
+    def test_init_provider_is_none(self, mock_config, mock_analysis_db, mock_metadata_db):
+        # Act
+        service = AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+        # Assert
+        assert service.provider is None
+
+    def test_init_gets_logger(
+        self, mock_get_logger, mock_config, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange
+        mock_logger = MagicMock()
+        mock_get_logger.return_value = mock_logger
+
+        # Act
+        service = AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+        # Assert
+        assert service.logger is not None
+
+
+class TestGetProvider:
+    """Tests for _get_provider method"""
+
+    @pytest.fixture
+    def mock_config(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    @patch("services.analysis_service.ProviderFactory")
+    def test_get_provider_creates_provider_on_first_call(self, mock_factory, service, mock_config):
+        # Arrange
+        mock_provider = MagicMock()
+        mock_factory.create_from_config_manager.return_value = mock_provider
+
+        # Act
+        result = service._get_provider()
+
+        # Assert
+        mock_factory.create_from_config_manager.assert_called_once_with(mock_config)
+        assert result is mock_provider
+        assert service.provider is mock_provider
+
+    @patch("services.analysis_service.ProviderFactory")
+    def test_get_provider_returns_cached_provider(self, mock_factory, service, mock_config):
+        # Arrange
+        mock_provider = MagicMock()
+        service.provider = mock_provider
+
+        # Act
+        result = service._get_provider()
+
+        # Assert
+        mock_factory.create_from_config_manager.assert_not_called()
+        assert result is mock_provider
+
+
+class TestScanAllDirectories:
+    """Tests for scan_all_directories method"""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.get_bool.return_value = True
+        config.get_int.return_value = 10
+        config.get_setting.return_value = "C:\\test\\scan"
+        return config
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        db = MagicMock()
+        db.get_active_directories.return_value = []
+        return db
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    def test_scan_returns_disabled_when_auto_analysis_disabled(self, service, mock_config):
+        # Arrange
+        mock_config.get_bool.return_value = False
+
+        # Act
+        result = service.scan_all_directories()
+
+        # Assert
+        assert result["total_files"] == 0
+        assert result["analyzed"] == 0
+        assert result["message"] == "Auto-analysis disabled in settings"
+        mock_config.get_bool.assert_called_once_with("AutoAnalysis", "enabled", True)
+
+    @patch("os.path.exists")
+    def test_scan_uses_active_directories_from_db(self, mock_exists, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = [
+            "C:\\dir1",
+            "C:\\dir2",
+        ]
+
+        with patch("glob.glob", return_value=[]):
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["total_files"] == 0
+
+    @patch("os.path.exists")
+    def test_scan_falls_back_to_scan_folder_when_no_active_dirs(
+        self, mock_exists, service, mock_config, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = []
+        mock_config.get_setting.return_value = "C:\\test\\scan"
+
+        with patch("glob.glob", return_value=[]):
+            # Act
+            service.scan_all_directories()
+
+            # Assert
+            mock_config.get_setting.assert_called_with("DocumentProcessing", "scan_folder")
+
+    @patch("os.path.exists")
+    def test_scan_returns_no_directories_when_none_configured(
+        self, mock_exists, service, mock_config, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = False
+        mock_analysis_db.get_active_directories.return_value = []
+        mock_config.get_setting.return_value = None
+
+        # Act
+        result = service.scan_all_directories()
+
+        # Assert
+        assert result["total_files"] == 0
+        assert result["message"] == "No source directories configured"
+
+    @patch("time.time")
+    @patch("uuid.uuid4")
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_creates_run_with_unique_id(
+        self,
+        mock_exists,
+        mock_glob,
+        mock_uuid,
+        mock_time,
+        service,
+        mock_analysis_db,
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_time.return_value = 1234567890
+        mock_uuid_obj = MagicMock()
+        mock_uuid_obj.hex = "abcdef1234567890"
+        mock_uuid.return_value = mock_uuid_obj
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.return_value = []
+
+        # Act
+        service.scan_all_directories()
+
+        # Assert
+        expected_run_id = "run_1234567890_abcdef12"
+        mock_analysis_db.start_analysis_run.assert_called_once_with(expected_run_id, 0)
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_collects_all_image_files(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: {
+            "C:\\dir1\\*.png": ["file1.png", "file2.png"],
+            "C:\\dir1\\*.PNG": [],
+            "C:\\dir1\\*.jpg": ["file3.jpg"],
+            "C:\\dir1\\*.JPG": [],
+            "C:\\dir1\\*.jpeg": [],
+            "C:\\dir1\\*.JPEG": [],
+        }.get(pattern, [])
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["total_files"] == 3
+            assert mock_analyze.call_count == 3
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_calls_progress_callback(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        progress_callback = MagicMock()
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.scan_all_directories(progress_callback=progress_callback)
+
+            # Assert
+            progress_callback.assert_called_once()
+            call_args = progress_callback.call_args
+            assert "file1.png" in call_args[0][0]
+            assert call_args[0][1] == 1
+            assert call_args[0][2] == 1
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_tracks_cached_files(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png", "file2.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.side_effect = [
+                {"success": True, "cached": True, "skipped": False},
+                {"success": True, "cached": False, "skipped": False},
+            ]
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["cached"] == 1
+            assert result["analyzed"] == 1
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_tracks_errors(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {
+                "success": False,
+                "cached": False,
+                "skipped": False,
+                "error": "Test error",
+            }
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["errors"] == 1
+            mock_analysis_db.save_analysis_error.assert_called_once()
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_tracks_skipped_files(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {
+                "success": False,
+                "cached": False,
+                "skipped": True,
+            }
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["skipped"] == 1
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_updates_directory_scan_info(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png", "file2.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.scan_all_directories()
+
+            # Assert
+            mock_analysis_db.update_directory_scan_info.assert_called_once_with("C:\\dir1", 2)
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_finalizes_run_with_completed_status(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.scan_all_directories()
+
+            # Assert
+            call_args = mock_analysis_db.update_analysis_run.call_args
+            assert call_args.kwargs["status"] == "completed"
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_handles_abort_check(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        abort_check = MagicMock(return_value=True)
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.scan_all_directories(abort_check=abort_check)
+
+            # Assert
+            call_args = mock_analysis_db.update_analysis_run.call_args
+            assert call_args.kwargs["status"] == "aborted"
+            assert call_args.kwargs["analyzed"] == 0
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_uses_incremental_flag(self, mock_exists, mock_glob, service, mock_analysis_db):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.scan_all_directories(incremental=False)
+
+            # Assert
+            mock_analyze.assert_called_once()
+            call_args = mock_analyze.call_args
+            # Check the second positional argument (incremental)
+            assert call_args[0][1] is False
+
+
+class TestAnalyzeSinglePage:
+    """Tests for _analyze_single_page method"""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.get_setting.return_value = "Test prompt"
+        return config
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        db = MagicMock()
+        db.compute_file_hash.return_value = "hash123"
+        return db
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    def test_analyze_single_page_computes_file_hash(self, service, mock_metadata_db):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_metadata_db.compute_file_hash.return_value = "hash123"
+
+        with patch.object(service, "_get_provider"):
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert
+            mock_metadata_db.compute_file_hash.assert_called_once_with(image_path)
+
+    def test_analyze_single_page_returns_cached_when_hash_matches(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_metadata_db.compute_file_hash.return_value = "hash123"
+        mock_analysis_db.get_analysis.return_value = {
+            "file_hash": "hash123",
+            "metadata": {"test": "data"},
+        }
+
+        # Act
+        result = service._analyze_single_page(image_path, incremental=True)
+
+        # Assert
+        assert result["success"] is True
+        assert result["cached"] is True
+        assert result["skipped"] is False
+
+    def test_analyze_single_page_skips_cache_when_not_incremental(self, service, mock_analysis_db):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_analysis_db.get_analysis.return_value = {"file_hash": "hash123"}
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {},
+                "response": "test",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path, incremental=False)
+
+            # Assert
+            assert result["cached"] is False
+            mock_provider.analyze_images.assert_called_once()
+
+    def test_analyze_single_page_calls_provider_with_prompt(self, service, mock_config):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_config.get_setting.return_value = "Custom prompt"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {},
+                "response": "test",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert
+            mock_provider.analyze_images.assert_called_once()
+            call_args = mock_provider.analyze_images.call_args
+            assert call_args.kwargs["prompt"] == "Custom prompt"
+
+    def test_analyze_single_page_uses_fallback_prompt_when_not_configured(
+        self, service, mock_config
+    ):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_config.get_setting.return_value = None
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {},
+                "response": "test",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert
+            call_args = mock_provider.analyze_images.call_args
+            assert "Analyze this document" in call_args.kwargs["prompt"]
+
+    def test_analyze_single_page_saves_to_both_databases(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {"test": "data"},
+                "response": "test response",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert
+            mock_analysis_db.save_analysis.assert_called_once()
+            mock_metadata_db.save_metadata.assert_called_once()
+
+    def test_analyze_single_page_returns_error_when_provider_fails(self, service):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.analyze_images.return_value = {
+                "success": False,
+                "error": "Provider error",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["success"] is False
+            assert result["error"] == "Provider error"
+
+    def test_analyze_single_page_handles_exception(self, service):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_get_provider.side_effect = Exception("Test exception")
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["success"] is False
+            assert "Test exception" in result["error"]
+
+
+class TestAnalyzeSpecificFiles:
+    """Tests for analyze_specific_files method"""
+
+    @pytest.fixture
+    def mock_config(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    def test_analyze_specific_files_processes_all_files(self, service):
+        # Arrange
+        file_paths = ["file1.png", "file2.png", "file3.png"]
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            result = service.analyze_specific_files(file_paths)
+
+            # Assert
+            assert result["total_files"] == 3
+            assert mock_analyze.call_count == 3
+
+    def test_analyze_specific_files_calls_progress_callback(self, service):
+        # Arrange
+        file_paths = ["file1.png"]
+        progress_callback = MagicMock()
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.analyze_specific_files(file_paths, progress_callback=progress_callback)
+
+            # Assert
+            progress_callback.assert_called_once()
+
+    def test_analyze_specific_files_forces_reanalysis_when_requested(self, service):
+        # Arrange
+        file_paths = ["file1.png"]
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.analyze_specific_files(file_paths, force_reanalysis=True)
+
+            # Assert
+            mock_analyze.assert_called_once()
+            call_args = mock_analyze.call_args
+            assert call_args.kwargs["incremental"] is False
+
+    def test_analyze_specific_files_tracks_stats(self, service):
+        # Arrange
+        file_paths = ["file1.png", "file2.png", "file3.png"]
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.side_effect = [
+                {"success": True, "cached": True, "skipped": False},
+                {"success": True, "cached": False, "skipped": False},
+                {"success": False, "cached": False, "skipped": False, "error": "Error"},
+            ]
+
+            # Act
+            result = service.analyze_specific_files(file_paths)
+
+            # Assert
+            assert result["total_files"] == 3
+            assert result["cached"] == 1
+            assert result["analyzed"] == 1
+            assert result["errors"] == 1
+
+
+class TestGetAnalysisForFiles:
+    """Tests for get_analysis_for_files method"""
+
+    @pytest.fixture
+    def mock_config(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    def test_get_analysis_for_files_returns_all_found_analyses(self, service, mock_analysis_db):
+        # Arrange
+        file_paths = ["file1.png", "file2.png", "file3.png"]
+        mock_analysis_db.get_analysis.side_effect = [
+            {"metadata": {"test": "1"}},
+            None,
+            {"metadata": {"test": "3"}},
+        ]
+
+        # Act
+        result = service.get_analysis_for_files(file_paths)
+
+        # Assert
+        assert len(result) == 2
+        assert result[0]["metadata"]["test"] == "1"
+        assert result[1]["metadata"]["test"] == "3"
+
+    def test_get_analysis_for_files_returns_empty_when_none_found(self, service, mock_analysis_db):
+        # Arrange
+        file_paths = ["file1.png"]
+        mock_analysis_db.get_analysis.return_value = None
+
+        # Act
+        result = service.get_analysis_for_files(file_paths)
+
+        # Assert
+        assert result == []
+
+
+class TestLogging:
+    """Tests for _log method"""
+
+    @pytest.fixture
+    def mock_config(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        service = AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+        service.logger = MagicMock()
+        return service
+
+    def test_log_calls_logger_info(self, service):
+        # Act
+        service._log("Test message")
+
+        # Assert
+        service.logger.info.assert_called_once_with("Test message")
+
+    @patch("builtins.print")
+    def test_log_falls_back_to_print_on_error(self, mock_print, service):
+        # Arrange
+        service.logger.info.side_effect = Exception("Logger error")
+
+        # Act
+        service._log("Test message")
+
+        # Assert
+        mock_print.assert_called_once_with("Test message")
+
+
+class TestEdgeCases:
+    """Tests for edge cases and error conditions"""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.get_bool.return_value = True
+        config.get_int.return_value = 10
+        config.get_setting.return_value = "C:\\test\\scan"
+        return config
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        db = MagicMock()
+        db.get_active_directories.return_value = []
+        return db
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_skips_nonexistent_directory(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.side_effect = lambda path: path != "C:\\nonexistent"
+        mock_analysis_db.get_active_directories.return_value = [
+            "C:\\exists",
+            "C:\\nonexistent",
+        ]
+        mock_glob.return_value = []
+
+        # Act
+        result = service.scan_all_directories()
+
+        # Assert - should only process existing directory
+        assert result["total_files"] == 0
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_handles_interrupted_error(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.side_effect = InterruptedError("User cancelled")
+
+            # Act & Assert
+            with pytest.raises(InterruptedError):
+                service.scan_all_directories()
+
+            # Verify run was marked as cancelled
+            call_args = mock_analysis_db.update_analysis_run.call_args
+            assert call_args.kwargs["status"] == "cancelled"
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_handles_run_status_when_all_errors(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png", "file2.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {
+                "success": False,
+                "cached": False,
+                "skipped": False,
+                "error": "All failed",
+            }
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["errors"] == 2
+            call_args = mock_analysis_db.update_analysis_run.call_args
+            # Status should still be "completed" even with errors
+            assert call_args.kwargs["status"] == "failed"
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_removes_duplicate_files_from_glob(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        # Simulate duplicate files from different glob patterns
+        mock_glob.side_effect = lambda pattern: (["file1.png"] if "*.png" in pattern else [])
+
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert - should only process unique files
+            assert result["total_files"] == 1
+            assert mock_analyze.call_count == 1
