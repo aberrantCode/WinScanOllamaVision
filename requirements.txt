@@ -3,6 +3,8 @@ PyQt6
 PyMuPDF
 Pillow
 requests
+ollama
+httpx
 
 # Development dependencies
 pytest>=9.0.0
