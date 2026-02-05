@@ -74,3 +74,17 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+addopts = [
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=90",
+    "-v",
+]
+
+[tool.coverage.run]
+omit = [
+    "*/ollama_service.py",  # Thin wrapper around ollama SDK
+    "*/main.py",  # Application entry point
+    "*/ui/*",  # GUI components (tested separately)
+]
