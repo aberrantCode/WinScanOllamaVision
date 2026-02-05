@@ -1444,22 +1444,31 @@ class BundleReviewWindow(QDialog):
 
     def _on_pages_added(self, file_paths: list):
         """Handle pages added."""
+        # Immutable update: create new lists instead of mutating
         current_paths = self.bundle_data["file_paths"]
-        self.bundle_data["file_paths"].extend(file_paths)
+        new_file_paths = current_paths + file_paths
 
+        new_analyses = []
         for i, fp in enumerate(file_paths, len(current_paths) + 1):
-            self.bundle_data["analyses"].append(
+            new_analyses.append(
                 {
                     "file_path": fp,
                     "company": self.bundle_data["company"],
                     "document_type": self.bundle_data["document_type"],
                     "page_number": i,
-                    "total_pages": len(self.bundle_data["file_paths"]),
+                    "total_pages": len(new_file_paths),
                     "confidence_score": 0.75,
                     "legibility": "clear",
                     "rotation_needed": False,
                 }
             )
+
+        # Create new bundle_data dict with updated values
+        self.bundle_data = {
+            **self.bundle_data,
+            "file_paths": new_file_paths,
+            "analyses": self.bundle_data["analyses"] + new_analyses,
+        }
 
         self._populate_thumbnails()
 
@@ -1492,9 +1501,15 @@ class BundleReviewWindow(QDialog):
         # Save metadata edits
         if self.current_page_index < len(self.bundle_data.get("analyses", [])):
             for field_name, input_widget in self.metadata_inputs.items():
-                self.bundle_data["analyses"][self.current_page_index][field_name] = (
-                    input_widget.text()
-                )
+                # Get value based on widget type
+                if isinstance(input_widget, QCheckBox):
+                    value = input_widget.isChecked()
+                elif isinstance(input_widget, QComboBox):
+                    value = input_widget.currentText()
+                else:  # QLineEdit or other text widgets
+                    value = input_widget.text()
+
+                self.bundle_data["analyses"][self.current_page_index][field_name] = value
 
         remaining_paths = [
             fp for i, fp in enumerate(self.bundle_data["file_paths"]) if i not in self.removed_pages

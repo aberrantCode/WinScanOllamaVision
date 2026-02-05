@@ -163,7 +163,7 @@ class UnassignedPagesDialog(QDialog):
         self.accept()
 
 
-class BundleReviewWindow(QDialog):
+class BundleReviewWindowV1(QDialog):
     """
     Window for reviewing and editing document bundles.
 

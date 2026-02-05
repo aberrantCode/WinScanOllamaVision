@@ -941,7 +941,7 @@ class FileDetailsDialog(QDialog):
             return []
 
         # Whitelist of allowed field names to prevent SQL injection
-        allowed_fields = {'document_type', 'company', 'document_date', 'page_number', 'total_pages'}
+        allowed_fields = {"document_type", "company", "document_date", "page_number", "total_pages"}
         if field_name not in allowed_fields:
             return []
 
