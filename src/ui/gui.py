@@ -5962,7 +5962,8 @@ class StartupWindow(QWidget):
         self.scanner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Get absolute path to GIF from script directory
-        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Resolve project root (three levels up) so top-level `assets/` is found
+        script_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         scanner_gif_path = os.path.join(script_dir, "assets", "scanner.gif")
 
         if os.path.exists(scanner_gif_path):

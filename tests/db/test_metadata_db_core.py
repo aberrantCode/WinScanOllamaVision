@@ -5,7 +5,6 @@ Target: 80%+ coverage on core methods
 """
 
 import os
-import sqlite3
 import tempfile
 
 import pytest
@@ -53,7 +52,7 @@ class TestMetadataDBCore:
 
     def test_create_tables_creates_required_tables(self, db):
         # Act
-        cursor = db.connection.cursor()
+        cursor = db.connection.connection.cursor()
         tables = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         table_names = [table[0] for table in tables]
 
@@ -154,15 +153,61 @@ class TestMetadataDBCore:
         # Act
         db.close()
 
-        # Assert
-        try:
-            db.connection.execute("SELECT 1")
-            is_open = True
-        except sqlite3.ProgrammingError:
-            is_open = False
-        assert not is_open
+        # Assert - connection should be None after close
+        assert db.connection.connection is None
 
     def test_context_manager(self, temp_db_path):
         # Act & Assert
         with MetadataDB(temp_db_path) as db:
             assert db.connection is not None
+
+    def test_get_unique_companies(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"company": "Test Corp"})
+
+        # Act
+        companies = db.get_unique_companies()
+
+        # Assert
+        assert "Test Corp" in companies
+
+    def test_get_unique_companies_uses_cache(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"company": "Test Corp"})
+
+        # Act - first call populates cache
+        companies1 = db.get_unique_companies(use_cache=True)
+        # Second call uses cache
+        companies2 = db.get_unique_companies(use_cache=True)
+
+        # Assert
+        assert companies1 == companies2
+
+    def test_get_unique_titles(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"document_type": "Invoice"})
+
+        # Act
+        titles = db.get_unique_titles()
+
+        # Assert
+        assert "Invoice" in titles
+
+    def test_invalidate_field_history_cache(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"company": "Test Corp"})
+        db.get_unique_companies(use_cache=True)  # Populate cache
+
+        # Act
+        db.invalidate_field_history_cache()
+
+        # Assert - cache should be cleared
+        assert db._companies_cache is None
+        assert db._titles_cache is None
+
+    def test_get_schema_version(self, db):
+        # Act
+        version = db.get_schema_version()
+
+        # Assert
+        assert version >= 1

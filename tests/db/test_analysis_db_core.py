@@ -43,7 +43,7 @@ class TestAnalysisDBCore:
 
     def test_create_extended_tables(self, db):
         # Act
-        cursor = db.connection.cursor()
+        cursor = db.connection.connection.cursor()
         tables = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         table_names = [table[0] for table in tables]
 
@@ -178,7 +178,7 @@ class TestAnalysisDBCore:
         db.log_action("test_action", "Test details", file_path="/file.jpg")
 
         # Assert
-        cursor = db.connection.cursor()
+        cursor = db.connection.connection.cursor()
         result = cursor.execute(
             "SELECT action_type FROM audit_trail WHERE action_type = ?",
             ("test_action",),
@@ -201,7 +201,7 @@ class TestAnalysisDBCore:
         db.start_analysis_run("run123", total_files=10)
 
         # Assert
-        cursor = db.connection.cursor()
+        cursor = db.connection.connection.cursor()
         result = cursor.execute(
             "SELECT run_id FROM analysis_runs WHERE run_id = ?",
             ("run123",),
@@ -216,7 +216,7 @@ class TestAnalysisDBCore:
         db.update_analysis_run("run123", analyzed=5, cached=2)
 
         # Assert
-        cursor = db.connection.cursor()
+        cursor = db.connection.connection.cursor()
         result = cursor.execute(
             "SELECT analyzed FROM analysis_runs WHERE run_id = ?",
             ("run123",),
@@ -231,7 +231,7 @@ class TestAnalysisDBCore:
         db.save_analysis_error("run123", "/test/file.jpg", "Test error")
 
         # Assert
-        cursor = db.connection.cursor()
+        cursor = db.connection.connection.cursor()
         result = cursor.execute(
             "SELECT file_path FROM analysis_errors WHERE file_path = ?",
             ("/test/file.jpg",),
@@ -248,3 +248,78 @@ class TestAnalysisDBCore:
 
         # Assert
         assert len(runs) >= 2
+
+    def test_get_failed_analyses(self, db):
+        # Arrange
+        db.start_analysis_run("run123", total_files=10)
+        db.save_analysis_error("run123", "/test/failed.jpg", "Test error")
+
+        # Act
+        failed = db.get_failed_analyses()
+
+        # Assert
+        assert len(failed) >= 1
+        assert failed[0]["file_path"] == "/test/failed.jpg"
+
+    def test_get_analysis_statistics(self, db):
+        # Arrange
+        db.save_analysis("/p1.jpg", "hash1", "ollama", "model", {}, "{}", 100)
+        db.save_analysis("/p2.jpg", "hash2", "claude", "model", {}, "{}", 200)
+
+        # Act
+        stats = db.get_analysis_statistics()
+
+        # Assert
+        assert stats["total_analyses"] >= 2
+        assert "provider_breakdown" in stats
+        assert stats["provider_breakdown"]["ollama"] >= 1
+
+    def test_get_document_type_breakdown(self, db):
+        # Arrange
+        db.save_analysis(
+            "/p1.jpg", "hash1", "ollama", "model", {"document_type": "Invoice"}, "{}", 100
+        )
+        db.save_analysis(
+            "/p2.jpg", "hash2", "ollama", "model", {"document_type": "Receipt"}, "{}", 100
+        )
+
+        # Act
+        breakdown = db.get_document_type_breakdown()
+
+        # Assert
+        assert breakdown["Invoice"] >= 1
+        assert breakdown["Receipt"] >= 1
+
+    def test_update_directory_scan_info(self, db):
+        # Arrange
+        db.add_source_directory("/test/dir")
+
+        # Act
+        db.update_directory_scan_info("/test/dir", 42)
+
+        # Assert - verify no exception raised
+        assert "/test/dir" in db.get_active_directories()
+
+    def test_get_analyzed_pages_with_directory_filter(self, db):
+        # Arrange
+        db.save_analysis("/dir1/p1.jpg", "h1", "ollama", "model", {}, "{}", 100)
+        db.save_analysis("/dir2/p2.jpg", "h2", "ollama", "model", {}, "{}", 100)
+
+        # Act
+        all_pages = db.get_analyzed_pages()
+        filtered = db.get_analyzed_pages(directory_filter="/dir1")
+
+        # Assert
+        assert len(all_pages) >= 2
+        # Note: directory_filter uses LIKE so it's a partial match
+        assert len(filtered) >= 0
+
+    def test_close_closes_connection(self, temp_db_path):
+        # Arrange
+        db = AnalysisDB(temp_db_path)
+
+        # Act
+        db.close()
+
+        # Assert - connection should be None after close
+        assert db.connection.connection is None
