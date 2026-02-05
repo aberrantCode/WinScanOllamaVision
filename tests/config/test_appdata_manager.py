@@ -280,9 +280,8 @@ class TestAppDataManager:
         # Act
         manager._update_settings_if_needed()
 
-        # Assert
-        # Should complete without error
-        assert True
+        # Assert - test passes if no exception raised
+        pass
 
     def test_initialize_database_copies_template_on_first_run(self, temp_dirs):
         # Arrange
@@ -316,9 +315,8 @@ class TestAppDataManager:
             manager = AppDataManager(solution_data_dir)
             manager.initialize()
 
-        # Assert
-        # Should complete without error
-        assert True
+        # Assert - test passes if no exception raised
+        pass
 
     def test_migrate_database_detects_old_schema(self, temp_dirs):
         # Arrange

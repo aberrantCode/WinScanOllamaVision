@@ -336,8 +336,8 @@ class TestLoggingService:
         service.log_file_path = None  # Simulate uninitialized state
         service.clear_log_file()
 
-        # Assert
-        assert True  # Test passes if no exception
+        # Assert - test passes if no exception raised
+        pass
 
     def test_initialize_uses_fallback_when_appdata_not_set(self):
         # Arrange
