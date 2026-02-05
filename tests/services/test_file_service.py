@@ -46,7 +46,8 @@ class TestFileServiceInitialization:
         service = FileService(mock_config_manager)
 
         # Assert
-        assert service.organized_folder == "C:\\test\\scan\\organized"
+        expected_path = os.path.join("C:\\test\\scan", "organized")
+        assert service.organized_folder == expected_path
 
     @patch("os.makedirs")
     def test_init_creates_scan_folder_if_missing(self, mock_makedirs, mock_config_manager):
@@ -62,7 +63,8 @@ class TestFileServiceInitialization:
         FileService(mock_config_manager)
 
         # Assert
-        mock_makedirs.assert_any_call("C:\\test\\scan\\organized", exist_ok=True)
+        expected_path = os.path.join("C:\\test\\scan", "organized")
+        mock_makedirs.assert_any_call(expected_path, exist_ok=True)
 
     @patch("os.makedirs")
     def test_init_always_calls_makedirs_with_exist_ok(self, mock_makedirs, mock_config_manager):
@@ -73,7 +75,7 @@ class TestFileServiceInitialization:
         assert mock_makedirs.call_count == 2
         calls = [
             call("C:\\test\\scan", exist_ok=True),
-            call("C:\\test\\scan\\organized", exist_ok=True),
+            call(os.path.join("C:\\test\\scan", "organized"), exist_ok=True),
         ]
         mock_makedirs.assert_has_calls(calls, any_order=False)
 

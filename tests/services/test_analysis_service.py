@@ -209,10 +209,16 @@ class TestScanAllDirectories:
         # Arrange
         mock_exists.return_value = True
         mock_analysis_db.get_active_directories.return_value = ["C:\\dir1", "C:\\dir2"]
-        mock_glob.side_effect = lambda pattern: {
-            "C:\\dir1\\*.png": ["file1.png"],
-            "C:\\dir2\\*.png": ["file2.png"],
-        }.get(pattern, [])
+
+        def glob_side_effect(pattern):
+            # Normalize path separators for cross-platform testing
+            pattern_normalized = pattern.replace("\\", "/")
+            return {
+                "C:/dir1/*.png": ["file1.png"],
+                "C:/dir2/*.png": ["file2.png"],
+            }.get(pattern_normalized, [])
+
+        mock_glob.side_effect = glob_side_effect
 
         with patch.object(service, "_analyze_single_page") as mock_analyze:
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
@@ -230,14 +236,20 @@ class TestScanAllDirectories:
         # Arrange
         mock_exists.return_value = True
         mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
-        mock_glob.side_effect = lambda pattern: {
-            "C:\\dir1\\*.png": ["file1.png", "file2.png"],
-            "C:\\dir1\\*.PNG": [],
-            "C:\\dir1\\*.jpg": ["file3.jpg"],
-            "C:\\dir1\\*.JPG": [],
-            "C:\\dir1\\*.jpeg": [],
-            "C:\\dir1\\*.JPEG": [],
-        }.get(pattern, [])
+
+        def glob_side_effect(pattern):
+            # Normalize path separators for cross-platform testing
+            pattern_normalized = pattern.replace("\\", "/")
+            return {
+                "C:/dir1/*.png": ["file1.png", "file2.png"],
+                "C:/dir1/*.PNG": [],
+                "C:/dir1/*.jpg": ["file3.jpg"],
+                "C:/dir1/*.JPG": [],
+                "C:/dir1/*.jpeg": [],
+                "C:/dir1/*.JPEG": [],
+            }.get(pattern_normalized, [])
+
+        mock_glob.side_effect = glob_side_effect
 
         with patch.object(service, "_analyze_single_page") as mock_analyze:
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
