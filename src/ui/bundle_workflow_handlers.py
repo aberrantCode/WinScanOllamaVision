@@ -3,9 +3,20 @@ Phase 7 Handler Methods for ConvertImagesWindow
 These methods will be added to the ConvertImagesWindow class
 """
 
+from typing import TYPE_CHECKING
+
 from PyQt6.QtWidgets import QMessageBox
 
 from ui.styles import show_information, show_question
+
+if TYPE_CHECKING:
+    from enum import Enum
+
+    class WorkflowStep(Enum):
+        """Type stub for WorkflowStep enum defined in gui.py"""
+
+        STITCHING = 1
+        FINALIZATION = 4
 
 # Add these methods to ConvertImagesWindow class:
 

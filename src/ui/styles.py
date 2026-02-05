@@ -610,6 +610,14 @@ def get_main_app_stylesheet():
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }}
 
+        /* Standardize button sizing across the app */
+        QPushButton {{
+            min-height: 40px;
+            padding: 8px 12px;
+            border-radius: 6px;
+        }}
+        }}
+
         QMainWindow, QDialog, QWidget {{
             background-color: {Colors.BACKGROUND};
             color: {Colors.GRAY_900};

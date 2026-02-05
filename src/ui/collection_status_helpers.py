@@ -16,11 +16,8 @@ from PyQt6.QtWidgets import (
 
 from ui.styles import (
     Colors,
-    get_action_items_panel_style,
     get_button_style,
-    get_collapsible_section_style,
     get_distribution_bar_style,
-    get_metric_card_style,
     get_progress_bar_style,
 )
 
@@ -28,21 +25,29 @@ from ui.styles import (
 def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     """Create a metric card with title and value"""
     card = QFrame()
-    card.setStyleSheet(get_metric_card_style())
+    card.setStyleSheet(f"""
+        QFrame {{
+            background-color: {theme_colors["bg_tertiary"]};
+            border: 1px solid {theme_colors["border"]};
+            border-radius: 8px;
+            padding: 16px;
+        }}
+    """)
     card_layout = QVBoxLayout(card)
     card_layout.setSpacing(8)
 
-    # Title label
+    # Title label - no border
     title_label = QLabel(title)
     title_label.setStyleSheet(f"""
         color: {theme_colors["text_tertiary"]};
         font-size: 10pt;
         font-weight: 600;
         background-color: transparent;
+        border: none;
     """)
     card_layout.addWidget(title_label)
 
-    # Value label
+    # Value label - no border
     value_label = QLabel(value)
     value_label.setObjectName(f"{title.lower().replace(' ', '_')}_value")
     value_label.setStyleSheet(f"""
@@ -50,6 +55,7 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
         font-size: 24pt;
         font-weight: bold;
         background-color: transparent;
+        border: none;
     """)
     card_layout.addWidget(value_label)
 
@@ -61,48 +67,60 @@ def create_funnel_widget(theme_colors) -> tuple:
     Returns: (widget, funnel_bars_dict)
     """
     frame = QFrame()
-    frame.setStyleSheet(f"""
-        QFrame {{
-            background-color: {theme_colors["bg_secondary"]};
-            border: 1px solid {theme_colors["border"]};
-            border-radius: 8px;
+    frame.setStyleSheet("""
+        QFrame {
+            background-color: transparent;
+            border: none;
             padding: 16px;
-        }}
+        }
     """)
     layout = QVBoxLayout(frame)
     layout.setSpacing(12)
 
-    # Title
+    # Title - no border
     title = QLabel("Analysis Completion Funnel")
     title.setStyleSheet(
-        f"font-size: 12pt; font-weight: bold; color: {theme_colors['text_primary']}; background-color: transparent;"
+        f"font-size: 12pt; font-weight: bold; color: {theme_colors['text_primary']}; background-color: transparent; border: none;"
     )
     layout.addWidget(title)
 
     # Store funnel bars for updating
     funnel_bars = {}
 
-    # Create 5 progress bars
+    # Create 5 progress bars with funnel effect (progressively narrower)
     funnel_stages = [
-        ("files_detected", "Files Detected"),
-        ("files_analyzed", "Files Analyzed"),
-        ("high_confidence", "High Confidence Results"),
-        ("pages_bundled", "Pages Bundled"),
-        ("documents_archived", "Documents Archived"),
+        ("files_detected", "Files Detected", 100),  # 100% width
+        ("files_analyzed", "Files Analyzed", 85),  # 85% width
+        ("high_confidence", "High Confidence Results", 70),  # 70% width
+        ("pages_bundled", "Pages Bundled", 55),  # 55% width
+        ("documents_archived", "Documents Archived", 40),  # 40% width
     ]
 
-    for key, label in funnel_stages:
+    for key, stage_name, width_percent in funnel_stages:
+        # Outer container for centering
+        outer_container = QWidget()
+        outer_container.setStyleSheet("background-color: transparent; border: none;")
+        outer_layout = QHBoxLayout(outer_container)
+        outer_layout.setContentsMargins(0, 0, 0, 2)  # Reduced spacing between items
+        outer_layout.setSpacing(0)
+
+        # Add stretch on both sides for centering
+        outer_layout.addStretch()
+
+        # Inner container with progressively smaller width
         bar_container = QWidget()
+        bar_container.setStyleSheet("background-color: transparent; border: none;")
         bar_layout = QVBoxLayout(bar_container)
         bar_layout.setContentsMargins(0, 0, 0, 0)
         bar_layout.setSpacing(4)
 
-        # Label with count and percentage
-        bar_label = QLabel(f"{label}: 0 (0%)")
+        # Label with count and percentage - no border
+        bar_label = QLabel(f"{stage_name}: 0 (0%)")
         bar_label.setObjectName(f"{key}_label")
         bar_label.setStyleSheet(
-            f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent;"
+            f"color: {theme_colors['text_secondary']}; font-size: 11pt; font-weight: 600; background-color: transparent; border: none;"
         )
+        bar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         bar_layout.addWidget(bar_label)
 
         # Progress bar
@@ -111,12 +129,29 @@ def create_funnel_widget(theme_colors) -> tuple:
         bar.setMaximum(100)
         bar.setValue(0)
         bar.setTextVisible(False)
-        bar.setFixedHeight(16)
-        bar.setStyleSheet(get_progress_bar_style(0))
+        bar.setFixedHeight(20)
+        bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {theme_colors["bg_tertiary"]};
+                border: 1px solid {theme_colors["border"]};
+                border-radius: 10px;
+            }}
+            QProgressBar::chunk {{
+                background-color: #3B82F6;
+                border-radius: 10px;
+            }}
+        """)
         bar_layout.addWidget(bar)
 
-        funnel_bars[key] = {"label": bar_label, "bar": bar}
-        layout.addWidget(bar_container)
+        # Set maximum width based on funnel position (progressively narrower)
+        max_width = int(400 * (width_percent / 100))
+        bar_container.setMaximumWidth(max_width)
+
+        outer_layout.addWidget(bar_container)
+        outer_layout.addStretch()
+
+        funnel_bars[key] = {"label": bar_label, "bar": bar, "stage_name": stage_name}
+        layout.addWidget(outer_container)
 
     return frame, funnel_bars
 
@@ -126,13 +161,12 @@ def create_speed_eta_widget(theme_colors) -> tuple:
     Returns: (widget, speed_label, eta_label)
     """
     frame = QFrame()
-    frame.setStyleSheet(f"""
-        QFrame {{
-            background-color: {theme_colors["bg_secondary"]};
-            border: 1px solid {theme_colors["border"]};
-            border-radius: 8px;
+    frame.setStyleSheet("""
+        QFrame {
+            background-color: transparent;
+            border: none;
             padding: 12px 16px;
-        }}
+        }
     """)
     layout = QHBoxLayout(frame)
     layout.setSpacing(20)
@@ -140,7 +174,7 @@ def create_speed_eta_widget(theme_colors) -> tuple:
     # Speed label
     speed_label = QLabel("Processing Speed: -- pages/min")
     speed_label.setStyleSheet(
-        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent;"
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent; border: none;"
     )
     layout.addWidget(speed_label)
 
@@ -149,7 +183,7 @@ def create_speed_eta_widget(theme_colors) -> tuple:
     # ETA label
     eta_label = QLabel("ETA: --")
     eta_label.setStyleSheet(
-        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent;"
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent; border: none;"
     )
     layout.addWidget(eta_label)
 
@@ -159,7 +193,7 @@ def create_speed_eta_widget(theme_colors) -> tuple:
 def create_action_item_row(theme_colors, text: str, button_text: str, callback) -> QWidget:
     """Create a single action item row with text and button"""
     row = QWidget()
-    row.setStyleSheet("background-color: transparent;")
+    row.setStyleSheet("background-color: transparent; border: none;")
     row_layout = QHBoxLayout(row)
     row_layout.setContentsMargins(0, 0, 0, 0)
     row_layout.setSpacing(12)
@@ -169,7 +203,7 @@ def create_action_item_row(theme_colors, text: str, button_text: str, callback) 
     text_label.setObjectName("action_text")
     text_label.setWordWrap(True)
     text_label.setStyleSheet(
-        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent;"
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent; border: none;"
     )
     row_layout.addWidget(text_label, 1)
 
@@ -189,14 +223,20 @@ def create_action_items_widget(theme_colors, action_callbacks) -> tuple:
     Returns: (widget, action_items_list)
     """
     frame = QFrame()
-    frame.setStyleSheet(get_action_items_panel_style())
+    frame.setStyleSheet("""
+        QFrame {
+            background-color: transparent;
+            border: none;
+            padding: 16px;
+        }
+    """)
     layout = QVBoxLayout(frame)
     layout.setSpacing(12)
 
     # Title
     title = QLabel("Action Items")
     title.setStyleSheet(
-        f"font-size: 12pt; font-weight: bold; color: {theme_colors['text_primary']}; background-color: transparent;"
+        f"font-size: 12pt; font-weight: bold; color: {theme_colors['text_primary']}; background-color: transparent; border: none;"
     )
     layout.addWidget(title)
 
@@ -234,7 +274,7 @@ def create_action_items_widget(theme_colors, action_callbacks) -> tuple:
 def create_completeness_bar(theme_colors, key: str, label: str) -> QWidget:
     """Create a metadata completeness progress bar"""
     container = QWidget()
-    container.setStyleSheet("background-color: transparent;")
+    container.setStyleSheet("background-color: transparent; border: none;")
     layout = QVBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(4)
@@ -242,7 +282,9 @@ def create_completeness_bar(theme_colors, key: str, label: str) -> QWidget:
     # Label
     text_label = QLabel(f"{label}: 0%")
     text_label.setObjectName(f"{key}_completeness_label")
-    text_label.setStyleSheet(f"color: {theme_colors['text_tertiary']}; font-size: 9pt;")
+    text_label.setStyleSheet(
+        f"color: {theme_colors['text_tertiary']}; font-size: 9pt; border: none;"
+    )
     layout.addWidget(text_label)
 
     # Progress bar
@@ -267,14 +309,21 @@ def create_quality_metrics_widget(theme_colors) -> tuple:
     Returns: (widget, avg_conf_label, error_rate_label, completeness_bars_dict)
     """
     widget = QWidget()
-    widget.setStyleSheet("background-color: transparent;")
+    widget.setStyleSheet(f"""
+        QWidget {{
+            background-color: {theme_colors["bg_secondary"]};
+            border-radius: 8px;
+        }}
+    """)
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(12)
 
     # Average confidence
     avg_confidence_label = QLabel("Average Confidence: --")
-    avg_confidence_label.setStyleSheet(f"color: {theme_colors['text_secondary']}; font-size: 10pt;")
+    avg_confidence_label.setStyleSheet(
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; border: none;"
+    )
     layout.addWidget(avg_confidence_label)
 
     # Error rate
@@ -285,7 +334,7 @@ def create_quality_metrics_widget(theme_colors) -> tuple:
     # Metadata completeness section
     completeness_label = QLabel("Metadata Completeness:")
     completeness_label.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 8px;"
+        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 8px; border: none;"
     )
     layout.addWidget(completeness_label)
 
@@ -311,7 +360,7 @@ def create_quality_metrics_widget(theme_colors) -> tuple:
 def create_distribution_bar(theme_colors, label: str, count: int, total: int) -> QWidget:
     """Create a distribution bar for document insights"""
     container = QWidget()
-    container.setStyleSheet("background-color: transparent;")
+    container.setStyleSheet("background-color: transparent; border: none;")
     layout = QVBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(4)
@@ -320,7 +369,9 @@ def create_distribution_bar(theme_colors, label: str, count: int, total: int) ->
 
     # Label with count
     text_label = QLabel(f"{label}: {count} ({percentage:.1f}%)")
-    text_label.setStyleSheet(f"color: {theme_colors['text_tertiary']}; font-size: 9pt;")
+    text_label.setStyleSheet(
+        f"color: {theme_colors['text_tertiary']}; font-size: 9pt; border: none;"
+    )
     layout.addWidget(text_label)
 
     # Progress bar
@@ -335,13 +386,115 @@ def create_distribution_bar(theme_colors, label: str, count: int, total: int) ->
     return container
 
 
+def create_document_insights_widget_split(theme_colors) -> tuple:
+    """Create document insights section WITHOUT company distribution
+    Returns: (widget, docs_created_label, pages_archived_label, avg_pages_label,
+              bundle_acceptance_label, type_dist_container)
+    """
+    widget = QWidget()
+    widget.setStyleSheet(f"""
+        QWidget {{
+            background-color: {theme_colors["bg_secondary"]};
+            border-radius: 8px;
+        }}
+    """)
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(16, 16, 16, 16)
+    layout.setSpacing(12)
+
+    # Summary labels
+    docs_created_label = QLabel("Documents Created: 0")
+    docs_created_label.setStyleSheet(
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; border: none;"
+    )
+    layout.addWidget(docs_created_label)
+
+    pages_archived_label = QLabel("Pages Archived: 0")
+    pages_archived_label.setStyleSheet(
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; border: none;"
+    )
+    layout.addWidget(pages_archived_label)
+
+    avg_pages_label = QLabel("Avg Pages per Document: --")
+    avg_pages_label.setStyleSheet(
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; border: none;"
+    )
+    layout.addWidget(avg_pages_label)
+
+    bundle_acceptance_label = QLabel("Bundle Acceptance Rate: --")
+    bundle_acceptance_label.setStyleSheet(
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; border: none;"
+    )
+    layout.addWidget(bundle_acceptance_label)
+
+    # Type distribution
+    type_dist_title = QLabel("Document Type Distribution:")
+    type_dist_title.setStyleSheet(
+        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 12px; border: none;"
+    )
+    layout.addWidget(type_dist_title)
+
+    type_distribution_container = QWidget()
+    type_distribution_layout = QVBoxLayout(type_distribution_container)
+    type_distribution_layout.setContentsMargins(0, 0, 0, 0)
+    type_distribution_layout.setSpacing(6)
+    layout.addWidget(type_distribution_container)
+    type_distribution_container.layout = type_distribution_layout  # Store reference
+
+    return (
+        widget,
+        docs_created_label,
+        pages_archived_label,
+        avg_pages_label,
+        bundle_acceptance_label,
+        type_distribution_container,
+    )
+
+
+def create_company_insights_widget(theme_colors) -> tuple:
+    """Create company insights section (company distribution only)
+    Returns: (widget, company_dist_container)
+    """
+    widget = QWidget()
+    widget.setStyleSheet(f"""
+        QWidget {{
+            background-color: {theme_colors["bg_secondary"]};
+            border-radius: 8px;
+        }}
+    """)
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(16, 16, 16, 16)
+    layout.setSpacing(12)
+
+    # Company distribution
+    company_dist_title = QLabel("Top 5 Companies:")
+    company_dist_title.setStyleSheet(
+        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; border: none;"
+    )
+    layout.addWidget(company_dist_title)
+
+    company_distribution_container = QWidget()
+    company_distribution_layout = QVBoxLayout(company_distribution_container)
+    company_distribution_layout.setContentsMargins(0, 0, 0, 0)
+    company_distribution_layout.setSpacing(6)
+    layout.addWidget(company_distribution_container)
+    company_distribution_container.layout = company_distribution_layout  # Store reference
+
+    return (widget, company_distribution_container)
+
+
 def create_document_insights_widget(theme_colors) -> tuple:
     """Create document insights section content
     Returns: (widget, docs_created_label, pages_archived_label, avg_pages_label,
               bundle_acceptance_label, type_dist_container, company_dist_container)
     """
     widget = QWidget()
-    widget.setStyleSheet("background-color: transparent;")
+    widget.setStyleSheet(f"""
+        QWidget {{
+            background-color: {theme_colors["bg_secondary"]};
+            border-radius: 8px;
+        }}
+    """)
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(12)
@@ -361,14 +514,14 @@ def create_document_insights_widget(theme_colors) -> tuple:
 
     bundle_acceptance_label = QLabel("Bundle Acceptance Rate: --")
     bundle_acceptance_label.setStyleSheet(
-        f"color: {theme_colors['text_secondary']}; font-size: 10pt;"
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; border: none;"
     )
     layout.addWidget(bundle_acceptance_label)
 
     # Type distribution
     type_dist_title = QLabel("Document Type Distribution:")
     type_dist_title.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 12px;"
+        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 12px; border: none;"
     )
     layout.addWidget(type_dist_title)
 
@@ -382,7 +535,7 @@ def create_document_insights_widget(theme_colors) -> tuple:
     # Company distribution
     company_dist_title = QLabel("Top 5 Companies:")
     company_dist_title.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 12px;"
+        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; margin-top: 12px; border: none;"
     )
     layout.addWidget(company_dist_title)
 
@@ -404,32 +557,51 @@ def create_document_insights_widget(theme_colors) -> tuple:
     )
 
 
-def create_collapsible_section(theme_colors, title: str, content: QWidget) -> QWidget:
+def create_collapsible_section(
+    theme_colors, title: str, content: QWidget, initially_expanded: bool = True
+) -> QWidget:
     """Create a collapsible section with expand/collapse functionality"""
+    from PyQt6.QtWidgets import QSizePolicy
+
     container = QWidget()
-    container.setStyleSheet("background-color: transparent;")
+    container.setStyleSheet("background-color: transparent; border: none;")
+    # Allow container to shrink when collapsed
+    container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+
     main_layout = QVBoxLayout(container)
     main_layout.setContentsMargins(0, 0, 0, 0)
-    main_layout.setSpacing(0)
+    main_layout.setSpacing(0)  # No spacing - seamless connection
 
-    # Header frame (clickable)
+    # Header frame (clickable) - rounded top, sharp bottom for seamless connection
     header = QFrame()
     header.setCursor(Qt.CursorShape.PointingHandCursor)
-    header.setStyleSheet(get_collapsible_section_style())
+    header.setStyleSheet(f"""
+        QFrame {{
+            background-color: {theme_colors["bg_tertiary"]};
+            border: none;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }}
+        QFrame:hover {{
+            background-color: {theme_colors["tab_hover_bg"]};
+        }}
+    """)
     header_layout = QHBoxLayout(header)
-    header_layout.setContentsMargins(16, 12, 16, 12)
+    header_layout.setContentsMargins(12, 8, 12, 8)  # Reduced from 16,12,16,12
 
-    # Title label
+    # Title label - no border
     title_label = QLabel(title)
     title_label.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; background-color: transparent;"
+        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; background-color: transparent; border: none;"
     )
     header_layout.addWidget(title_label)
 
     header_layout.addStretch()
 
     # Toggle button
-    toggle_btn = QPushButton("▼")
+    toggle_btn = QPushButton("▼" if initially_expanded else "▶")
     toggle_btn.setObjectName("toggle_btn")
     toggle_btn.setFixedSize(24, 24)
     toggle_btn.setStyleSheet("""
@@ -442,20 +614,42 @@ def create_collapsible_section(theme_colors, title: str, content: QWidget) -> QW
     """)
     header_layout.addWidget(toggle_btn)
 
-    # Content widget
-    content.setVisible(True)  # Start expanded
+    # Wrap content in a seamless frame with solid background
+    # Sharp top corners connect to header, rounded bottom corners
+    from PyQt6.QtWidgets import QFrame as QFrameWidget
 
-    # Toggle function
+    content_frame = QFrameWidget()
+    content_frame.setStyleSheet(f"""
+        QFrame {{
+            background-color: {theme_colors["bg_secondary"]};
+            border: none;
+            border-top-left-radius: 0px;
+            border-top-right-radius: 0px;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }}
+    """)
+    content_layout = QVBoxLayout(content_frame)
+    content_layout.setContentsMargins(12, 8, 12, 12)  # Padding for content
+    content_layout.setSpacing(0)
+    content_layout.addWidget(content)
+
+    # Content visibility
+    content_frame.setVisible(initially_expanded)
+
+    # Toggle function - adjust container size when toggling
     def toggle_section():
-        is_visible = content.isVisible()
-        content.setVisible(not is_visible)
+        is_visible = content_frame.isVisible()
+        content_frame.setVisible(not is_visible)
         toggle_btn.setText("▶" if is_visible else "▼")
+        # Update container size hint
+        container.updateGeometry()
 
     header.mousePressEvent = lambda event: toggle_section()
     toggle_btn.clicked.connect(toggle_section)
 
     main_layout.addWidget(header)
-    main_layout.addWidget(content)
+    main_layout.addWidget(content_frame)
 
     return container
 
@@ -481,14 +675,14 @@ def create_analysis_progress_frame(
     # Title
     title = QLabel("Analysis in Progress")
     title.setStyleSheet(
-        f"font-size: 12pt; font-weight: bold; color: {Colors.PRIMARY if not is_dark_mode else '#90CAF9'}; background-color: transparent;"
+        f"font-size: 12pt; font-weight: bold; color: {Colors.PRIMARY if not is_dark_mode else '#90CAF9'}; background-color: transparent; border: none;"
     )
     layout.addWidget(title)
 
     # Current file
     current_file_label = QLabel("Current: --")
     current_file_label.setStyleSheet(
-        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent;"
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent; border: none;"
     )
     current_file_label.setWordWrap(True)
     layout.addWidget(current_file_label)
@@ -499,7 +693,7 @@ def create_analysis_progress_frame(
         QProgressBar {{
             border: 1px solid {theme_colors["border"]};
             border-radius: 6px;
-            background-color: {theme_colors["input_bg"]};
+            background-color: {theme_colors["bg_secondary"]};
             height: 24px;
             text-align: center;
             color: {theme_colors["text_primary"]};
@@ -516,7 +710,7 @@ def create_analysis_progress_frame(
     stats_layout = QHBoxLayout()
     stats_label = QLabel("Analyzed: 0 | Cached: 0 | Errors: 0")
     stats_label.setStyleSheet(
-        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent;"
+        f"color: {theme_colors['text_secondary']}; font-size: 10pt; background-color: transparent; border: none;"
     )
     stats_layout.addWidget(stats_label)
 
@@ -524,7 +718,7 @@ def create_analysis_progress_frame(
 
     elapsed_label = QLabel("Elapsed: 0s")
     elapsed_label.setStyleSheet(
-        f"color: {theme_colors['text_tertiary']}; font-size: 9pt; background-color: transparent;"
+        f"color: {theme_colors['text_tertiary']}; font-size: 9pt; background-color: transparent; border: none;"
     )
     stats_layout.addWidget(elapsed_label)
 

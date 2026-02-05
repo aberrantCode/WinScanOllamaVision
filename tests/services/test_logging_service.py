@@ -68,8 +68,8 @@ class TestLoggingService:
 
     def test_init_only_runs_once(self):
         # Act
-        service1 = LoggingService()
-        service2 = LoggingService()
+        _ = LoggingService()
+        _ = LoggingService()
 
         # Assert - _initialized should only be set once
         assert LoggingService._initialized is True
@@ -203,7 +203,7 @@ class TestLoggingService:
         service.debug("Test debug message")
 
         # Assert - check log file contains message
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Test debug message" in content
             assert "DEBUG" in content
@@ -218,7 +218,7 @@ class TestLoggingService:
         service.info("Test info message")
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Test info message" in content
 
@@ -232,7 +232,7 @@ class TestLoggingService:
         service.warning("Test warning message")
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Test warning message" in content
             assert "WARNING" in content
@@ -247,7 +247,7 @@ class TestLoggingService:
         service.error("Test error message")
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Test error message" in content
             assert "ERROR" in content
@@ -265,7 +265,7 @@ class TestLoggingService:
             service.error("Error occurred", exc_info=True)
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Error occurred" in content
             assert "Traceback" in content
@@ -280,7 +280,7 @@ class TestLoggingService:
         service.critical("Test critical message")
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Test critical message" in content
             assert "CRITICAL" in content
@@ -298,7 +298,7 @@ class TestLoggingService:
             service.exception("Exception caught")
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             assert "Exception caught" in content
             assert "RuntimeError" in content
@@ -315,7 +315,7 @@ class TestLoggingService:
         service.clear_log_file()
 
         # Assert
-        with open(service.log_file_path, "r") as f:
+        with open(service.log_file_path) as f:
             content = f.read()
             # Should only have the "Log file cleared" message
             assert "Message before clear" not in content

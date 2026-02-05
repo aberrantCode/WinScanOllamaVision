@@ -7,7 +7,7 @@ import json
 import os
 import sys
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -540,33 +540,9 @@ class EnhancedSettingsWindow(QDialog):
             }
 
             /* ===== BUTTONS ===== */
-            QPushButton {
-                background-color: #2563EB;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-                font-size: 10pt;
-            }
-
-            QPushButton:hover {
-                background-color: #1E40AF;
-            }
-
-            QPushButton:pressed {
-                background-color: #1E3A8A;
-            }
-
-            QPushButton:focus {
-                outline: 2px solid #60A5FA;
-                outline-offset: 2px;
-            }
-
-            QPushButton:disabled {
-                background-color: #D1D5DB;
-                color: #9CA3AF;
-            }
+            /* Per-window styles should avoid broad QPushButton selectors so the
+               application-level stylesheet can control sizing. Keep only
+               objectName-scoped rules here. */
 
             QPushButton[objectName="dangerButton"] {
                 background-color: #DC2626;
@@ -589,10 +565,6 @@ class EnhancedSettingsWindow(QDialog):
             QPushButton[objectName="secondaryButton"]:hover {
                 background-color: #E5E7EB;
                 border-color: #9CA3AF;
-            }
-
-            QDialogButtonBox QPushButton {
-                min-width: 100px;
             }
 
             /* ===== SCROLL BARS ===== */
@@ -984,33 +956,8 @@ class EnhancedSettingsWindow(QDialog):
             }
 
             /* ===== BUTTONS ===== */
-            QPushButton {
-                background-color: #3B82F6;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-                font-size: 10pt;
-            }
-
-            QPushButton:hover {
-                background-color: #60A5FA;
-            }
-
-            QPushButton:pressed {
-                background-color: #2563EB;
-            }
-
-            QPushButton:focus {
-                outline: 2px solid #60A5FA;
-                outline-offset: 2px;
-            }
-
-            QPushButton:disabled {
-                background-color: #3D3D3D;
-                color: #6B7280;
-            }
+            /* Keep only scoped button overrides here; general sizing comes
+               from the application stylesheet (src/ui/style.qss). */
 
             QPushButton[objectName="dangerButton"] {
                 background-color: #EF4444;
@@ -1033,10 +980,6 @@ class EnhancedSettingsWindow(QDialog):
             QPushButton[objectName="secondaryButton"]:hover {
                 background-color: #4B5563;
                 border-color: #6B7280;
-            }
-
-            QDialogButtonBox QPushButton {
-                min-width: 100px;
             }
 
             /* ===== SCROLL BARS ===== */
@@ -1121,7 +1064,9 @@ class EnhancedSettingsWindow(QDialog):
 
         self.tabs.setStyleSheet(stylesheet)
 
-        # Apply background to dialog for consistency
+        # Apply background to dialog for consistency and scope smaller button sizing
+        # to this dialog only so settings buttons are more compact than the
+        # global application default.
         if current_theme == "dark":
             self.setStyleSheet("""
                 QDialog {
@@ -1129,6 +1074,28 @@ class EnhancedSettingsWindow(QDialog):
                 }
                 QDialogButtonBox {
                     background-color: #1E1E1E;
+                }
+                /* Scoped: make buttons inside this dialog slightly smaller */
+                QDialog QPushButton {
+                    min-height: 32px;
+                    padding: 6px 12px;
+                    font-size: 10pt;
+                }
+                /* Compact buttons for inline actions */
+                QDialog QPushButton[objectName="compactButton"] {
+                    min-height: 32px;
+                    padding: 6px 12px;
+                    min-width: 88px;
+                }
+                /* Icon-only small buttons */
+                QDialog QPushButton[objectName="iconButton"] {
+                    padding: 0px;
+                    min-width: 36px;
+                    min-height: 36px;
+                    border-radius: 6px;
+                }
+                QDialog QDialogButtonBox QPushButton {
+                    min-width: 80px;
                 }
             """)
         else:
@@ -1138,6 +1105,28 @@ class EnhancedSettingsWindow(QDialog):
                 }
                 QDialogButtonBox {
                     background-color: #FFFFFF;
+                }
+                /* Scoped: make buttons inside this dialog slightly smaller */
+                QDialog QPushButton {
+                    min-height: 32px;
+                    padding: 6px 12px;
+                    font-size: 10pt;
+                }
+                /* Compact buttons for inline actions */
+                QDialog QPushButton[objectName="compactButton"] {
+                    min-height: 32px;
+                    padding: 6px 12px;
+                    min-width: 88px;
+                }
+                /* Icon-only small buttons */
+                QDialog QPushButton[objectName="iconButton"] {
+                    padding: 0px;
+                    min-width: 36px;
+                    min-height: 36px;
+                    border-radius: 6px;
+                }
+                QDialog QDialogButtonBox QPushButton {
+                    min-width: 80px;
                 }
             """)
 
@@ -1188,6 +1177,11 @@ class EnhancedSettingsWindow(QDialog):
         browse_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         browse_button.setToolTip("Browse for folder")
         browse_button.clicked.connect(self._browse_scan_folder)
+        # Make the icon-only browse button compact
+        browse_button.setFixedSize(36, 36)
+        browse_button.setIconSize(QSize(18, 18))
+        browse_button.setFlat(True)
+        browse_button.setObjectName("iconButton")
         folder_layout.addWidget(browse_button)
 
         scan_layout.addLayout(folder_layout, 0, 1)
@@ -1331,10 +1325,12 @@ If 5 pages provided and pages 3 and 5 don't belong:
         pages_buttons = QHBoxLayout()
         optimize_pages_btn = QPushButton("Optimize Prompt")
         optimize_pages_btn.clicked.connect(lambda: self._optimize_prompt(self.pages_prompt_edit))
+        optimize_pages_btn.setObjectName("compactButton")
         reset_pages_btn = QPushButton("Reset to Default")
         reset_pages_btn.clicked.connect(
             lambda: self.pages_prompt_edit.setPlainText(pages_prompt_default)
         )
+        reset_pages_btn.setObjectName("compactButton")
         pages_buttons.addWidget(optimize_pages_btn)
         pages_buttons.addWidget(reset_pages_btn)
         pages_buttons.addStretch()
@@ -1405,10 +1401,12 @@ Example response:
         optimize_metadata_btn.clicked.connect(
             lambda: self._optimize_prompt(self.metadata_prompt_edit)
         )
+        optimize_metadata_btn.setObjectName("compactButton")
         reset_metadata_btn = QPushButton("Reset to Default")
         reset_metadata_btn.clicked.connect(
             lambda: self.metadata_prompt_edit.setPlainText(metadata_prompt_default)
         )
+        reset_metadata_btn.setObjectName("compactButton")
         metadata_buttons.addWidget(optimize_metadata_btn)
         metadata_buttons.addWidget(reset_metadata_btn)
         metadata_buttons.addStretch()
@@ -1438,6 +1436,7 @@ Example response:
 
         download_btn = QPushButton("Download Model")
         download_btn.clicked.connect(self._download_ollama_model)
+        download_btn.setObjectName("compactButton")
         layout.addWidget(download_btn, 0, 2)
 
         layout.addWidget(QLabel("Base URL:"), 1, 0)
@@ -1573,10 +1572,12 @@ Example response:
         button_layout = QHBoxLayout()
 
         add_btn = QPushButton("Add Directory")
+        add_btn.setObjectName("compactButton")
         add_btn.clicked.connect(self._add_directory)
         button_layout.addWidget(add_btn)
 
         remove_btn = QPushButton("Remove Selected")
+        remove_btn.setObjectName("compactButton")
         remove_btn.clicked.connect(self._remove_directory)
         button_layout.addWidget(remove_btn)
 
@@ -1604,6 +1605,7 @@ Example response:
         stats_layout = QVBoxLayout(stats_group)
 
         stats_btn = QPushButton("View Statistics")
+        stats_btn.setObjectName("compactButton")
         stats_btn.clicked.connect(self._show_database_statistics)
         stats_layout.addWidget(stats_btn)
 
@@ -1620,21 +1622,25 @@ Example response:
         maintenance_layout = QGridLayout(maintenance_group)
 
         backup_btn = QPushButton("Create Backup")
+        backup_btn.setObjectName("compactButton")
         backup_btn.setToolTip("Create a timestamped backup of the database")
         backup_btn.clicked.connect(self._backup_database)
         maintenance_layout.addWidget(backup_btn, 0, 0)
 
         purge_cache_btn = QPushButton("Purge Cached Metadata")
+        purge_cache_btn.setObjectName("compactButton")
         purge_cache_btn.setToolTip("Remove all cached metadata (forces re-analysis)")
         purge_cache_btn.clicked.connect(lambda: self._purge_data("cache"))
         maintenance_layout.addWidget(purge_cache_btn, 1, 0)
 
         purge_analysis_btn = QPushButton("Purge Analysis Results")
+        purge_analysis_btn.setObjectName("compactButton")
         purge_analysis_btn.setToolTip("Remove all analysis results")
         purge_analysis_btn.clicked.connect(lambda: self._purge_data("analysis"))
         maintenance_layout.addWidget(purge_analysis_btn, 1, 1)
 
         purge_bundles_btn = QPushButton("Purge Bundle Suggestions")
+        purge_bundles_btn.setObjectName("compactButton")
         purge_bundles_btn.setToolTip("Remove all bundle suggestions")
         purge_bundles_btn.clicked.connect(lambda: self._purge_data("bundles"))
         maintenance_layout.addWidget(purge_bundles_btn, 2, 0)
@@ -2131,13 +2137,13 @@ Example response:
                 "true" if self.close_to_tray_checkbox.isChecked() else "false",
             )
 
-            from styles import show_critical, show_information
+            from ui.styles import show_information
 
             show_information(self, "Settings Saved", "Your settings have been saved successfully.")
             self.accept()
 
         except Exception as e:
-            from styles import show_critical
+            from ui.styles import show_critical
 
             show_critical(self, "Save Failed", f"Failed to save settings:\n\n{e}")
 

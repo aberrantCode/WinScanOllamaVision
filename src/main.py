@@ -10,9 +10,7 @@ from db.metadata_db import MetadataDB
 from services.analysis_service import AnalysisService
 from services.logging_service import LoggingService, get_logger
 from ui.gui import StartupWindow
-
-# Import style sheet
-from ui.style import stylesheet
+from ui.theme_manager import ThemeManager
 
 if __name__ == "__main__":
     # Initialize logging service
@@ -29,11 +27,19 @@ if __name__ == "__main__":
         settings_path, db_path = initialize_appdata()
         logger.info(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
 
+        # Initialize config to get theme preference
+        logger.info("Loading configuration...")
+        config_manager = ConfigManager()
+        theme = config_manager.get_setting("Theme", "theme", "dark")
+        is_dark_mode = theme == "dark"
+        logger.info(f"Theme preference: {theme}")
+
         app = QApplication(sys.argv)
         logger.info("QApplication instance created.")
 
-        app.setStyleSheet(stylesheet)
-        logger.info("Stylesheet applied.")
+        # Apply centralized theme stylesheet
+        app.setStyleSheet(ThemeManager.get_stylesheet(is_dark_mode))
+        logger.info(f"ThemeManager stylesheet applied (dark_mode={is_dark_mode}).")
 
         logger.info("Creating StartupWindow...")
         startup_window = StartupWindow()
@@ -41,7 +47,6 @@ if __name__ == "__main__":
 
         # Initialize analysis service
         logger.info("Initializing AnalysisService...")
-        config_manager = ConfigManager()
         analysis_db = AnalysisDB()
         metadata_db = MetadataDB()
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)

@@ -31,7 +31,9 @@ class OllamaService:
             response = self.client.list()
             return response.get("models", [])
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to Ollama server. Is it running? Error: {e}")
+            raise ConnectionError(
+                f"Failed to connect to Ollama server. Is it running? Error: {e}"
+            ) from e
 
     @staticmethod
     def is_vision_model(model_name: str) -> bool:
@@ -86,7 +88,7 @@ class OllamaService:
                     f"Model '{model_name}' did not appear in list_models after pull operation."
                 )
         except Exception as e:
-            raise Exception(f"An unexpected error occurred during model pull: {e}")
+            raise Exception(f"An unexpected error occurred during model pull: {e}") from e
 
     def chat_with_vision_model(
         self, model_name: str, image_paths: list[str], prompt: str, format_json: bool = False
@@ -145,7 +147,7 @@ class OllamaService:
         except Exception as e:
             print(f"ERROR in chat_with_vision_model: {e}")
             print("==========================================\n")
-            raise ConnectionError(f"Failed to communicate with Ollama: {e}")
+            raise ConnectionError(f"Failed to communicate with Ollama: {e}") from e
 
     # --- Specific Application Prompts ---
 

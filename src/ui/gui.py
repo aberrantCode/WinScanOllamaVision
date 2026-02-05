@@ -178,17 +178,17 @@ class ProgressBannerWidget(QWidget):
         # Set cursor to hand pointer to indicate clickability
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def enterEvent(self, event):
+    def enterEvent(self, event):  # noqa: N802
         """Show hand cursor on hover"""
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         super().enterEvent(event)
 
-    def leaveEvent(self, event):
+    def leaveEvent(self, event):  # noqa: N802
         """Reset cursor"""
         self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event):  # noqa: N802
         """Handle click on banner"""
         if event.button() == Qt.MouseButton.LeftButton:
             # Only emit click if not clicking on buttons
@@ -406,14 +406,14 @@ class ExpandablePromptEdit(QPlainTextEdit):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setPlaceholderText("Click to edit prompt...")
 
-    def focusInEvent(self, event):
+    def focusInEvent(self, event):  # noqa: N802
         """Expand when focused"""
         super().focusInEvent(event)
         self.setMaximumHeight(self.expanded_height)
         self.setMinimumHeight(self.expanded_height)  # Force expansion
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-    def focusOutEvent(self, event):
+    def focusOutEvent(self, event):  # noqa: N802
         """Collapse when focus lost"""
         super().focusOutEvent(event)
         self.setMaximumHeight(self.collapsed_height)
@@ -593,7 +593,7 @@ class ConvertPDFsWindow(QMainWindow):
                 page_count = len(doc)
                 doc.close()
                 info_text = f"{pdf_name} ({page_count} pages)"
-            except:
+            except Exception:
                 info_text = f"{pdf_name} (unable to read)"
 
             checkbox = QCheckBox(info_text)
@@ -996,7 +996,7 @@ class ImageGalleryWidget(QWidget):
             # Get file modification time for sorting
             try:
                 mod_time = os.path.getmtime(path)
-            except:
+            except OSError:
                 mod_time = 0
 
             image_data = {
@@ -1105,7 +1105,7 @@ class ImageGalleryWidget(QWidget):
             else:
                 thumbnail_label.setText("No\nPreview")
                 thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        except:
+        except Exception:
             thumbnail_label.setText("Error")
             thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -1458,7 +1458,7 @@ class MetadataDisplayWidget(QWidget):
             else:
                 thumbnail_label.setText("No\nPreview")
                 thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        except:
+        except Exception:
             thumbnail_label.setText("Error")
             thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -2092,7 +2092,7 @@ class ConvertImagesWindow(QMainWindow):
             self.zoom_percent_spin.setValue(zoom_pct)
             self.zoom_percent_spin.blockSignals(False)
 
-    def eventFilter(self, obj, event):
+    def eventFilter(self, obj, event):  # noqa: N802
         """Handle mouse wheel events for zooming"""
         if obj == self.large_preview_label and event.type() == event.Type.Wheel:
             # Get wheel delta (positive = zoom in, negative = zoom out)
@@ -2161,7 +2161,7 @@ class ConvertImagesWindow(QMainWindow):
             y_pos = max(self.large_preview_label.height() - 85, 0)
             self.zoom_controls.move(x_pos, y_pos)
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event):  # noqa: N802
         """Handle window resize to reposition zoom controls and re-apply fit modes (Phase 8)"""
         super().resizeEvent(event)
         self._update_zoom_control_position()
@@ -2328,23 +2328,23 @@ class ConvertImagesWindow(QMainWindow):
 
     def _shortcut_include_page(self):
         """Include current page in bundle (Space)"""
-        if self.current_step == WorkflowStep.STITCHING:
-            if (
-                hasattr(self, "include_button")
-                and self.include_button.isVisible()
-                and self.include_button.isEnabled()
-            ):
-                self.include_button.click()
+        if (
+            self.current_step == WorkflowStep.STITCHING
+            and hasattr(self, "include_button")
+            and self.include_button.isVisible()
+            and self.include_button.isEnabled()
+        ):
+            self.include_button.click()
 
     def _shortcut_exclude_page(self):
         """Exclude current page from bundle (Delete)"""
-        if self.current_step == WorkflowStep.STITCHING:
-            if (
-                hasattr(self, "exclude_page_button")
-                and self.exclude_page_button.isVisible()
-                and self.exclude_page_button.isEnabled()
-            ):
-                self.exclude_page_button.click()
+        if (
+            self.current_step == WorkflowStep.STITCHING
+            and hasattr(self, "exclude_page_button")
+            and self.exclude_page_button.isVisible()
+            and self.exclude_page_button.isEnabled()
+        ):
+            self.exclude_page_button.click()
 
     def _shortcut_approve_continue(self):
         """Approve/Continue to next step (Enter)"""
@@ -2364,14 +2364,14 @@ class ConvertImagesWindow(QMainWindow):
                 and self.approve_order_button.isEnabled()
             ):
                 self.approve_order_button.click()
-        elif self.current_step == WorkflowStep.FINALIZATION:
+        elif (
+            self.current_step == WorkflowStep.FINALIZATION
+            and hasattr(self, "finalize_button")
+            and self.finalize_button.isVisible()
+            and self.finalize_button.isEnabled()
+        ):
             # Finalize button in Step 4
-            if (
-                hasattr(self, "finalize_button")
-                and self.finalize_button.isVisible()
-                and self.finalize_button.isEnabled()
-            ):
-                self.finalize_button.click()
+            self.finalize_button.click()
 
     def _shortcut_cancel_back(self):
         """Cancel/Back to previous step (Esc)"""
@@ -2382,15 +2382,17 @@ class ConvertImagesWindow(QMainWindow):
 
     def _shortcut_accept_all_high(self):
         """Accept all high confidence bundles (Ctrl+A in Step 0)"""
-        if self.current_step == WorkflowStep.BUNDLE_SUGGESTIONS:
-            if hasattr(self, "bundle_suggestions_view"):
-                self.bundle_suggestions_view._on_accept_all_high_clicked()
+        if self.current_step == WorkflowStep.BUNDLE_SUGGESTIONS and hasattr(
+            self, "bundle_suggestions_view"
+        ):
+            self.bundle_suggestions_view._on_accept_all_high_clicked()
 
     def _shortcut_skip_to_manual(self):
         """Skip to manual workflow (Ctrl+D in Step 0)"""
-        if self.current_step == WorkflowStep.BUNDLE_SUGGESTIONS:
-            if hasattr(self, "bundle_suggestions_view"):
-                self.bundle_suggestions_view._on_skip_to_manual_clicked()
+        if self.current_step == WorkflowStep.BUNDLE_SUGGESTIONS and hasattr(
+            self, "bundle_suggestions_view"
+        ):
+            self.bundle_suggestions_view._on_skip_to_manual_clicked()
 
     def _toggle_shortcuts_legend(self):
         """Toggle visibility of keyboard shortcuts legend (F1 or ?)"""
@@ -2602,12 +2604,15 @@ class ConvertImagesWindow(QMainWindow):
             self._stop_auto_approval(clear_button=False)
         else:
             # Toggled ON - restart countdown if there's a pending button
-            if hasattr(self, "auto_approval_button") and self.auto_approval_button:
+            if (
+                hasattr(self, "auto_approval_button")
+                and self.auto_approval_button
+                and hasattr(self, "auto_approval_original_text")
+            ):
                 # There was a button waiting for auto-approval - restart the countdown
-                if hasattr(self, "auto_approval_original_text"):
-                    self._start_auto_approval(
-                        self.auto_approval_button, self.auto_approval_original_text
-                    )
+                self._start_auto_approval(
+                    self.auto_approval_button, self.auto_approval_original_text
+                )
 
         # Update the icon
         self._update_auto_approval_toggle_icon()
@@ -2682,7 +2687,7 @@ class ConvertImagesWindow(QMainWindow):
 
         self.auto_approval_countdown = 0
 
-    def closeEvent(self, event):
+    def closeEvent(self, event):  # noqa: N802
         self.processing_finished.emit()
         super().closeEvent(event)
 
@@ -4298,12 +4303,15 @@ Files being sent to Ollama:
                     print("⚠ Status label no longer exists")
 
             # Start auto-approval on Approve button if group is not empty
-            if len(self.current_group) > 0:
-                if hasattr(self, "exclude_button") and self.exclude_button:
-                    try:
-                        self._start_auto_approval(self.exclude_button, "Approve")
-                    except RuntimeError:
-                        print("⚠ Exclude button no longer exists")
+            if (
+                len(self.current_group) > 0
+                and hasattr(self, "exclude_button")
+                and self.exclude_button
+            ):
+                try:
+                    self._start_auto_approval(self.exclude_button, "Approve")
+                except RuntimeError:
+                    print("⚠ Exclude button no longer exists")
 
     def _on_include_current_page(self):
         """User clicked Include button - change excluded page to included or include new page"""
@@ -5223,10 +5231,10 @@ Files being sent to Ollama:
             )
             # Safety check before accessing UI elements
             if hasattr(self, "continue_button") and self.continue_button:
-                try:
+                try:  # noqa: SIM105
                     self.continue_button.setEnabled(True)
                 except RuntimeError:
-                    pass
+                    pass  # Ignore if button was deleted
             self.status_label.setText("Metadata extraction failed. Fill manually.")
             return
 
@@ -5393,10 +5401,14 @@ Files being sent to Ollama:
         insert_position = None
         for i in range(self.left_panel_layout.count()):
             item = self.left_panel_layout.itemAt(i)
-            if item and item.widget() and isinstance(item.widget(), QLabel):
-                if item.widget() == self.pdf_searchable_label:
-                    insert_position = i + 1
-                    break
+            if (
+                item
+                and item.widget()
+                and isinstance(item.widget(), QLabel)
+                and item.widget() == self.pdf_searchable_label
+            ):
+                insert_position = i + 1
+                break
 
         if insert_position is None:
             return
@@ -5923,14 +5935,39 @@ class StartupWindow(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        # Set background color for better visibility
+        # Branded blue background (intentional - this is the landing page)
         self.setStyleSheet("background-color: #2563EB; color: white;")
+
+        # Define button styles once to avoid duplication
+        primary_button_style = """
+            QPushButton {
+                background-color: #2563EB;
+                color: white;
+                border: 2px solid #1E40AF;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """
+
+        danger_button_style = """
+            QPushButton {
+                background-color: #DC2626;
+                color: white;
+                border: 2px solid #B91C1C;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #B91C1C;
+            }
+        """
 
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setContentsMargins(20, 20, 20, 20)
-
-        # No progress banner - analysis is managed in status window
 
         # Center content layout
         center_layout = QVBoxLayout()
@@ -5947,11 +5984,7 @@ class StartupWindow(QWidget):
 
         # Create scanner container
         self.scanner_container = QWidget()
-        self.scanner_container.setStyleSheet("""
-            QWidget {
-                background-color: transparent;
-            }
-        """)
+        # No styling needed - transparent by default
 
         scanner_layout = QVBoxLayout(self.scanner_container)
         scanner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -6029,22 +6062,18 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
-        # Analyze Documents button - moved to top with blue background
+        # Analyze Documents button
         analyze_button = QPushButton("🔍 Analyze Documents")
         analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         analyze_button.setMinimumHeight(60)
-        analyze_button.setStyleSheet(
-            "QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }"
-        )
+        analyze_button.setStyleSheet(primary_button_style)
         analyze_button.clicked.connect(self.manual_analyze_documents)
         button_layout.addWidget(analyze_button)
 
         process_button = QPushButton("Convert Scans")
         process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         process_button.setMinimumHeight(60)
-        process_button.setStyleSheet(
-            "QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }"
-        )
+        process_button.setStyleSheet(primary_button_style)
         process_button.clicked.connect(self.show_processing_window)
         button_layout.addWidget(process_button)
 
@@ -6052,27 +6081,21 @@ class StartupWindow(QWidget):
         self.extract_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.extract_button.setMinimumHeight(60)
         self.extract_button.setEnabled(True)
-        self.extract_button.setStyleSheet(
-            "QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }"
-        )
+        self.extract_button.setStyleSheet(primary_button_style)
         self.extract_button.clicked.connect(self._process_pdfs)
         button_layout.addWidget(self.extract_button)
 
         settings_button = QPushButton("Change Settings")
         settings_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         settings_button.setMinimumHeight(60)
-        settings_button.setStyleSheet(
-            "QPushButton { background-color: #2563EB; color: white; border: 2px solid #1E40AF; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #1D4ED8; }"
-        )
+        settings_button.setStyleSheet(primary_button_style)
         settings_button.clicked.connect(self.show_settings_window)
         button_layout.addWidget(settings_button)
 
         quit_button = QPushButton("Quit")
         quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         quit_button.setMinimumHeight(60)
-        quit_button.setStyleSheet(
-            "QPushButton { background-color: #DC2626; color: white; border: 2px solid #B91C1C; border-radius: 5px; padding: 10px; } QPushButton:hover { background-color: #B91C1C; }"
-        )
+        quit_button.setStyleSheet(danger_button_style)
         quit_button.clicked.connect(self.quit_application)
         button_layout.addWidget(quit_button)
 
@@ -6087,7 +6110,7 @@ class StartupWindow(QWidget):
 
     # Removed _on_movie_state_changed method
 
-    def showEvent(self, event):
+    def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
         self._check_for_pdfs()
 

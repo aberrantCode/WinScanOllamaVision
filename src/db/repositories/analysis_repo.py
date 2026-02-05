@@ -77,6 +77,50 @@ class AnalysisRepository:
         )
         self.conn.commit()
 
+    def update_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
+        """
+        Update metadata fields for an existing analysis.
+
+        Args:
+            file_path: Path to file
+            metadata: Dictionary with updated metadata fields
+        """
+        # Build UPDATE query dynamically for provided fields
+        update_fields = []
+        values = []
+
+        field_mapping = {
+            "document_type": "document_type",
+            "company": "company",
+            "document_date": "document_date",
+            "page_number": "page_number",
+            "total_pages": "total_pages",
+            "rotation_needed": "rotation_needed",
+            "confidence_score": "confidence_score",
+        }
+
+        for meta_key, db_column in field_mapping.items():
+            if meta_key in metadata and metadata[meta_key]:
+                update_fields.append(f"{db_column} = ?")
+                values.append(metadata[meta_key])
+
+        if update_fields:
+            # Update extracted_metadata JSON field as well
+            update_fields.append("extracted_metadata = ?")
+            values.append(json.dumps(metadata))
+
+            # Add file_path for WHERE clause
+            values.append(file_path)
+
+            query = f"""
+                UPDATE analysis_results
+                SET {', '.join(update_fields)}
+                WHERE file_path = ?
+            """
+
+            self.conn.execute(query, tuple(values))
+            self.conn.commit()
+
     def get_by_path(self, file_path: str) -> dict[str, Any] | None:
         """
         Retrieve analysis results for a file.

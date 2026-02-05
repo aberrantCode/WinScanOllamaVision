@@ -168,8 +168,11 @@ class ClaudeCliProvider(BaseLLMProvider):
             return False, f"Invalid command template: {template_error}"
 
         # Check if default model is in available models
-        if self.default_model and self.available_models:
-            if self.default_model not in self.available_models:
-                return False, f"Default model '{self.default_model}' not in available models list"
+        if (
+            self.default_model
+            and self.available_models
+            and self.default_model not in self.available_models
+        ):
+            return False, f"Default model '{self.default_model}' not in available models list"
 
         return True, None

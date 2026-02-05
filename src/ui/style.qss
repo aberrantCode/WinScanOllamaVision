@@ -116,6 +116,14 @@ QPushButton:disabled {
     color: #6B7280;
 }
 
+/* Dialog button sizing: make buttons in dialog footers slightly smaller */
+QDialogButtonBox QPushButton {
+    min-height: 32px;
+    padding: 6px 12px;
+    min-width: 80px;
+    border-radius: 6px;
+}
+
 /* Scrollbars */
 QScrollBar:vertical {
     background-color: #F3F4F6;

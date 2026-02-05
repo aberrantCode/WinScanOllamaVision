@@ -75,6 +75,10 @@ class AnalysisDB:
         """Retrieve analysis results for a file."""
         return self._analysis.get_by_path(file_path)
 
+    def update_analysis_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
+        """Update metadata fields for an existing analysis."""
+        self._analysis.update_metadata(file_path, metadata)
+
     def get_analyzed_pages(
         self, directory_filter: str = None, provider_filter: str = None
     ) -> list[dict[str, Any]]:

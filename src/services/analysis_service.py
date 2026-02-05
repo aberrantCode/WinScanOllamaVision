@@ -21,9 +21,21 @@ class AnalysisService:
     """Manages automatic startup analysis of document pages"""
 
     DEFAULT_ANALYSIS_PROMPT = (
-        "Please analyze the page and extract the following fields: document_type, company, "
-        "document_date, page_number, total_pages, rotation, and confidence_score. "
-        "Return the results in a concise JSON-friendly format or key/value pairs."
+        "Analyze this document page and extract the following information in JSON format:\n\n"
+        "Required fields:\n"
+        "- document_type: Type of document (invoice, receipt, contract, letter, etc.)\n"
+        "- company: Company name that issued this document\n"
+        "- document_date: Date on the document (YYYY-MM-DD format if possible)\n"
+        "- page_number: Current page number (if visible)\n"
+        "- total_pages: Total number of pages (if visible)\n"
+        "- rotation_needed: Analyze if the document needs rotation for proper reading. "
+        "The text should be legible and readable without tilting your head. "
+        "Return 'none' if already correctly oriented, '90_cw' for 90 degrees clockwise, "
+        "'90_ccw' for 90 degrees counter-clockwise, or '180' for upside down.\n"
+        "- confidence_score: Your confidence in the extraction (0.0 to 1.0)\n\n"
+        "IMPORTANT: For rotation_needed, check if text can be read normally (left-to-right, top-to-bottom) "
+        "without rotating the page. If you need to tilt your head to read it, specify the rotation needed.\n\n"
+        "Return ONLY valid JSON with these exact field names."
     )
 
     def __init__(
@@ -100,9 +112,6 @@ class AnalysisService:
         else:
             self._log(f"[SCAN] Active directories: {directories}")
 
-        # Get batch size from config
-        batch_size = self.config.get_int("AutoAnalysis", "batch_size", 10)
-
         stats = {
             "total_files": 0,
             "analyzed": 0,
@@ -127,7 +136,7 @@ class AnalysisService:
             image_files_set = set()
             for ext in ["*.png", "*.PNG", "*.jpg", "*.JPG", "*.jpeg", "*.JPEG"]:
                 image_files_set.update(glob.glob(os.path.join(directory, ext)))
-            image_files = sorted(list(image_files_set))
+            image_files = sorted(image_files_set)
             all_files.extend([(directory, f) for f in image_files])
 
         stats["total_files"] = len(all_files)
@@ -138,7 +147,7 @@ class AnalysisService:
 
         try:
             # Process all files
-            for idx, (directory, image_path) in enumerate(all_files):
+            for idx, (_, image_path) in enumerate(all_files):
                 current = idx + 1
 
                 if progress_callback:

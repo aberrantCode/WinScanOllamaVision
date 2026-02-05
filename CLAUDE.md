@@ -62,19 +62,30 @@ python src/main.py
 ```
 
 ### Running Tests
+
+**Test Framework:** This project uses **pytest** (not unittest) for all tests.
+
 ```powershell
-# Run all tests
-python -m unittest discover tests
+# Run all tests with coverage (recommended)
+python run_tests.py tests/
+
+# Run specific test module
+python run_tests.py tests/config/
 
 # Run specific test file
-python -m unittest tests.config.test_config_manager
+python run_tests.py tests/config/test_config_manager.py
 
-# Run tests from specific subfolder
-python -m unittest discover tests/llm_providers
+# Run tests matching pattern
+python run_tests.py tests/ -k "provider"
 
-# Use test runner (helper script)
-python tests/helpers/run_all_tests.py
+# Run tests with verbose output
+python run_tests.py tests/ -v
+
+# Run core tests only (config, db, llm_providers)
+python run_tests.py tests/ --ignore=tests/gui --ignore=tests/integration --ignore=tests/services --ignore=tests/prompt
 ```
+
+**Note:** The `run_tests.py` script ensures `src/` is in the Python path for correct imports.
 
 ### Development Setup
 ```powershell
@@ -278,9 +289,20 @@ tests/
 ### Testing Guidelines
 
 1. **Provider tests MUST mock subprocess calls** - Never call real CLI tools
-2. **Use unittest framework** - All tests inherit from `unittest.TestCase`
+2. **Use pytest framework** - All tests use pytest fixtures and assertions
 3. **Test both success and failure cases** - Including malformed JSON responses
-4. **Follow existing patterns** - See `tests/llm_providers/test_phase2_providers.py`
+4. **Follow existing patterns** - See `tests/llm_providers/test_claude_cli_provider.py`
+5. **Minimum 80% coverage required** - Use `python run_tests.py tests/` to check
+
+### Test Coverage Status
+
+| Module | Coverage | Status |
+|--------|----------|--------|
+| `src/config/` | 95%+ | ✓ Complete |
+| `src/db/` | 98%+ | ✓ Complete |
+| `src/llm_providers/` | 98%+ | ✓ Complete |
+| `src/services/` | 0% | ⚠ Needs tests |
+| `src/ui/` | Excluded | GUI (separate testing) |
 
 ## Development Workflow
 

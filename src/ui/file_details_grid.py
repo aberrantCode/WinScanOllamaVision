@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableView,
     QTextEdit,
     QVBoxLayout,
@@ -96,13 +97,13 @@ class FileDetailsTableModel(QAbstractTableModel):
             return self._data[row].copy()
         return None
 
-    def rowCount(self, parent=QModelIndex()) -> int:
+    def rowCount(self, parent=QModelIndex()) -> int:  # noqa: N802, B008
         """Return the number of rows."""
         if parent.isValid():
             return 0
         return len(self._data)
 
-    def columnCount(self, parent=QModelIndex()) -> int:
+    def columnCount(self, parent=QModelIndex()) -> int:  # noqa: N802, B008
         """Return the number of visible columns."""
         if parent.isValid():
             return 0
@@ -137,25 +138,22 @@ class FileDetailsTableModel(QAbstractTableModel):
 
         return None
 
-    def headerData(
+    def headerData(  # noqa: N802
         self, section: int, orientation: Qt.Orientation, role=Qt.ItemDataRole.DisplayRole
     ) -> Any:
         """Return header data."""
         if orientation == Qt.Orientation.Horizontal:
-            if role == Qt.ItemDataRole.DisplayRole:
-                if section < len(self._visible_columns):
-                    actual_col = self._visible_columns[section]
-                    _, header, _ = self.COLUMNS[actual_col]
-                    return header
-            elif role == Qt.ItemDataRole.ToolTipRole:
-                if section < len(self._visible_columns):
-                    actual_col = self._visible_columns[section]
-                    col_key, header, _ = self.COLUMNS[actual_col]
-                    return self._get_column_tooltip(col_key, header)
+            if role == Qt.ItemDataRole.DisplayRole and section < len(self._visible_columns):
+                actual_col = self._visible_columns[section]
+                _, header, _ = self.COLUMNS[actual_col]
+                return header
+            elif role == Qt.ItemDataRole.ToolTipRole and section < len(self._visible_columns):
+                actual_col = self._visible_columns[section]
+                col_key, header, _ = self.COLUMNS[actual_col]
+                return self._get_column_tooltip(col_key, header)
 
-        elif orientation == Qt.Orientation.Vertical:
-            if role == Qt.ItemDataRole.DisplayRole:
-                return str(section + 1)
+        elif orientation == Qt.Orientation.Vertical and role == Qt.ItemDataRole.DisplayRole:
+            return str(section + 1)
 
         return None
 
@@ -229,10 +227,8 @@ class FileDetailsTableModel(QAbstractTableModel):
             return QColor(255, 240, 240)  # Light red
 
         # Highlight low confidence
-        if col_key == "confidence":
-            if isinstance(value, (int, float)):
-                if value < 50:
-                    return QColor(255, 245, 230)  # Light orange
+        if col_key == "confidence" and isinstance(value, (int, float)) and value < 50:
+            return QColor(255, 245, 230)  # Light orange
 
         # Highlight cached items
         if col_key == "cache_hit" and value:
@@ -358,7 +354,7 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
         self._quick_filter = filter_name
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
         """Determine if a row should be visible."""
         model = self.sourceModel()
         if not isinstance(model, FileDetailsTableModel):
@@ -369,9 +365,8 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
             return False
 
         # Apply quick filter
-        if self._quick_filter:
-            if not self._apply_quick_filter(row_data):
-                return False
+        if self._quick_filter and not self._apply_quick_filter(row_data):
+            return False
 
         # Apply column filters
         for col_key, filter_value in self._column_filters.items():
@@ -389,11 +384,7 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
                     return False
 
         # Apply search text
-        if self._search_text:
-            if not self._search_in_row(row_data):
-                return False
-
-        return True
+        return not self._search_text or self._search_in_row(row_data)
 
     def _apply_quick_filter(self, row_data: dict[str, Any]) -> bool:
         """Apply quick filter logic."""
@@ -484,50 +475,204 @@ class FileDetailsDialog(QDialog):
         self.setWindowTitle(
             f"File Details - {os.path.basename(file_data.get('filename', 'Unknown'))}"
         )
-        self.setMinimumSize(700, 600)
+        self.setMinimumSize(1050, 800)  # Increased by 50% for better visibility
+
+        # Get theme from parent
+        self.is_dark_mode = False
+        if parent and hasattr(parent, "is_dark_mode"):
+            self.is_dark_mode = parent.is_dark_mode
+        self.theme_colors = self._get_theme_colors()
+
+        self.accordion_sections = []  # Track accordion sections
+
+        # Correct the file path if it's in a temp folder
+        stored_path = self.file_data.get("full_path")
+        filename = self.file_data.get("filename")
+        if filename:
+            basename = os.path.basename(filename)
+            corrected_path = self._find_actual_file_path(stored_path, basename)
+            if corrected_path and os.path.exists(corrected_path):
+                # Update file_data with corrected path
+                self.file_data["full_path"] = corrected_path
+
         self._init_ui()
 
+    def _get_theme_colors(self):
+        """Return color palette based on current theme"""
+        if self.is_dark_mode:
+            return {
+                "bg_primary": "#1E1E1E",
+                "bg_secondary": "#2D2D2D",
+                "text_primary": "#E0E0E0",
+                "text_secondary": "#B0B0B0",
+                "border": "#4A4A4A",
+                "accent": "#3B82F6",
+            }
+        else:
+            return {
+                "bg_primary": "#FFFFFF",
+                "bg_secondary": "#F9FAFB",
+                "text_primary": "#111827",
+                "text_secondary": "#374151",
+                "border": "#E5E7EB",
+                "accent": "#3B82F6",
+            }
+
     def _init_ui(self):
-        """Initialize the user interface."""
-        layout = QVBoxLayout(self)
+        """Initialize the user interface with image preview and accordion sections."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap
+        from PyQt6.QtWidgets import QScrollArea, QSplitter
 
-        # Create tabbed text display
-        from PyQt6.QtWidgets import QTabWidget, QTextBrowser
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        tab_widget = QTabWidget()
+        # Create horizontal splitter for left (image) and right (metadata) panels
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(6)  # Make handle wider and easier to grab
+        splitter.setChildrenCollapsible(False)  # Prevent panels from collapsing completely
 
-        # Summary tab
-        summary_text = self._format_summary()
-        summary_browser = QTextBrowser()
-        summary_browser.setHtml(summary_text)
-        summary_browser.setOpenExternalLinks(False)
-        tab_widget.addTab(summary_browser, "Summary")
+        # Style the splitter handle to make it visible and indicate it's draggable
+        handle_color = "#4A4A4A" if self.is_dark_mode else "#D1D5DB"
+        hover_color = "#6B7280" if self.is_dark_mode else "#9CA3AF"
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {handle_color};
+                border-radius: 3px;
+                margin: 2px 0px;
+            }}
+            QSplitter::handle:hover {{
+                background-color: {hover_color};
+            }}
+            QSplitter::handle:horizontal {{
+                width: 6px;
+            }}
+        """)
 
-        # Metadata tab
-        metadata_text = self._format_metadata()
-        metadata_browser = QTextBrowser()
-        metadata_browser.setHtml(metadata_text)
-        tab_widget.addTab(metadata_browser, "Metadata")
+        # ===== LEFT PANEL: Image Preview =====
+        left_panel = QWidget()
+        left_panel.setStyleSheet(f"background-color: {self.theme_colors['bg_secondary']};")
+        left_panel.setMinimumWidth(200)  # Minimum width to keep image visible
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(15, 15, 15, 15)
 
-        # Raw Response tab
-        raw_response = self.file_data.get("raw_response", "No raw response available")
-        raw_text = QTextEdit()
-        raw_text.setPlainText(str(raw_response))
-        raw_text.setReadOnly(True)
-        raw_text.setFont(QFont("Consolas", 9))
-        tab_widget.addTab(raw_text, "Raw Response")
+        # Image preview label
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {self.theme_colors['bg_primary']};
+                border: 2px solid {self.theme_colors['border']};
+                border-radius: 8px;
+                padding: 10px;
+            }}
+        """)
 
-        # Full Data tab (JSON)
-        json_text = QTextEdit()
-        json_text.setPlainText(json.dumps(self.file_data, indent=2, default=str))
-        json_text.setReadOnly(True)
-        json_text.setFont(QFont("Consolas", 9))
-        tab_widget.addTab(json_text, "Full Data (JSON)")
+        # Load and display image (path already corrected in __init__)
+        file_path = self.file_data.get("full_path")
 
-        layout.addWidget(tab_widget)
+        if file_path and os.path.exists(file_path):
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                # Store original pixmap for potential rescaling
+                self.original_pixmap = pixmap
 
-        # Button box
+                # Calculate available width (50% of dialog width minus margins/padding/border)
+                # Dialog width: 1050, 50% = 525, minus margins (15*2) and border/padding (~20) = ~480
+                available_width = 480
+
+                # Scale to fit width while maintaining aspect ratio
+                scaled_pixmap = pixmap.scaledToWidth(
+                    available_width, Qt.TransformationMode.SmoothTransformation
+                )
+                self.image_label.setPixmap(scaled_pixmap)
+            else:
+                self.original_pixmap = None
+                self.image_label.setText("Failed to load image")
+                self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
+        else:
+            self.original_pixmap = None
+            self.image_label.setText(f"Image not found\n{file_path or 'No path'}")
+            self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
+
+        left_layout.addWidget(self.image_label)
+
+        # Store references for dynamic resizing
+        self.left_panel = left_panel
+        self.splitter = splitter
+
+        splitter.addWidget(left_panel)
+
+        # ===== RIGHT PANEL: Accordion Sections =====
+        right_panel = QWidget()
+        right_panel.setStyleSheet(f"background-color: {self.theme_colors['bg_secondary']};")
+        right_panel.setMinimumWidth(400)  # Minimum width to keep accordion sections readable
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Scroll area for accordion sections
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_area.setStyleSheet(f"background-color: {self.theme_colors['bg_secondary']};")
+
+        accordion_container = QWidget()
+        # No maximum width constraint - let splitter control the width
+        accordion_layout = QVBoxLayout(accordion_container)
+        accordion_layout.setContentsMargins(15, 15, 15, 15)
+        accordion_layout.setSpacing(12)
+
+        # Extracted Metadata Section (moved to top, always first)
+        metadata_section = self._create_accordion_section(
+            "📋 Extracted Metadata", self._create_metadata_content(), initially_expanded=True
+        )
+        accordion_layout.addWidget(metadata_section)
+
+        # File Information Section
+        file_info_section = self._create_accordion_section(
+            "📄 File Information", self._create_file_info_content()
+        )
+        accordion_layout.addWidget(file_info_section)
+
+        # Analysis Information Section
+        analysis_section = self._create_accordion_section(
+            "⚙️ Analysis Information", self._create_analysis_content()
+        )
+        accordion_layout.addWidget(analysis_section)
+
+        # Raw Response Section
+        raw_response_section = self._create_accordion_section(
+            "💬 Raw LLM Response", self._create_raw_response_content()
+        )
+        accordion_layout.addWidget(raw_response_section)
+
+        accordion_layout.addStretch()
+        scroll_area.setWidget(accordion_container)
+        right_layout.addWidget(scroll_area)
+
+        splitter.addWidget(right_panel)
+
+        # Set splitter proportions (50% image, 50% metadata)
+        splitter.setSizes([525, 525])
+
+        # Connect splitter moved signal to rescale image dynamically
+        splitter.splitterMoved.connect(self._on_splitter_moved)
+
+        main_layout.addWidget(splitter)
+
+        # Button box at bottom
         button_box = QDialogButtonBox()
+        button_box.setStyleSheet(
+            f"background-color: {self.theme_colors['bg_secondary']}; padding: 10px;"
+        )
+
+        view_doc_btn = QPushButton("📄 View Document")
+        view_doc_btn.clicked.connect(self._view_document)
+        button_box.addButton(view_doc_btn, QDialogButtonBox.ButtonRole.ActionRole)
+
+        save_metadata_btn = QPushButton("💾 Save Metadata")
+        save_metadata_btn.clicked.connect(self._save_metadata)
+        button_box.addButton(save_metadata_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
         copy_json_btn = QPushButton("Copy JSON")
         copy_json_btn.clicked.connect(self._copy_json)
@@ -541,7 +686,7 @@ class FileDetailsDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         button_box.addButton(close_btn, QDialogButtonBox.ButtonRole.RejectRole)
 
-        layout.addWidget(button_box)
+        main_layout.addWidget(button_box)
 
     def _format_summary(self) -> str:
         """Format summary information as HTML."""
@@ -659,11 +804,484 @@ class FileDetailsDialog(QDialog):
         except (ValueError, TypeError):
             return str(duration)
 
+    def _create_accordion_section(
+        self, title: str, content_widget, initially_expanded: bool = False
+    ):
+        """Create a collapsible accordion section."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QFrame
+
+        section = QWidget()
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(0)
+
+        header = QFrame()
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.theme_colors['bg_primary']};
+                border: 1px solid {self.theme_colors['border']};
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 10px 12px;
+            }}
+            QFrame:hover {{
+                background-color: {self.theme_colors['bg_secondary']};
+            }}
+        """)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        toggle_indicator = QLabel("▼" if initially_expanded else "▶")
+        toggle_indicator.setObjectName("accordion_toggle")
+        toggle_indicator.setStyleSheet(
+            f"color: {self.theme_colors['text_secondary']}; font-size: 10pt; background: transparent; border: none;"
+        )
+        header_layout.addWidget(toggle_indicator)
+
+        title_label = QLabel(title)
+        title_label.setStyleSheet(
+            f"color: {self.theme_colors['text_primary']}; font-weight: 600; font-size: 11pt; background: transparent; border: none;"
+        )
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+
+        content_frame = QFrame()
+        content_frame.setObjectName("accordion_content")
+        content_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.theme_colors['bg_secondary']};
+                border: 1px solid {self.theme_colors['border']};
+                border-top: none;
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+                padding: 12px;
+            }}
+        """)
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(content_widget)
+        content_frame.setVisible(initially_expanded)
+
+        def toggle():
+            is_visible = content_frame.isVisible()
+
+            # If expanding this section, collapse all others
+            if not is_visible:
+                for other_section in getattr(self, "accordion_sections", []):
+                    if other_section != section:
+                        # Find and collapse other sections
+                        other_content = other_section.findChild(QFrame, "accordion_content")
+                        other_toggle = other_section.findChild(QLabel, "accordion_toggle")
+                        if other_content:
+                            other_content.setVisible(False)
+                        if other_toggle:
+                            other_toggle.setText("▶")
+
+            # Toggle this section
+            content_frame.setVisible(not is_visible)
+            toggle_indicator.setText("▶" if is_visible else "▼")
+
+        header.mousePressEvent = lambda e: toggle()
+        section_layout.addWidget(header)
+        section_layout.addWidget(content_frame)
+
+        # Add to tracked sections list
+        if hasattr(self, "accordion_sections"):
+            self.accordion_sections.append(section)
+
+        return section
+
+    def _create_file_info_content(self):
+        """Create file information content widget."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        def add_row(label, value):
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel(f"<b>{label}:</b>")
+            lbl.setStyleSheet(
+                f"color: {self.theme_colors['text_secondary']}; background: transparent; border: none;"
+            )
+            lbl.setMinimumWidth(120)
+            row_layout.addWidget(lbl)
+            val = QLabel(value)
+            val.setStyleSheet(
+                f"color: {self.theme_colors['text_primary']}; background: transparent; border: none;"
+            )
+            val.setWordWrap(True)
+            val.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            val.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )  # Allow text selection
+            row_layout.addWidget(val, stretch=1)
+            layout.addWidget(row)
+
+        add_row("Filename", self.file_data.get("filename", "N/A"))
+        add_row("Full Path", self.file_data.get("full_path", "N/A"))
+        add_row("File Size", self._format_size(self.file_data.get("file_size")))
+        add_row("Modified", self._format_dt(self.file_data.get("modified_time")))
+        add_row("File Hash", self.file_data.get("file_hash", "N/A"))
+        return widget
+
+    def _create_metadata_content(self):
+        """Create extracted metadata content widget with editable fields."""
+        from PyQt6.QtWidgets import QComboBox, QLineEdit
+
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Store references to input fields for later saving
+        self.metadata_inputs = {}
+
+        def add_editable_row(label, field_name, current_value, placeholder="", widget_type="text"):
+            """Add a row with editable field."""
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+
+            # Label
+            lbl = QLabel(f"<b>{label}:</b>")
+            lbl.setStyleSheet(
+                f"color: {self.theme_colors['text_secondary']}; background: transparent; border: none;"
+            )
+            lbl.setMinimumWidth(130)
+            row_layout.addWidget(lbl)
+
+            # Input field (text or dropdown)
+            if widget_type == "dropdown":
+                input_widget = QComboBox()
+                input_widget.setEditable(False)
+                input_widget.addItems(["none", "90_cw", "90_ccw", "180"])
+                # Set current value if it exists
+                if current_value and current_value in ["none", "90_cw", "90_ccw", "180"]:
+                    input_widget.setCurrentText(current_value)
+                input_widget.setStyleSheet(f"""
+                    QComboBox {{
+                        background-color: {self.theme_colors['bg_primary']};
+                        color: {self.theme_colors['text_primary']};
+                        border: 1px solid {self.theme_colors['border']};
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                    }}
+                    QComboBox:focus {{
+                        border: 1px solid {self.theme_colors['accent']};
+                    }}
+                    QComboBox::drop-down {{
+                        border: none;
+                    }}
+                    QComboBox QAbstractItemView {{
+                        background-color: {self.theme_colors['bg_primary']};
+                        color: {self.theme_colors['text_primary']};
+                        selection-background-color: {self.theme_colors['accent']};
+                    }}
+                """)
+            else:
+                input_widget = QLineEdit()
+                input_widget.setText(
+                    str(current_value) if current_value and current_value != "N/A" else ""
+                )
+                input_widget.setPlaceholderText(placeholder)
+                input_widget.setStyleSheet(f"""
+                    QLineEdit {{
+                        background-color: {self.theme_colors['bg_primary']};
+                        color: {self.theme_colors['text_primary']};
+                        border: 1px solid {self.theme_colors['border']};
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                    }}
+                    QLineEdit:focus {{
+                        border: 1px solid {self.theme_colors['accent']};
+                    }}
+                """)
+
+            row_layout.addWidget(input_widget, stretch=1)
+            layout.addWidget(row)
+
+            # Store reference for later access
+            self.metadata_inputs[field_name] = input_widget
+
+        # Extract rotation from raw response if available
+        rotation_value = ""
+        raw_response = str(self.file_data.get("raw_response", ""))
+        if "rotation" in raw_response.lower() or "rotate" in raw_response.lower():
+            import re
+
+            rotation_match = re.search(
+                r'"rotation[^"]*":\s*"?([^",}]+)"?', raw_response, re.IGNORECASE
+            )
+            if rotation_match:
+                rotation_value = rotation_match.group(1).strip()
+
+        # Add all metadata fields (always show all fields, even if empty)
+        add_editable_row(
+            "Document Type",
+            "document_type",
+            self.file_data.get("document_type"),
+            "e.g., invoice, receipt, contract",
+        )
+
+        add_editable_row(
+            "Company", "company", self.file_data.get("company"), "Company or organization name"
+        )
+
+        add_editable_row(
+            "Document Date",
+            "document_date",
+            self.file_data.get("document_date"),
+            "YYYY-MM-DD format",
+        )
+
+        add_editable_row(
+            "Page Number", "page_number", self.file_data.get("page_number"), "Current page number"
+        )
+
+        add_editable_row(
+            "Total Pages", "total_pages", self.file_data.get("total_pages"), "Total number of pages"
+        )
+
+        add_editable_row(
+            "Rotation Needed",
+            "rotation_needed",
+            rotation_value,
+            "none, 90_cw, 90_ccw, 180",
+            widget_type="dropdown",
+        )
+
+        # Confidence score (editable as percentage)
+        confidence = self.file_data.get("confidence", "")
+        try:
+            if confidence:
+                conf_float = float(confidence)
+                confidence_display = (
+                    f"{conf_float:.1f}" if conf_float > 1 else f"{conf_float * 100:.1f}"
+                )
+            else:
+                confidence_display = ""
+        except (ValueError, TypeError):
+            confidence_display = str(confidence) if confidence else ""
+
+        add_editable_row(
+            "Confidence Score", "confidence_score", confidence_display, "0-100 percentage"
+        )
+
+        return widget
+
+    def _create_analysis_content(self):
+        """Create analysis information content widget."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        def add_row(label, value):
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel(f"<b>{label}:</b>")
+            lbl.setStyleSheet(
+                f"color: {self.theme_colors['text_secondary']}; background: transparent; border: none;"
+            )
+            lbl.setMinimumWidth(120)
+            row_layout.addWidget(lbl)
+            val = QLabel(value)
+            val.setStyleSheet(
+                f"color: {self.theme_colors['text_primary']}; background: transparent; border: none;"
+            )
+            val.setWordWrap(True)
+            val.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            val.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )  # Allow text selection
+            row_layout.addWidget(val, stretch=1)
+            layout.addWidget(row)
+
+        add_row("Status", self.file_data.get("status", "N/A"))
+        add_row("Analyzed", self._format_dt(self.file_data.get("analysis_time")))
+        add_row("Processing Time", self._format_duration(self.file_data.get("processing_duration")))
+        add_row("Provider", self.file_data.get("provider", "N/A"))
+        add_row("Model", self.file_data.get("model_used", "N/A"))
+        add_row("Cached", "Yes" if self.file_data.get("cache_hit") else "No")
+
+        if self.file_data.get("error_message"):
+            add_row("Error", self.file_data.get("error_message"))
+
+        return widget
+
+    def _create_raw_response_content(self):
+        """Create raw LLM response content widget."""
+        raw_response = self.file_data.get("raw_response", "No raw response available")
+        text_edit = QTextEdit()
+        text_edit.setPlainText(str(raw_response))
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+        text_edit.setMinimumHeight(200)
+        text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {self.theme_colors['bg_primary']};
+                color: {self.theme_colors['text_primary']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+                padding: 8px;
+            }}
+        """)
+        return text_edit
+
+    def _on_splitter_moved(self, pos, index):
+        """Rescale image when splitter is moved."""
+        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
+            return
+
+        # Get current width of left panel
+        left_width = self.left_panel.width()
+
+        # Calculate available width for image (subtract margins and padding)
+        # Margins: 15*2, border/padding: ~20
+        available_width = left_width - 50
+
+        # Don't scale if width is too small
+        if available_width < 100:
+            return
+
+        # Rescale image to fit new width
+        scaled_pixmap = self.original_pixmap.scaledToWidth(
+            available_width, Qt.TransformationMode.SmoothTransformation
+        )
+        self.image_label.setPixmap(scaled_pixmap)
+
     def _copy_json(self):
         """Copy JSON data to clipboard."""
         json_str = json.dumps(self.file_data, indent=2, default=str)
         QApplication.clipboard().setText(json_str)
         QMessageBox.information(self, "Copied", "JSON data copied to clipboard")
+
+    def _view_document(self):
+        """Open the document with the default system viewer."""
+        stored_path = self.file_data.get("full_path")
+        filename = self.file_data.get("filename")
+
+        if not filename:
+            QMessageBox.warning(
+                self, "File Name Not Found", "Could not find the file name for this record."
+            )
+            return
+
+        # Find actual file path (handles temp path issue)
+        file_path = self._find_actual_file_path(stored_path, filename)
+
+        if not file_path:
+            QMessageBox.warning(
+                self,
+                "File Not Found",
+                f"Could not find the file:\n\n{filename}\n\nSearched in configured source directories.",
+            )
+            return
+
+        try:
+            # Open file with default system viewer
+            os.startfile(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
+
+    def _save_metadata(self):
+        """Save edited metadata back to the database."""
+        from PyQt6.QtWidgets import QComboBox, QLineEdit
+
+        # Collect values from all metadata input fields
+        updated_metadata = {}
+        for field_name, input_widget in self.metadata_inputs.items():
+            if isinstance(input_widget, QLineEdit):
+                value = input_widget.text().strip()
+            elif isinstance(input_widget, QComboBox):
+                value = input_widget.currentText()
+            else:
+                continue
+
+            # Only include non-empty values
+            if value:
+                updated_metadata[field_name] = value
+
+        # Update file_data dictionary
+        self.file_data.update(updated_metadata)
+
+        # Save to database if parent has database instances
+        try:
+            if self.parent() and hasattr(self.parent(), "analysis_db"):
+                analysis_db = self.parent().analysis_db
+                metadata_db = self.parent().metadata_db
+                file_path = self.file_data.get("full_path")
+
+                if file_path:
+                    # Prepare metadata dict with standard field names
+                    metadata = {
+                        "document_type": updated_metadata.get("document_type", ""),
+                        "company": updated_metadata.get("company", ""),
+                        "document_date": updated_metadata.get("document_date", ""),
+                        "page_number": updated_metadata.get("page_number", ""),
+                        "total_pages": updated_metadata.get("total_pages", ""),
+                        "rotation_needed": updated_metadata.get("rotation_needed", ""),
+                        "confidence_score": updated_metadata.get("confidence_score", ""),
+                    }
+
+                    # Update analysis database
+                    analysis_db.update_analysis_metadata(file_path, metadata)
+
+                    # Also update metadata database for backward compatibility
+                    metadata_db.save_metadata(
+                        file_path=file_path,
+                        metadata=metadata,
+                        model_used=self.file_data.get("model_used", "manual_edit"),
+                        processing_time_ms=0,
+                    )
+
+                    QMessageBox.information(self, "Success", "Metadata saved successfully!")
+                else:
+                    QMessageBox.warning(
+                        self, "Missing File Path", "Cannot save metadata: file path not found."
+                    )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Database Not Available",
+                    "Cannot save metadata: database connection not available.",
+                )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Save Failed", f"Failed to save metadata:\n\n{str(e)}")
+
+    def _find_actual_file_path(self, stored_path, filename):
+        """Find the actual file path, searching source directories if needed."""
+        # First, check if the stored path exists and is not in a temp folder
+        if stored_path and os.path.exists(stored_path):
+            # Check if it's in a temp folder
+            temp_indicators = ["temp", "tmp", "AppData\\Local\\Temp"]
+            if not any(indicator in stored_path for indicator in temp_indicators):
+                return stored_path
+
+        # If stored path doesn't exist or is in temp, search source directories
+        if self.parent() and hasattr(self.parent(), "config_manager"):
+            config_manager = self.parent().config_manager
+            directories = config_manager.get_directories()
+
+            # Search for the file by name in all source directories
+            for directory in directories:
+                if not os.path.exists(directory):
+                    continue
+
+                for root, _, files in os.walk(directory):
+                    if filename in files:
+                        found_path = os.path.join(root, filename)
+                        if os.path.exists(found_path):
+                            return found_path
+
+        return None
 
     def _re_analyze(self):
         """Request re-analysis of this file."""
@@ -689,35 +1307,123 @@ class FileDetailsGrid(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Get theme from parent
+        self.is_dark_mode = False
+        if parent and hasattr(parent, "is_dark_mode"):
+            self.is_dark_mode = parent.is_dark_mode
+
+        # Get theme colors
+        self.theme_colors = self._get_theme_colors()
+
         self.model = FileDetailsTableModel()
         self.proxy_model = FileDetailsSortFilterProxyModel()
         self.proxy_model.setSourceModel(self.model)
         self._init_ui()
 
+    def _get_theme_colors(self):
+        """Return color palette based on current theme (matching analysis_status_window)"""
+        if self.is_dark_mode:
+            return {
+                "bg_primary": "#1E1E1E",
+                "bg_secondary": "#2D2D2D",
+                "bg_tertiary": "#3A3A3A",
+                "text_primary": "#E0E0E0",
+                "text_secondary": "#B0B0B0",
+                "text_tertiary": "#808080",
+                "border": "#4A4A4A",
+                "input_bg": "#2D2D2D",
+                "button_bg": "#3A3A3A",
+                "button_hover": "#4A4A4A",
+                "accent": "#3B82F6",
+                "tab_active_bg": "#2D2D2D",
+                "tab_inactive_bg": "#1E1E1E",
+                "tab_hover_bg": "#3A3A3A",
+            }
+        else:
+            return {
+                "bg_primary": "#F9FAFB",
+                "bg_secondary": "#FFFFFF",
+                "bg_tertiary": "#F3F4F6",
+                "text_primary": "#111827",
+                "text_secondary": "#374151",
+                "text_tertiary": "#6B7280",
+                "border": "#E5E7EB",
+                "input_bg": "#FFFFFF",
+                "button_bg": "#F3F4F6",
+                "button_hover": "#E5E7EB",
+                "accent": "#3B82F6",
+                "tab_active_bg": "#FFFFFF",
+                "tab_inactive_bg": "#F3F4F6",
+                "tab_hover_bg": "#E5E7EB",
+            }
+
     def _init_ui(self):
         """Initialize the user interface."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # Transparent background - parent container handles the background color
+        self.setStyleSheet("background-color: transparent;")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        # Filter toolbar
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(12)
+
+        # Filter toolbar with better styling
+        filter_frame = QWidget()
+        filter_frame.setStyleSheet(f"""
+            QWidget {{
+                background-color: {self.theme_colors['bg_secondary']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 8px;
+            }}
+        """)
+        filter_main_layout = QVBoxLayout(filter_frame)
+        filter_main_layout.setContentsMargins(12, 12, 12, 12)
+        filter_main_layout.setSpacing(10)
+
+        # Quick filters row
         filter_layout = QHBoxLayout()
-        filter_layout.setContentsMargins(5, 5, 5, 5)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
 
         # Quick filter buttons
         quick_filter_label = QLabel("Quick Filters:")
+        quick_filter_label.setStyleSheet(
+            f"font-weight: 600; color: {self.theme_colors['text_primary']}; background: transparent; border: none; font-size: 10pt;"
+        )
         filter_layout.addWidget(quick_filter_label)
 
         self.quick_filters = {
-            "high_confidence": QPushButton("High Confidence"),
-            "needs_review": QPushButton("Needs Review"),
-            "multi_page": QPushButton("Multi-Page"),
-            "recent": QPushButton("Recent (24h)"),
-            "has_errors": QPushButton("Has Errors"),
-            "cached_only": QPushButton("Cached Only"),
+            "high_confidence": QPushButton("✓ High Confidence"),
+            "needs_review": QPushButton("⚠ Needs Review"),
+            "multi_page": QPushButton("📄 Multi-Page"),
+            "recent": QPushButton("🕐 Recent (24h)"),
+            "has_errors": QPushButton("❌ Has Errors"),
+            "cached_only": QPushButton("⚡ Cached Only"),
         }
+
+        button_style = f"""
+            QPushButton {{
+                background-color: {self.theme_colors['button_bg']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+                padding: 4px 10px;
+                color: {self.theme_colors['text_primary']};
+                font-size: 9pt;
+            }}
+            QPushButton:hover {{
+                background-color: {self.theme_colors['button_hover']};
+            }}
+            QPushButton:checked {{
+                background-color: {self.theme_colors['accent']};
+                border-color: {self.theme_colors['accent']};
+                color: white;
+                font-weight: 600;
+            }}
+        """
 
         for name, btn in self.quick_filters.items():
             btn.setCheckable(True)
+            btn.setStyleSheet(button_style)
             btn.clicked.connect(
                 lambda checked, n=name: self._apply_quick_filter(n if checked else None)
             )
@@ -725,51 +1431,147 @@ class FileDetailsGrid(QWidget):
 
         filter_layout.addStretch()
 
-        # Dropdown filters
+        filter_main_layout.addLayout(filter_layout)
+
+        # Dropdown filters row
+        dropdown_layout = QHBoxLayout()
+        dropdown_layout.setContentsMargins(0, 0, 0, 0)
+
+        combo_style = f"""
+            QComboBox {{
+                background-color: {self.theme_colors['input_bg']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+                padding: 4px 8px;
+                min-width: 120px;
+                color: {self.theme_colors['text_primary']};
+                font-size: 9pt;
+            }}
+            QComboBox:hover {{
+                background-color: {self.theme_colors['button_hover']};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {self.theme_colors['text_secondary']};
+                margin-right: 5px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {self.theme_colors['bg_secondary']};
+                color: {self.theme_colors['text_primary']};
+                selection-background-color: {self.theme_colors['accent']};
+                border: 1px solid {self.theme_colors['border']};
+            }}
+        """
+
         self.status_filter = QComboBox()
+        self.status_filter.setStyleSheet(combo_style)
         self.status_filter.addItem("All Status", None)
-        self.status_filter.addItem("Analyzed", "analyzed")
-        self.status_filter.addItem("Pending", "pending")
-        self.status_filter.addItem("Failed", "failed")
+        self.status_filter.addItem("Analyzed", "Analyzed")
+        self.status_filter.addItem("Cached", "Cached")
+        self.status_filter.addItem("Failed", "Failed")
         self.status_filter.currentIndexChanged.connect(self._apply_column_filters)
-        filter_layout.addWidget(QLabel("Status:"))
-        filter_layout.addWidget(self.status_filter)
+
+        status_label = QLabel("Status:")
+        status_label.setStyleSheet(
+            f"font-weight: 600; color: {self.theme_colors['text_primary']}; background: transparent; border: none; font-size: 9pt;"
+        )
+        dropdown_layout.addWidget(status_label)
+        dropdown_layout.addWidget(self.status_filter)
 
         self.company_filter = QComboBox()
+        self.company_filter.setStyleSheet(combo_style)
         self.company_filter.addItem("All Companies", None)
         self.company_filter.currentIndexChanged.connect(self._apply_column_filters)
-        filter_layout.addWidget(QLabel("Company:"))
-        filter_layout.addWidget(self.company_filter)
+
+        company_label = QLabel("Company:")
+        company_label.setStyleSheet(
+            f"font-weight: 600; color: {self.theme_colors['text_primary']}; background: transparent; border: none; margin-left: 12px; font-size: 9pt;"
+        )
+        dropdown_layout.addWidget(company_label)
+        dropdown_layout.addWidget(self.company_filter)
 
         self.type_filter = QComboBox()
+        self.type_filter.setStyleSheet(combo_style)
         self.type_filter.addItem("All Types", None)
         self.type_filter.currentIndexChanged.connect(self._apply_column_filters)
-        filter_layout.addWidget(QLabel("Type:"))
-        filter_layout.addWidget(self.type_filter)
 
-        layout.addLayout(filter_layout)
+        type_label = QLabel("Type:")
+        type_label.setStyleSheet(
+            f"font-weight: 600; color: {self.theme_colors['text_primary']}; background: transparent; border: none; margin-left: 12px; font-size: 9pt;"
+        )
+        dropdown_layout.addWidget(type_label)
+        dropdown_layout.addWidget(self.type_filter)
 
-        # Search bar
-        search_layout = QHBoxLayout()
-        search_layout.setContentsMargins(5, 0, 5, 5)
+        dropdown_layout.addStretch()
+
+        filter_main_layout.addLayout(dropdown_layout)
+
+        layout.addWidget(filter_frame)
+
+        # Search bar with improved styling
+        search_frame = QWidget()
+        search_frame.setStyleSheet("background-color: transparent;")
+        search_layout = QHBoxLayout(search_frame)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+
+        search_label = QLabel("🔍")
+        search_label.setStyleSheet(
+            f"font-size: 12pt; color: {self.theme_colors['text_secondary']}; background: transparent;"
+        )
+        search_layout.addWidget(search_label)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search all columns...")
+        self.search_input.setPlaceholderText("Search filename, company, type, dates...")
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.theme_colors['input_bg']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 10pt;
+                color: {self.theme_colors['text_primary']};
+            }}
+            QLineEdit:focus {{
+                border-color: {self.theme_colors['accent']};
+            }}
+        """)
         self.search_input.textChanged.connect(self._apply_search)
-        search_layout.addWidget(QLabel("Search:"))
-        search_layout.addWidget(self.search_input)
+        search_layout.addWidget(self.search_input, stretch=1)
+
+        action_button_style = f"""
+            QPushButton {{
+                background-color: {self.theme_colors['button_bg']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: 600;
+                color: {self.theme_colors['text_primary']};
+                font-size: 9pt;
+            }}
+            QPushButton:hover {{
+                background-color: {self.theme_colors['button_hover']};
+            }}
+        """
 
         clear_btn = QPushButton("Clear All")
+        clear_btn.setStyleSheet(action_button_style)
         clear_btn.clicked.connect(self._clear_all_filters)
         search_layout.addWidget(clear_btn)
 
         export_btn = QPushButton("Export CSV")
+        export_btn.setStyleSheet(action_button_style)
         export_btn.clicked.connect(self._export_csv)
         search_layout.addWidget(export_btn)
 
-        layout.addLayout(search_layout)
+        layout.addWidget(search_frame)
 
-        # Table view
+        # Table view with professional styling
         self.table_view = QTableView()
         self.table_view.setModel(self.proxy_model)
         self.table_view.setSortingEnabled(True)
@@ -779,6 +1581,41 @@ class FileDetailsGrid(QWidget):
         self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_view.customContextMenuRequested.connect(self._show_context_menu)
         self.table_view.doubleClicked.connect(self._show_details_dialog)
+        self.table_view.setShowGrid(False)
+        self.table_view.setStyleSheet(f"""
+            QTableView {{
+                background-color: {self.theme_colors['bg_secondary']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+                gridline-color: {self.theme_colors['border']};
+                selection-background-color: {self.theme_colors['accent']}40;
+                selection-color: {self.theme_colors['text_primary']};
+                color: {self.theme_colors['text_primary']};
+            }}
+            QTableView::item {{
+                padding: 6px;
+                border-bottom: 1px solid {self.theme_colors['border']};
+            }}
+            QTableView::item:selected {{
+                background-color: {self.theme_colors['accent']}40;
+            }}
+            QTableView::item:hover {{
+                background-color: {self.theme_colors['bg_tertiary']};
+            }}
+            QHeaderView::section {{
+                background-color: {self.theme_colors['bg_tertiary']};
+                color: {self.theme_colors['text_primary']};
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 2px solid {self.theme_colors['border']};
+                border-right: 1px solid {self.theme_colors['border']};
+                font-size: 9pt;
+            }}
+            QHeaderView::section:hover {{
+                background-color: {self.theme_colors['button_hover']};
+            }}
+        """)
 
         # Configure header
         header = self.table_view.horizontalHeader()
@@ -786,16 +1623,45 @@ class FileDetailsGrid(QWidget):
         header.customContextMenuRequested.connect(self._show_column_menu)
         header.setSectionsMovable(True)
         header.setStretchLastSection(True)
+        header.setDefaultSectionSize(120)
+        header.setMinimumSectionSize(60)
 
         # Set initial column widths
         for i in range(self.model.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
-        layout.addWidget(self.table_view)
+        # Set row height
+        self.table_view.verticalHeader().setDefaultSectionSize(36)
+        self.table_view.verticalHeader().setVisible(False)  # Hide row numbers
 
-        # Status bar
+        layout.addWidget(self.table_view, stretch=1)
+
+        # Status bar with better styling
+        status_frame = QWidget()
+        status_frame.setStyleSheet(f"""
+            QWidget {{
+                background-color: {self.theme_colors['bg_secondary']};
+                border: 1px solid {self.theme_colors['border']};
+                border-radius: 4px;
+            }}
+        """)
+        status_layout = QHBoxLayout(status_frame)
+        status_layout.setContentsMargins(10, 6, 10, 6)
+
         self.status_label = QLabel("No files loaded")
-        layout.addWidget(self.status_label)
+        self.status_label.setStyleSheet(
+            f"font-weight: 600; color: {self.theme_colors['text_primary']}; font-size: 9pt; background: transparent; border: none;"
+        )
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch()
+
+        refresh_hint = QLabel("💡 Double-click to view details | Right-click for actions")
+        refresh_hint.setStyleSheet(
+            f"color: {self.theme_colors['text_tertiary']}; font-size: 8pt; background: transparent; border: none;"
+        )
+        status_layout.addWidget(refresh_hint)
+
+        layout.addWidget(status_frame)
 
     def refresh_data(self, data: list[dict[str, Any]]):
         """Refresh the grid with new data."""
@@ -871,7 +1737,7 @@ class FileDetailsGrid(QWidget):
     def _update_filter_dropdowns(self, data: list[dict[str, Any]]):
         """Update filter dropdown options based on data."""
         # Update company filter
-        companies = sorted(set(item.get("company") for item in data if item.get("company")))
+        companies = sorted({item.get("company") for item in data if item.get("company")})
         current_company = self.company_filter.currentData()
         self.company_filter.clear()
         self.company_filter.addItem("All Companies", None)
@@ -883,7 +1749,7 @@ class FileDetailsGrid(QWidget):
                 self.company_filter.setCurrentIndex(index)
 
         # Update type filter
-        types = sorted(set(item.get("document_type") for item in data if item.get("document_type")))
+        types = sorted({item.get("document_type") for item in data if item.get("document_type")})
         current_type = self.type_filter.currentData()
         self.type_filter.clear()
         self.type_filter.addItem("All Types", None)
@@ -908,7 +1774,40 @@ class FileDetailsGrid(QWidget):
         """Show column visibility menu."""
         menu = QMenu(self)
 
-        for i, (col_key, col_name, default_visible) in enumerate(FileDetailsTableModel.COLUMNS):
+        # Get theme colors
+        bg_secondary = self.theme_colors.get(
+            "bg_secondary", "#2D2D2D" if self.is_dark_mode else "#FFFFFF"
+        )
+        text_primary = self.theme_colors.get(
+            "text_primary", "#E0E0E0" if self.is_dark_mode else "#111827"
+        )
+        border = self.theme_colors.get("border", "#4A4A4A" if self.is_dark_mode else "#E5E7EB")
+        accent = self.theme_colors.get("accent", "#3B82F6")
+
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {bg_secondary};
+                color: {text_primary};
+                border: 1px solid {border};
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                background-color: transparent;
+            }}
+            QMenu::item:selected {{
+                background-color: {accent};
+                color: white;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: {border};
+                margin: 4px 8px;
+            }}
+        """)
+
+        for i, (_, col_name, _) in enumerate(FileDetailsTableModel.COLUMNS):
             action = QAction(col_name, menu)
             action.setCheckable(True)
             action.setChecked(i in self.model.get_visible_columns())
@@ -936,6 +1835,46 @@ class FileDetailsGrid(QWidget):
 
         menu = QMenu(self)
 
+        # Get theme colors with fallbacks
+        bg_secondary = self.theme_colors.get(
+            "bg_secondary", "#2D2D2D" if self.is_dark_mode else "#FFFFFF"
+        )
+        text_primary = self.theme_colors.get(
+            "text_primary", "#E0E0E0" if self.is_dark_mode else "#111827"
+        )
+        border = self.theme_colors.get("border", "#4A4A4A" if self.is_dark_mode else "#E5E7EB")
+        accent = self.theme_colors.get("accent", "#3B82F6")
+
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {bg_secondary};
+                color: {text_primary};
+                border: 1px solid {border};
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                background-color: transparent;
+            }}
+            QMenu::item:selected {{
+                background-color: {accent};
+                color: white;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: {border};
+                margin: 4px 8px;
+            }}
+        """)
+
+        # View Document (only show if single selection)
+        if len(selection) == 1:
+            view_action = QAction("📄 View Document", menu)
+            view_action.triggered.connect(self._view_selected_document)
+            menu.addAction(view_action)
+            menu.addSeparator()
+
         re_analyze_action = QAction("Re-analyze Selected", menu)
         re_analyze_action.triggered.connect(self._re_analyze_selected)
         menu.addAction(re_analyze_action)
@@ -957,6 +1896,73 @@ class FileDetailsGrid(QWidget):
         menu.addAction(delete_action)
 
         menu.exec(self.table_view.viewport().mapToGlobal(pos))
+
+    def _find_actual_file_path(self, stored_path, filename):
+        """Find the actual file path, searching source directories if needed."""
+        # First, check if the stored path exists and is not in a temp folder
+        if stored_path and os.path.exists(stored_path):
+            # Check if it's in a temp folder
+            temp_indicators = ["temp", "tmp", "AppData\\Local\\Temp"]
+            if not any(indicator in stored_path for indicator in temp_indicators):
+                return stored_path
+
+        # If stored path doesn't exist or is in temp, search source directories
+        if self.parent() and hasattr(self.parent(), "config_manager"):
+            config_manager = self.parent().config_manager
+            directories = config_manager.get_directories()
+
+            # Search for the file by name in all source directories
+            for directory in directories:
+                if not os.path.exists(directory):
+                    continue
+
+                for root, _, files in os.walk(directory):
+                    if filename in files:
+                        found_path = os.path.join(root, filename)
+                        if os.path.exists(found_path):
+                            return found_path
+
+        return None
+
+    def _view_selected_document(self):
+        """Open the selected document with the default system viewer."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        # Get the first (and should be only) selected row
+        index = selection[0]
+        source_index = self.proxy_model.mapToSource(index)
+        row_data = self.model.get_row_data(source_index.row())
+
+        if not row_data:
+            return
+
+        stored_path = row_data.get("full_path")
+        filename = row_data.get("filename")
+
+        if not filename:
+            QMessageBox.warning(
+                self, "File Name Not Found", "Could not find the file name for this record."
+            )
+            return
+
+        # Find the actual file path
+        file_path = self._find_actual_file_path(stored_path, filename)
+
+        if not file_path:
+            QMessageBox.warning(
+                self,
+                "File Not Found",
+                f"Could not find the file:\n\n{filename}\n\nSearched in configured source directories.",
+            )
+            return
+
+        try:
+            # Open file with default system viewer
+            os.startfile(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
 
     def _show_details_dialog(self, index: QModelIndex):
         """Show details dialog for double-clicked row."""
