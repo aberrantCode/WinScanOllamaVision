@@ -8,6 +8,7 @@ A dedicated window for reviewing and editing document bundles with:
 - Prototype mode with mock data for rapid iteration
 """
 
+import html
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
@@ -713,9 +714,9 @@ class BundleReviewWindow(QDialog):
         if index < len(self.bundle_data.get("analyses", [])):
             analysis = self.bundle_data["analyses"][index]
             tooltip = f"""
-                <b>File:</b> {Path(file_path).name}<br>
-                <b>Page:</b> {analysis.get('page_number', '?')} of {analysis.get('total_pages', '?')}<br>
-                <b>Type:</b> {analysis.get('document_type', 'Unknown')}<br>
+                <b>File:</b> {html.escape(Path(file_path).name)}<br>
+                <b>Page:</b> {html.escape(str(analysis.get('page_number', '?')))} of {html.escape(str(analysis.get('total_pages', '?')))}<br>
+                <b>Type:</b> {html.escape(str(analysis.get('document_type', 'Unknown')))}<br>
                 <b>Confidence:</b> {int(analysis.get('confidence_score', 0) * 100)}%
             """
             thumbnail.setToolTip(tooltip)

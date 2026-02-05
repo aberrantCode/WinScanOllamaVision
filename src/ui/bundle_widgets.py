@@ -3,6 +3,7 @@ Bundle Suggestion Widgets for Phase 7
 Card-based UI for displaying and managing AI-generated document bundle suggestions
 """
 
+import html
 import os
 from typing import Any
 
@@ -45,6 +46,7 @@ class EnlargedPagesDialog(QDialog):
         # Get analysis_db for metadata tooltips
         if analysis_db is None:
             from db.analysis_db import AnalysisDB
+
             self.analysis_db = AnalysisDB()
         else:
             self.analysis_db = analysis_db
@@ -192,6 +194,7 @@ class EnlargedPagesDialog(QDialog):
                 # For a 1080p display (1920x1080), this gives ~880px for image
                 # Use 85% of screen height as target, which works well for most displays
                 from PyQt6.QtWidgets import QApplication
+
                 screen = QApplication.primaryScreen()
                 if screen:
                     screen_height = screen.availableGeometry().height()
@@ -278,23 +281,23 @@ class EnlargedPagesDialog(QDialog):
             rotation = analysis.get("rotation_needed") or "N/A"
 
             # Format as multi-line tooltip
-            tooltip = f"""<b>{filename}</b><br>
+            tooltip = f"""<b>{html.escape(filename)}</b><br>
 <br>
 <b>Document Info:</b><br>
-• Company: {company}<br>
-• Type: {doc_type}<br>
-• Date: {doc_date}<br>
-• Tax Related: {tax_related}<br>
+• Company: {html.escape(str(company))}<br>
+• Type: {html.escape(str(doc_type))}<br>
+• Date: {html.escape(str(doc_date))}<br>
+• Tax Related: {html.escape(str(tax_related))}<br>
 <br>
 <b>Page Info:</b><br>
-• Page: {page_num} of {total_pages}<br>
-• Legibility: {legibility}<br>
-• Rotation: {rotation}<br>
+• Page: {html.escape(str(page_num))} of {html.escape(str(total_pages))}<br>
+• Legibility: {html.escape(str(legibility))}<br>
+• Rotation: {html.escape(str(rotation))}<br>
 • Confidence: {confidence:.1%}<br>
 """
             return tooltip
         except Exception as e:
-            return f"Error loading metadata: {e}"
+            return f"Error loading metadata: {html.escape(str(e))}"
 
     def keyPressEvent(self, event):
         """Handle keyboard navigation"""
@@ -324,6 +327,7 @@ class BundleSuggestionCard(QFrame):
         self.bundle_data = bundle_data
         # Import here to avoid circular imports
         from db.analysis_db import AnalysisDB
+
         self.analysis_db = AnalysisDB()
         self._init_ui()
 
@@ -501,7 +505,9 @@ class BundleSuggestionCard(QFrame):
 
         # Get metadata for tooltip
         metadata_tooltip = self._format_metadata_tooltip(file_path)
-        combined_tooltip = f"{metadata_tooltip}<br><br><i>Click to enlarge all pages in this bundle</i>"
+        combined_tooltip = (
+            f"{metadata_tooltip}<br><br><i>Click to enlarge all pages in this bundle</i>"
+        )
         thumbnail_label.setToolTip(combined_tooltip)
 
         # Connect click to show enlarged pages
@@ -561,23 +567,23 @@ class BundleSuggestionCard(QFrame):
             rotation = analysis.get("rotation_needed") or "N/A"
 
             # Format as multi-line tooltip
-            tooltip = f"""<b>{filename}</b><br>
+            tooltip = f"""<b>{html.escape(filename)}</b><br>
 <br>
 <b>Document Info:</b><br>
-• Company: {company}<br>
-• Type: {doc_type}<br>
-• Date: {doc_date}<br>
-• Tax Related: {tax_related}<br>
+• Company: {html.escape(str(company))}<br>
+• Type: {html.escape(str(doc_type))}<br>
+• Date: {html.escape(str(doc_date))}<br>
+• Tax Related: {html.escape(str(tax_related))}<br>
 <br>
 <b>Page Info:</b><br>
-• Page: {page_num} of {total_pages}<br>
-• Legibility: {legibility}<br>
-• Rotation: {rotation}<br>
+• Page: {html.escape(str(page_num))} of {html.escape(str(total_pages))}<br>
+• Legibility: {html.escape(str(legibility))}<br>
+• Rotation: {html.escape(str(rotation))}<br>
 • Confidence: {confidence:.1%}<br>
 """
             return tooltip
         except Exception as e:
-            return f"Error loading metadata: {e}"
+            return f"Error loading metadata: {html.escape(str(e))}"
 
     def _on_accept(self):
         """Handle accept button click"""

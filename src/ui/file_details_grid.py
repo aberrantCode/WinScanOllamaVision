@@ -940,8 +940,13 @@ class FileDetailsDialog(QDialog):
         if not self.analysis_db:
             return []
 
+        # Whitelist of allowed field names to prevent SQL injection
+        allowed_fields = {'document_type', 'company', 'document_date', 'page_number', 'total_pages'}
+        if field_name not in allowed_fields:
+            return []
+
         try:
-            # Get distinct values from analysis_db
+            # Safe to use in query now that field_name is whitelisted
             query = f"SELECT DISTINCT {field_name} FROM analyses WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
             result = self.analysis_db.conn.execute(query).fetchall()
             return [row[0] for row in result if row[0]]
