@@ -290,9 +290,8 @@ class TestAppDataManager:
 
         # Create template database
         template_db = os.path.join(solution_data_dir, "metadata.db")
-        conn = sqlite3.connect(template_db)
-        conn.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)")
-        conn.close()
+        with sqlite3.connect(template_db) as conn:
+            conn.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)")
 
         # Act
         with patch.dict(os.environ, {"APPDATA": appdata_root}):
@@ -302,11 +301,10 @@ class TestAppDataManager:
         # Assert
         assert os.path.exists(manager.database_path)
         # Verify table exists
-        conn = sqlite3.connect(manager.database_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'")
-        assert cursor.fetchone() is not None
-        conn.close()
+        with sqlite3.connect(manager.database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'")
+            assert cursor.fetchone() is not None
 
     def test_initialize_database_works_without_template(self, temp_dirs):
         # Arrange
@@ -331,9 +329,8 @@ class TestAppDataManager:
             manager.initialize()
 
         # Create database without schema_version table
-        conn = sqlite3.connect(manager.database_path)
-        conn.execute("CREATE TABLE old_table (id INTEGER PRIMARY KEY)")
-        conn.close()
+        with sqlite3.connect(manager.database_path) as conn:
+            conn.execute("CREATE TABLE old_table (id INTEGER PRIMARY KEY)")
 
         # Act
         manager._migrate_database_if_needed()
@@ -351,17 +348,15 @@ class TestAppDataManager:
             manager.initialize()
 
         # Create database with schema_version table
-        conn = sqlite3.connect(manager.database_path)
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
-        conn.close()
+        with sqlite3.connect(manager.database_path) as conn:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version (version) VALUES (1)")
 
         # Create template with higher version
         template_db = os.path.join(solution_data_dir, "metadata.db")
-        conn = sqlite3.connect(template_db)
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-        conn.close()
+        with sqlite3.connect(template_db) as conn:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version (version) VALUES (2)")
 
         # Act
         manager._migrate_database_if_needed()
@@ -389,12 +384,11 @@ class TestAppDataManager:
 
         # Create template database with version
         template_db = os.path.join(solution_data_dir, "metadata.db")
-        conn = sqlite3.connect(template_db)
-        cursor = conn.cursor()
-        cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-        cursor.execute("INSERT INTO schema_version (version) VALUES (5)")
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(template_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            cursor.execute("INSERT INTO schema_version (version) VALUES (5)")
+            conn.commit()
 
         with patch.dict(os.environ, {"APPDATA": appdata_root}):
             manager = AppDataManager(solution_data_dir)
@@ -411,13 +405,10 @@ class TestAppDataManager:
 
         # Create template database without version table
         template_db = os.path.join(solution_data_dir, "metadata.db")
-        conn = sqlite3.connect(template_db)
-        try:
+        with sqlite3.connect(template_db) as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE some_table (id INTEGER)")
             conn.commit()
-        finally:
-            conn.close()
 
         with patch.dict(os.environ, {"APPDATA": appdata_root}):
             manager = AppDataManager(solution_data_dir)
@@ -437,9 +428,8 @@ class TestAppDataManager:
             manager.initialize()
 
         # Create database
-        conn = sqlite3.connect(manager.database_path)
-        conn.execute("CREATE TABLE test_table (id INTEGER)")
-        conn.close()
+        with sqlite3.connect(manager.database_path) as conn:
+            conn.execute("CREATE TABLE test_table (id INTEGER)")
 
         # Act
         manager._backup_database()
@@ -503,18 +493,16 @@ class TestAppDataManager:
             manager.initialize()
 
         # Create user database with old version
-        conn = sqlite3.connect(manager.database_path)
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
-        conn.execute("CREATE TABLE data_table (id INTEGER)")
-        conn.close()
+        with sqlite3.connect(manager.database_path) as conn:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+            conn.execute("CREATE TABLE data_table (id INTEGER)")
 
         # Create template with newer version
         template_db = os.path.join(solution_data_dir, "metadata.db")
-        conn = sqlite3.connect(template_db)
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (3)")
-        conn.close()
+        with sqlite3.connect(template_db) as conn:
+            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO schema_version (version) VALUES (3)")
 
         # Act
         manager._migrate_database_if_needed()
