@@ -494,6 +494,74 @@ class TestAppDataManager:
         assert "WinScanLLM" in path
 
 
+    def test_migrate_database_creates_backup_when_upgrading(self, temp_dirs):
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+            manager.initialize()
+
+        # Create user database with old version
+        conn = sqlite3.connect(manager.database_path)
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+        conn.execute("CREATE TABLE data_table (id INTEGER)")
+        conn.close()
+
+        # Create template with newer version
+        template_db = os.path.join(solution_data_dir, "metadata.db")
+        conn = sqlite3.connect(template_db)
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO schema_version (version) VALUES (3)")
+        conn.close()
+
+        # Act
+        manager._migrate_database_if_needed()
+
+        # Assert - backup should have been created
+        backup_files = [
+            f for f in os.listdir(manager.appdata_dir) if f.startswith("metadata.db.backup_")
+        ]
+        assert len(backup_files) > 0
+
+    def test_get_template_schema_version_handles_database_error(self, temp_dirs):
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        # Create invalid database file
+        template_db = os.path.join(solution_data_dir, "metadata.db")
+        with open(template_db, "w") as f:
+            f.write("invalid database content")
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+
+        # Act
+        version = manager._get_template_schema_version()
+
+        # Assert - should return default version on error
+        assert version == 1
+
+    def test_migrate_database_handles_database_error(self, temp_dirs):
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+            manager.initialize()
+
+        # Create invalid database file
+        with open(manager.database_path, "w") as f:
+            f.write("invalid database content")
+
+        # Act - should not raise exception
+        manager._migrate_database_if_needed()
+
+        # Assert - test passes if no exception
+        assert True
+
+
 class TestInitializeAppdataFunction:
     """Test suite for initialize_appdata convenience function"""
 
