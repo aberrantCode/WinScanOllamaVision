@@ -30,7 +30,7 @@ class ClickableLabel(QLabel):
         super().__init__(*args, **kwargs)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event):  # noqa: N802
         self.clicked.emit()
         super().mousePressEvent(event)
 
@@ -42,7 +42,7 @@ class EnlargedPagesDialog(QDialog):
         super().__init__(parent)
         self.file_paths = file_paths
         self.current_page_index = 0
-        self.page_widgets = []  # Store references to page widgets for scrolling
+        self.page_widgets: list[QWidget] = []  # Store references to page widgets for scrolling
         # Get analysis_db for metadata tooltips
         if analysis_db is None:
             from db.analysis_db import AnalysisDB
@@ -299,7 +299,7 @@ class EnlargedPagesDialog(QDialog):
         except Exception as e:
             return f"Error loading metadata: {html.escape(str(e))}"
 
-    def keyPressEvent(self, event):
+    def keyPressEvent(self, event):  # noqa: N802
         """Handle keyboard navigation"""
         from PyQt6.QtCore import Qt
 

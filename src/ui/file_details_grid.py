@@ -169,7 +169,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         elif col_key == "status":
             return str(value).title()
         elif col_key == "confidence":
-            if isinstance(value, (int, float)):
+            if isinstance(value, int | float):
                 return f"{value:.1f}%"
             return str(value)
         elif col_key == "file_size":
@@ -212,7 +212,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         elif col_key == "file_hash":
             return f"Full hash: {value}"
         elif col_key == "confidence":
-            conf = float(value) if isinstance(value, (int, float)) else 0
+            conf = float(value) if isinstance(value, int | float) else 0
             if conf >= 80:
                 return f"High confidence: {conf:.1f}%"
             elif conf >= 50:
@@ -229,7 +229,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             return QColor(255, 240, 240)  # Light red
 
         # Highlight low confidence
-        if col_key == "confidence" and isinstance(value, (int, float)) and value < 50:
+        if col_key == "confidence" and isinstance(value, int | float) and value < 50:
             return QColor(255, 245, 230)  # Light orange
 
         # Highlight cached items
@@ -381,7 +381,7 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
             row_value = row_data.get(col_key)
 
             # Handle different filter types
-            if isinstance(filter_value, (list, tuple, set)):
+            if isinstance(filter_value, list | tuple | set):
                 if row_value not in filter_value:
                     return False
             else:
@@ -409,6 +409,8 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
 
         elif self._quick_filter == "multi_page":
             total_pages = row_data.get("total_pages")
+            if total_pages is None:
+                return False
             try:
                 return int(total_pages) > 1
             except (ValueError, TypeError):
@@ -489,7 +491,7 @@ class FileDetailsDialog(QDialog):
             self.is_dark_mode = parent.is_dark_mode
         self.theme_colors = self._get_theme_colors()
 
-        self.accordion_sections = []  # Track accordion sections
+        self.accordion_sections: list[QWidget] = []  # Track accordion sections
 
         # Correct the file path if it's in a temp folder
         stored_path = self.file_data.get("full_path")
@@ -889,7 +891,7 @@ class FileDetailsDialog(QDialog):
             content_frame.setVisible(not is_visible)
             toggle_indicator.setText("▶" if is_visible else "▼")
 
-        header.mousePressEvent = lambda e: toggle()
+        header.mousePressEvent = lambda e: toggle()  # type: ignore[method-assign]
         section_layout.addWidget(header)
         section_layout.addWidget(content_frame)
 
@@ -993,7 +995,7 @@ class FileDetailsDialog(QDialog):
                 # Handle boolean conversion
                 if isinstance(current_value, bool):
                     input_widget.setChecked(current_value)
-                elif isinstance(current_value, (int, str)):
+                elif isinstance(current_value, int | str):
                     input_widget.setChecked(
                         bool(int(current_value)) if str(current_value).isdigit() else False
                     )
@@ -1982,7 +1984,7 @@ class FileDetailsGrid(QWidget):
     def _update_filter_dropdowns(self, data: list[dict[str, Any]]):
         """Update filter dropdown options based on data."""
         # Update company filter
-        companies = sorted({item.get("company") for item in data if item.get("company")})
+        companies = sorted({str(item.get("company")) for item in data if item.get("company")})
         current_company = self.company_filter.currentData()
         self.company_filter.clear()
         self.company_filter.addItem("All Companies", None)
@@ -1994,7 +1996,9 @@ class FileDetailsGrid(QWidget):
                 self.company_filter.setCurrentIndex(index)
 
         # Update type filter
-        types = sorted({item.get("document_type") for item in data if item.get("document_type")})
+        types = sorted(
+            {str(item.get("document_type")) for item in data if item.get("document_type")}
+        )
         current_type = self.type_filter.currentData()
         self.type_filter.clear()
         self.type_filter.addItem("All Types", None)
