@@ -347,6 +347,7 @@ class TestLoggingService:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("os.path.expanduser") as mock_expand,
+            patch("os.makedirs"),  # Mock makedirs to avoid permission errors on CI
         ):
             mock_expand.return_value = "/home/user"
             service.initialize(app_name="TestApp")
