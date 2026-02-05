@@ -1364,12 +1364,8 @@ class AnalysisStatusWindow(QDialog):
         for row in db_data:
             file_path = row.get("file_path", "")
 
-            # Determine status
-            if row.get("confidence_score") is None:
-                status = "Failed"
-            else:
-                # Both fresh analysis and cached results show as "Analyzed"
-                status = "Analyzed"
+            # Determine status (both fresh analysis and cached results show as "Analyzed")
+            status = "Failed" if row.get("confidence_score") is None else "Analyzed"
 
             # Get file stats if file exists
             file_size = 0
