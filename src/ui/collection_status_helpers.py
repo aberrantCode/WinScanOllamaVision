@@ -36,9 +36,10 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     card_layout = QVBoxLayout(card)
     card_layout.setSpacing(8)
 
-    # Title label - no border, centered
+    # Title label - no border, centered with word wrap
     title_label = QLabel(title)
     title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title_label.setWordWrap(True)  # Enable word wrapping for long titles
     title_label.setStyleSheet(f"""
         color: {theme_colors["text_tertiary"]};
         font-size: 10pt;

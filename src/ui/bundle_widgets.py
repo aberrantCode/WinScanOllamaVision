@@ -374,15 +374,15 @@ class BundleSuggestionCard(QFrame):
         doc_date = self.bundle_data.get("document_date", "N/A")
         page_count = len(self.bundle_data.get("file_paths", []))
 
-        title_label = QLabel(f"<b>{doc_type}</b>")
+        title_label = QLabel(f"<b>{html.escape(str(doc_type))}</b>")
         title_label.setStyleSheet("font-size: 14px;")
         metadata_layout.addWidget(title_label)
 
-        company_label = QLabel(f"Company: {company}")
+        company_label = QLabel(f"Company: {html.escape(str(company))}")
         company_label.setStyleSheet("font-size: 11px; color: #666;")
         metadata_layout.addWidget(company_label)
 
-        date_label = QLabel(f"Date: {doc_date} • {page_count} page(s)")
+        date_label = QLabel(f"Date: {html.escape(str(doc_date))} • {page_count} page(s)")
         date_label.setStyleSheet("font-size: 11px; color: #666;")
         metadata_layout.addWidget(date_label)
 
