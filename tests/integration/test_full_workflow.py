@@ -5,7 +5,9 @@ Tests the complete flow: Scan → Analyze → Bundle → Create PDF
 """
 
 import os
+import shutil
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -28,8 +30,6 @@ class TestFullWorkflow:
         temp_dir = tempfile.mkdtemp()
         yield temp_dir
         # Cleanup
-        import shutil
-
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     @pytest.fixture
@@ -37,20 +37,14 @@ class TestFullWorkflow:
         """Create temporary directory for test databases"""
         temp_dir = tempfile.mkdtemp()
         yield temp_dir
-        # Cleanup
-        import shutil
-
-        # Close any open database connections first
-        import time
-
-        time.sleep(0.1)  # Give connections time to close
+        # Cleanup - retry logic for Windows database file locking
         for attempt in range(3):
             try:
                 shutil.rmtree(temp_dir, ignore_errors=False)
                 break
             except PermissionError:
                 if attempt < 2:
-                    time.sleep(0.1)
+                    time.sleep(0.1)  # Brief wait for file handles to release
                 else:
                     shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -85,23 +79,27 @@ class TestFullWorkflow:
 
     @pytest.fixture
     def analysis_db(self, temp_db_dir):
-        """Create test AnalysisDB"""
+        """Create test AnalysisDB with guaranteed cleanup"""
         db_path = os.path.join(temp_db_dir, "analysis.db")
         with patch("config.appdata_manager.AppDataManager") as mock_appdata:
             mock_appdata.return_value.get_analysis_db_path.return_value = db_path
             db = AnalysisDB()
-            yield db
-            db.close()
+            try:
+                yield db
+            finally:
+                db.close()
 
     @pytest.fixture
     def metadata_db(self, temp_db_dir):
-        """Create test MetadataDB"""
+        """Create test MetadataDB with guaranteed cleanup"""
         db_path = os.path.join(temp_db_dir, "metadata.db")
         with patch("config.appdata_manager.AppDataManager") as mock_appdata:
             mock_appdata.return_value.get_metadata_db_path.return_value = db_path
             db = MetadataDB()
-            yield db
-            db.close()
+            try:
+                yield db
+            finally:
+                db.close()
 
     @patch("services.analysis_service.get_logger")
     @patch("services.analysis_service.ProviderFactory")

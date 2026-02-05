@@ -4,6 +4,8 @@ Integration tests for LLM provider integration.
 Tests ConfigManager → ProviderFactory → Provider flow
 """
 
+import configparser
+import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -19,9 +21,6 @@ class TestProviderIntegration:
     @pytest.fixture
     def temp_config_file(self):
         """Create temporary config file"""
-        import configparser
-        import os
-
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".ini") as temp_file:
             config = configparser.ConfigParser()
 
