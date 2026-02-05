@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: |
+          python -m build
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Generate changelog
+          if [ -z "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGELOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body: |
+            ## Changes in this Release
+
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ## Installation
+
+            ```bash
+            pip install WinScanOllamaVision==${{ github.ref_name }}
+            ```
+
+            ## Checksums
+
+            See attached files for package checksums.
+
+          files: |
+            dist/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+
+      - name: Publish to PyPI
+        if: "!contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc')"
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          twine upload dist/*
+
+  build-executables:
+    name: Build Executables
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller --onefile --windowed --name WinScanOllamaVision src/main.py
+
+      - name: Build executable (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pyinstaller --onefile --name WinScanOllamaVision src/main.py
+
+      - name: Build executable (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pyinstaller --onefile --windowed --name WinScanOllamaVision src/main.py
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: executable-${{ matrix.os }}
+          path: dist/
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*

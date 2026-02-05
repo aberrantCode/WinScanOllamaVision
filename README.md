@@ -1,5 +1,12 @@
 # WinScanLLM
 
+[![CI](https://github.com/aberrantCode/WinScanOllamaVision/actions/workflows/ci.yml/badge.svg)](https://github.com/aberrantCode/WinScanOllamaVision/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/aberrantCode/WinScanOllamaVision/branch/master/graph/badge.svg)](https://codecov.io/gh/aberrantCode/WinScanOllamaVision)
+[![CodeQL](https://github.com/aberrantCode/WinScanOllamaVision/actions/workflows/codeql.yml/badge.svg)](https://github.com/aberrantCode/WinScanOllamaVision/actions/workflows/codeql.yml)
+[![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/downloads/)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 This is a Python-based desktop utility designed to intelligently organize scanned PDF documents using AI-powered analysis. It supports multiple LLM providers (Ollama, Claude CLI, Gemini CLI), inspects local scan folders, combines multi-part PDF documents, renames them based on content extracted by vision models, and moves them to an organized subfolder. The application provides a user interface for previewing, correcting extracted information, and confirming file operations.
 
 ## Features:
