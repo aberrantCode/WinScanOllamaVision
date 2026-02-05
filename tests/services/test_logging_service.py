@@ -348,9 +348,11 @@ class TestLoggingService:
             patch.dict(os.environ, {}, clear=True),
             patch("os.path.expanduser") as mock_expand,
             patch("os.makedirs"),  # Mock makedirs to avoid permission errors on CI
-            patch("logging.handlers.RotatingFileHandler"),  # Mock file handler creation
+            patch("services.logging_service.RotatingFileHandler") as mock_handler,
         ):
             mock_expand.return_value = "/home/user"
+            # Configure mock handler to have a level attribute
+            mock_handler.return_value.level = 20  # INFO level
             service.initialize(app_name="TestApp")
 
         # Assert
