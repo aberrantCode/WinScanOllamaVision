@@ -561,8 +561,8 @@ class FileDetailsDialog(QDialog):
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet(f"""
             QLabel {{
-                background-color: {self.theme_colors['bg_primary']};
-                border: 2px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_primary"]};
+                border: 2px solid {self.theme_colors["border"]};
                 border-radius: 8px;
                 padding: 10px;
             }}
@@ -820,14 +820,14 @@ class FileDetailsDialog(QDialog):
         header.setCursor(Qt.CursorShape.PointingHandCursor)
         header.setStyleSheet(f"""
             QFrame {{
-                background-color: {self.theme_colors['bg_primary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
                 padding: 10px 12px;
             }}
             QFrame:hover {{
-                background-color: {self.theme_colors['bg_secondary']};
+                background-color: {self.theme_colors["bg_secondary"]};
             }}
         """)
         header_layout = QHBoxLayout(header)
@@ -851,8 +851,8 @@ class FileDetailsDialog(QDialog):
         content_frame.setObjectName("accordion_content")
         content_frame.setStyleSheet(f"""
             QFrame {{
-                background-color: {self.theme_colors['bg_secondary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_secondary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-top: none;
                 border-bottom-left-radius: 8px;
                 border-bottom-right-radius: 8px;
@@ -965,22 +965,22 @@ class FileDetailsDialog(QDialog):
                     input_widget.setCurrentText(current_value)
                 input_widget.setStyleSheet(f"""
                     QComboBox {{
-                        background-color: {self.theme_colors['bg_primary']};
-                        color: {self.theme_colors['text_primary']};
-                        border: 1px solid {self.theme_colors['border']};
+                        background-color: {self.theme_colors["bg_primary"]};
+                        color: {self.theme_colors["text_primary"]};
+                        border: 1px solid {self.theme_colors["border"]};
                         border-radius: 4px;
                         padding: 4px 8px;
                     }}
                     QComboBox:focus {{
-                        border: 1px solid {self.theme_colors['accent']};
+                        border: 1px solid {self.theme_colors["accent"]};
                     }}
                     QComboBox::drop-down {{
                         border: none;
                     }}
                     QComboBox QAbstractItemView {{
-                        background-color: {self.theme_colors['bg_primary']};
-                        color: {self.theme_colors['text_primary']};
-                        selection-background-color: {self.theme_colors['accent']};
+                        background-color: {self.theme_colors["bg_primary"]};
+                        color: {self.theme_colors["text_primary"]};
+                        selection-background-color: {self.theme_colors["accent"]};
                     }}
                 """)
             else:
@@ -991,14 +991,14 @@ class FileDetailsDialog(QDialog):
                 input_widget.setPlaceholderText(placeholder)
                 input_widget.setStyleSheet(f"""
                     QLineEdit {{
-                        background-color: {self.theme_colors['bg_primary']};
-                        color: {self.theme_colors['text_primary']};
-                        border: 1px solid {self.theme_colors['border']};
+                        background-color: {self.theme_colors["bg_primary"]};
+                        color: {self.theme_colors["text_primary"]};
+                        border: 1px solid {self.theme_colors["border"]};
                         border-radius: 4px;
                         padding: 4px 8px;
                     }}
                     QLineEdit:focus {{
-                        border: 1px solid {self.theme_colors['accent']};
+                        border: 1px solid {self.theme_colors["accent"]};
                     }}
                 """)
 
@@ -1125,9 +1125,9 @@ class FileDetailsDialog(QDialog):
         text_edit.setMinimumHeight(200)
         text_edit.setStyleSheet(f"""
             QTextEdit {{
-                background-color: {self.theme_colors['bg_primary']};
-                color: {self.theme_colors['text_primary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_primary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
                 padding: 8px;
             }}
@@ -1211,11 +1211,21 @@ class FileDetailsDialog(QDialog):
         # Update file_data dictionary
         self.file_data.update(updated_metadata)
 
-        # Save to database if parent has database instances
+        # Save to database - traverse parent chain to find database instances
         try:
-            if self.parent() and hasattr(self.parent(), "analysis_db"):
-                analysis_db = self.parent().analysis_db
-                metadata_db = self.parent().metadata_db
+            # Find parent widget with database instances
+            parent_widget = self.parent()
+            analysis_db = None
+            metadata_db = None
+
+            while parent_widget:
+                if hasattr(parent_widget, "analysis_db") and hasattr(parent_widget, "metadata_db"):
+                    analysis_db = parent_widget.analysis_db
+                    metadata_db = parent_widget.metadata_db
+                    break
+                parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+            if analysis_db and metadata_db:
                 file_path = self.file_data.get("full_path")
 
                 if file_path:
@@ -1266,8 +1276,17 @@ class FileDetailsDialog(QDialog):
                 return stored_path
 
         # If stored path doesn't exist or is in temp, search source directories
-        if self.parent() and hasattr(self.parent(), "config_manager"):
-            config_manager = self.parent().config_manager
+        # Traverse parent chain to find config_manager
+        parent_widget = self.parent()
+        config_manager = None
+
+        while parent_widget:
+            if hasattr(parent_widget, "config_manager"):
+                config_manager = parent_widget.config_manager
+                break
+            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+        if config_manager:
             directories = config_manager.get_directories()
 
             # Search for the file by name in all source directories
@@ -1372,8 +1391,8 @@ class FileDetailsGrid(QWidget):
         filter_frame = QWidget()
         filter_frame.setStyleSheet(f"""
             QWidget {{
-                background-color: {self.theme_colors['bg_secondary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_secondary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 8px;
             }}
         """)
@@ -1403,19 +1422,19 @@ class FileDetailsGrid(QWidget):
 
         button_style = f"""
             QPushButton {{
-                background-color: {self.theme_colors['button_bg']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["button_bg"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
                 padding: 4px 10px;
-                color: {self.theme_colors['text_primary']};
+                color: {self.theme_colors["text_primary"]};
                 font-size: 9pt;
             }}
             QPushButton:hover {{
-                background-color: {self.theme_colors['button_hover']};
+                background-color: {self.theme_colors["button_hover"]};
             }}
             QPushButton:checked {{
-                background-color: {self.theme_colors['accent']};
-                border-color: {self.theme_colors['accent']};
+                background-color: {self.theme_colors["accent"]};
+                border-color: {self.theme_colors["accent"]};
                 color: white;
                 font-weight: 600;
             }}
@@ -1439,16 +1458,16 @@ class FileDetailsGrid(QWidget):
 
         combo_style = f"""
             QComboBox {{
-                background-color: {self.theme_colors['input_bg']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["input_bg"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
                 padding: 4px 8px;
                 min-width: 120px;
-                color: {self.theme_colors['text_primary']};
+                color: {self.theme_colors["text_primary"]};
                 font-size: 9pt;
             }}
             QComboBox:hover {{
-                background-color: {self.theme_colors['button_hover']};
+                background-color: {self.theme_colors["button_hover"]};
             }}
             QComboBox::drop-down {{
                 border: none;
@@ -1458,14 +1477,14 @@ class FileDetailsGrid(QWidget):
                 image: none;
                 border-left: 4px solid transparent;
                 border-right: 4px solid transparent;
-                border-top: 5px solid {self.theme_colors['text_secondary']};
+                border-top: 5px solid {self.theme_colors["text_secondary"]};
                 margin-right: 5px;
             }}
             QComboBox QAbstractItemView {{
-                background-color: {self.theme_colors['bg_secondary']};
-                color: {self.theme_colors['text_primary']};
-                selection-background-color: {self.theme_colors['accent']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_secondary"]};
+                color: {self.theme_colors["text_primary"]};
+                selection-background-color: {self.theme_colors["accent"]};
+                border: 1px solid {self.theme_colors["border"]};
             }}
         """
 
@@ -1530,15 +1549,15 @@ class FileDetailsGrid(QWidget):
         self.search_input.setPlaceholderText("Search filename, company, type, dates...")
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
-                background-color: {self.theme_colors['input_bg']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["input_bg"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
                 padding: 6px 10px;
                 font-size: 10pt;
-                color: {self.theme_colors['text_primary']};
+                color: {self.theme_colors["text_primary"]};
             }}
             QLineEdit:focus {{
-                border-color: {self.theme_colors['accent']};
+                border-color: {self.theme_colors["accent"]};
             }}
         """)
         self.search_input.textChanged.connect(self._apply_search)
@@ -1546,16 +1565,16 @@ class FileDetailsGrid(QWidget):
 
         action_button_style = f"""
             QPushButton {{
-                background-color: {self.theme_colors['button_bg']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["button_bg"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
                 padding: 6px 12px;
                 font-weight: 600;
-                color: {self.theme_colors['text_primary']};
+                color: {self.theme_colors["text_primary"]};
                 font-size: 9pt;
             }}
             QPushButton:hover {{
-                background-color: {self.theme_colors['button_hover']};
+                background-color: {self.theme_colors["button_hover"]};
             }}
         """
 
@@ -1584,36 +1603,36 @@ class FileDetailsGrid(QWidget):
         self.table_view.setShowGrid(False)
         self.table_view.setStyleSheet(f"""
             QTableView {{
-                background-color: {self.theme_colors['bg_secondary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_secondary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
-                gridline-color: {self.theme_colors['border']};
-                selection-background-color: {self.theme_colors['accent']}40;
-                selection-color: {self.theme_colors['text_primary']};
-                color: {self.theme_colors['text_primary']};
+                gridline-color: {self.theme_colors["border"]};
+                selection-background-color: {self.theme_colors["accent"]}40;
+                selection-color: {self.theme_colors["text_primary"]};
+                color: {self.theme_colors["text_primary"]};
             }}
             QTableView::item {{
                 padding: 6px;
-                border-bottom: 1px solid {self.theme_colors['border']};
+                border-bottom: 1px solid {self.theme_colors["border"]};
             }}
             QTableView::item:selected {{
-                background-color: {self.theme_colors['accent']}40;
+                background-color: {self.theme_colors["accent"]}40;
             }}
             QTableView::item:hover {{
-                background-color: {self.theme_colors['bg_tertiary']};
+                background-color: {self.theme_colors["bg_tertiary"]};
             }}
             QHeaderView::section {{
-                background-color: {self.theme_colors['bg_tertiary']};
-                color: {self.theme_colors['text_primary']};
+                background-color: {self.theme_colors["bg_tertiary"]};
+                color: {self.theme_colors["text_primary"]};
                 font-weight: 600;
                 padding: 8px;
                 border: none;
-                border-bottom: 2px solid {self.theme_colors['border']};
-                border-right: 1px solid {self.theme_colors['border']};
+                border-bottom: 2px solid {self.theme_colors["border"]};
+                border-right: 1px solid {self.theme_colors["border"]};
                 font-size: 9pt;
             }}
             QHeaderView::section:hover {{
-                background-color: {self.theme_colors['button_hover']};
+                background-color: {self.theme_colors["button_hover"]};
             }}
         """)
 
@@ -1640,8 +1659,8 @@ class FileDetailsGrid(QWidget):
         status_frame = QWidget()
         status_frame.setStyleSheet(f"""
             QWidget {{
-                background-color: {self.theme_colors['bg_secondary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_secondary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
             }}
         """)

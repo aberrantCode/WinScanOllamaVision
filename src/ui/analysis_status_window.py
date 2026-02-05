@@ -191,15 +191,15 @@ class AnalysisStatusWindow(QDialog):
         self.refresh_btn.setToolTip("Refresh all statistics and data")
         self.refresh_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {self.theme_colors['bg_tertiary']};
-                color: {self.theme_colors['text_primary']};
-                border: 1px solid {self.theme_colors['border']};
+                background-color: {self.theme_colors["bg_tertiary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 4px;
                 padding: 6px 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background-color: {self.theme_colors['tab_hover_bg']};
+                background-color: {self.theme_colors["tab_hover_bg"]};
             }}
         """)
         self.refresh_btn.clicked.connect(self._refresh_all)
@@ -277,7 +277,7 @@ class AnalysisStatusWindow(QDialog):
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll_area.setStyleSheet(f"""
             QScrollArea {{
-                background-color: {self.theme_colors['bg_secondary']};
+                background-color: {self.theme_colors["bg_secondary"]};
                 border: none;
             }}
         """)
@@ -462,7 +462,7 @@ class AnalysisStatusWindow(QDialog):
         scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll_area.setStyleSheet(f"""
             QScrollArea {{
-                background-color: {self.theme_colors['bg_secondary']};
+                background-color: {self.theme_colors["bg_secondary"]};
                 border: none;
             }}
         """)

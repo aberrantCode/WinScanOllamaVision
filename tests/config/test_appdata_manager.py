@@ -302,7 +302,9 @@ class TestAppDataManager:
         # Verify table exists
         with sqlite3.connect(manager.database_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'")
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'"
+            )
             assert cursor.fetchone() is not None
 
     def test_initialize_database_works_without_template(self, temp_dirs):
@@ -480,7 +482,6 @@ class TestAppDataManager:
         # Assert
         assert path == manager.appdata_dir
         assert "WinScanLLM" in path
-
 
     def test_migrate_database_creates_backup_when_upgrading(self, temp_dirs):
         # Arrange

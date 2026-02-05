@@ -900,7 +900,7 @@ class TestEdgeCases:
         mock_exists.return_value = True
         mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
         # Simulate duplicate files from different glob patterns
-        mock_glob.side_effect = lambda pattern: (["file1.png"] if "*.png" in pattern else [])
+        mock_glob.side_effect = lambda pattern: ["file1.png"] if "*.png" in pattern else []
 
         with patch.object(service, "_analyze_single_page") as mock_analyze:
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}

@@ -114,7 +114,7 @@ class AnalysisRepository:
 
             query = f"""
                 UPDATE analysis_results
-                SET {', '.join(update_fields)}
+                SET {", ".join(update_fields)}
                 WHERE file_path = ?
             """
 

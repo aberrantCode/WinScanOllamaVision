@@ -53,7 +53,7 @@ class TestFullWorkflow:
         """Create test image files"""
         image_files = []
         for i in range(3):
-            img_path = os.path.join(temp_dir, f"page_{i+1}.png")
+            img_path = os.path.join(temp_dir, f"page_{i + 1}.png")
             Path(img_path).touch()
             image_files.append(img_path)
         return image_files
