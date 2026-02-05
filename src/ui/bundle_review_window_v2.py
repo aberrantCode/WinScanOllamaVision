@@ -1498,8 +1498,10 @@ class BundleReviewWindow(QDialog):
 
     def _on_save_bundle(self):
         """Save bundle."""
-        # Save metadata edits
+        # Save metadata edits (immutable pattern)
         if self.current_page_index < len(self.bundle_data.get("analyses", [])):
+            # Collect all edits
+            edits = {}
             for field_name, input_widget in self.metadata_inputs.items():
                 # Get value based on widget type
                 if isinstance(input_widget, QCheckBox):
@@ -1508,8 +1510,22 @@ class BundleReviewWindow(QDialog):
                     value = input_widget.currentText()
                 else:  # QLineEdit or other text widgets
                     value = input_widget.text()
+                edits[field_name] = value
 
-                self.bundle_data["analyses"][self.current_page_index][field_name] = value
+            # Create new analyses list with updated analysis (immutable)
+            new_analyses = []
+            for i, analysis in enumerate(self.bundle_data["analyses"]):
+                if i == self.current_page_index:
+                    # Create new analysis dict with updates
+                    new_analyses.append({**analysis, **edits})
+                else:
+                    new_analyses.append(analysis)
+
+            # Update bundle_data immutably
+            self.bundle_data = {
+                **self.bundle_data,
+                "analyses": new_analyses,
+            }
 
         remaining_paths = [
             fp for i, fp in enumerate(self.bundle_data["file_paths"]) if i not in self.removed_pages
