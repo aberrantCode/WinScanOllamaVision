@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(git commit:*)",
-      "Bash(bandit:*)"
+      "Bash(bandit:*)",
+      "Bash(ruff format:*)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

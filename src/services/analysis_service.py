@@ -145,6 +145,12 @@ class AnalysisService:
             for idx, (_, image_path) in enumerate(all_files):
                 current = idx + 1
 
+                # Check for cancellation BEFORE starting each file
+                # This allows immediate cancellation without waiting for current file to finish
+                if abort_check and abort_check():
+                    self._log("[SCAN] Abort detected before starting file, stopping immediately")
+                    raise InterruptedError("Analysis aborted by user")
+
                 if progress_callback:
                     progress_callback(
                         f"Analyzing {os.path.basename(image_path)}...",
@@ -306,27 +312,34 @@ class AnalysisService:
         Args:
             file_paths: List of file paths to analyze
             force_reanalysis: If True, re-analyze even if cached
-            progress_callback: Optional progress callback
+            progress_callback: Optional progress callback (should raise InterruptedError if cancelled)
 
         Returns:
             Dictionary with analysis statistics
         """
         stats = {"total_files": len(file_paths), "analyzed": 0, "cached": 0, "errors": 0}
 
-        for i, file_path in enumerate(file_paths):
-            if progress_callback:
-                progress_callback(
-                    f"Analyzing {os.path.basename(file_path)}...", i + 1, stats["total_files"]
-                )
+        try:
+            for i, file_path in enumerate(file_paths):
+                if progress_callback:
+                    # Progress callback will raise InterruptedError if cancelled
+                    progress_callback(
+                        f"Analyzing {os.path.basename(file_path)}...", i + 1, stats["total_files"]
+                    )
 
-            result = self._analyze_single_page(file_path, incremental=not force_reanalysis)
+                result = self._analyze_single_page(file_path, incremental=not force_reanalysis)
 
-            if result["cached"]:
-                stats["cached"] += 1
-            elif result["success"]:
-                stats["analyzed"] += 1
-            else:
-                stats["errors"] += 1
+                if result["cached"]:
+                    stats["cached"] += 1
+                elif result["success"]:
+                    stats["analyzed"] += 1
+                else:
+                    stats["errors"] += 1
+
+        except InterruptedError:
+            # Analysis was cancelled - return partial results
+            self._log("[ANALYZE_SPECIFIC] Analysis cancelled by user")
+            raise  # Re-raise to let caller handle it
 
         return stats
 

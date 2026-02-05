@@ -474,9 +474,10 @@ class FileDetailsDialog(QDialog):
 
     re_analyze_requested = pyqtSignal(str)  # Emits file path
 
-    def __init__(self, file_data: dict[str, Any], parent=None):
+    def __init__(self, file_data: dict[str, Any], parent=None, analysis_db=None):
         super().__init__(parent)
         self.file_data = file_data
+        self.analysis_db = analysis_db  # Store database reference
         self.setWindowTitle(
             f"File Details - {os.path.basename(file_data.get('filename', 'Unknown'))}"
         )
@@ -934,6 +935,20 @@ class FileDetailsDialog(QDialog):
         add_row("File Hash", self.file_data.get("file_hash", "N/A"))
         return widget
 
+    def _get_distinct_values(self, field_name):
+        """Get distinct values for a field from database."""
+        if not self.analysis_db:
+            return []
+
+        try:
+            # Get distinct values from analysis_db
+            query = f"SELECT DISTINCT {field_name} FROM analyses WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
+            result = self.analysis_db.conn.execute(query).fetchall()
+            return [row[0] for row in result if row[0]]
+        except Exception as e:
+            print(f"Error getting distinct values for {field_name}: {e}")
+            return []
+
     def _create_metadata_content(self):
         """Create extracted metadata content widget with editable fields."""
         from PyQt6.QtWidgets import QComboBox, QLineEdit
@@ -946,7 +961,14 @@ class FileDetailsDialog(QDialog):
         # Store references to input fields for later saving
         self.metadata_inputs = {}
 
-        def add_editable_row(label, field_name, current_value, placeholder="", widget_type="text"):
+        def add_editable_row(
+            label,
+            field_name,
+            current_value,
+            placeholder="",
+            widget_type="text",
+            distinct_values=None,
+        ):
             """Add a row with editable field."""
             row = QWidget()
             row_layout = QHBoxLayout(row)
@@ -1020,6 +1042,38 @@ class FileDetailsDialog(QDialog):
                         selection-background-color: {self.theme_colors["accent"]};
                     }}
                 """)
+            elif widget_type == "editable_dropdown":
+                input_widget = QComboBox()
+                input_widget.setEditable(True)  # Allow typing new values
+
+                # Add distinct values from database
+                if distinct_values:
+                    input_widget.addItems(sorted(distinct_values))
+
+                # Set current value
+                if current_value:
+                    input_widget.setCurrentText(str(current_value))
+
+                input_widget.setStyleSheet(f"""
+                    QComboBox {{
+                        background-color: {self.theme_colors["bg_primary"]};
+                        color: {self.theme_colors["text_primary"]};
+                        border: 1px solid {self.theme_colors["border"]};
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                    }}
+                    QComboBox:focus {{
+                        border: 1px solid {self.theme_colors["accent"]};
+                    }}
+                    QComboBox::drop-down {{
+                        border: none;
+                    }}
+                    QComboBox QAbstractItemView {{
+                        background-color: {self.theme_colors["bg_primary"]};
+                        color: {self.theme_colors["text_primary"]};
+                        selection-background-color: {self.theme_colors["accent"]};
+                    }}
+                """)
             else:
                 input_widget = QLineEdit()
                 input_widget.setText(
@@ -1057,16 +1111,27 @@ class FileDetailsDialog(QDialog):
             if rotation_match:
                 rotation_value = rotation_match.group(1).strip()
 
+        # Get distinct values from database
+        distinct_document_types = self._get_distinct_values("document_type")
+        distinct_companies = self._get_distinct_values("company")
+
         # Add all metadata fields (always show all fields, even if empty)
         add_editable_row(
             "Document Type",
             "document_type",
             self.file_data.get("document_type"),
             "e.g., invoice, receipt, contract",
+            widget_type="editable_dropdown",
+            distinct_values=distinct_document_types,
         )
 
         add_editable_row(
-            "Company", "company", self.file_data.get("company"), "Company or organization name"
+            "Company",
+            "company",
+            self.file_data.get("company"),
+            "Company or organization name",
+            widget_type="editable_dropdown",
+            distinct_values=distinct_companies,
         )
 
         add_editable_row(
@@ -1375,8 +1440,11 @@ class FileDetailsGrid(QWidget):
 
     re_analyze_requested = pyqtSignal(list)  # Emits list of file paths
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, analysis_db=None):
         super().__init__(parent)
+
+        # Store database reference
+        self.analysis_db = analysis_db
 
         # Get theme from parent
         self.is_dark_mode = False
@@ -2144,7 +2212,7 @@ class FileDetailsGrid(QWidget):
         row_data = self.model.get_row_data(source_index.row())
 
         if row_data:
-            dialog = FileDetailsDialog(row_data, self)
+            dialog = FileDetailsDialog(row_data, self, analysis_db=self.analysis_db)
             dialog.re_analyze_requested.connect(lambda path: self.re_analyze_requested.emit([path]))
             dialog.exec()
 

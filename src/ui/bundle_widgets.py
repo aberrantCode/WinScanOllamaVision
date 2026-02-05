@@ -7,8 +7,9 @@ import os
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QCursor, QPixmap
 from PyQt6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -17,6 +18,296 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class ClickableLabel(QLabel):
+    """QLabel that emits a clicked signal"""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class EnlargedPagesDialog(QDialog):
+    """Dialog to display enlarged pages from a bundle with navigation"""
+
+    def __init__(self, file_paths: list[str], analysis_db=None, parent=None):
+        super().__init__(parent)
+        self.file_paths = file_paths
+        self.current_page_index = 0
+        self.page_widgets = []  # Store references to page widgets for scrolling
+        # Get analysis_db for metadata tooltips
+        if analysis_db is None:
+            from db.analysis_db import AnalysisDB
+            self.analysis_db = AnalysisDB()
+        else:
+            self.analysis_db = analysis_db
+        self.setWindowTitle("Bundle Pages - Enlarged View")
+        self.setMinimumSize(800, 600)
+        self._init_ui()
+
+    def _init_ui(self):
+        """Initialize the dialog UI"""
+        layout = QVBoxLayout(self)
+
+        # Header with navigation and close button
+        header_layout = QHBoxLayout()
+
+        # Title
+        title_label = QLabel(f"<b>Bundle Pages</b> ({len(self.file_paths)} page(s))")
+        title_label.setStyleSheet("font-size: 14px;")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        nav_layout.setSpacing(10)
+
+        self.prev_button = QPushButton("◀ Previous")
+        self.prev_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+            QPushButton:disabled {
+                background-color: #9CA3AF;
+            }
+        """)
+        self.prev_button.clicked.connect(self._go_to_previous)
+        self.prev_button.setEnabled(False)  # Disabled on first page
+        nav_layout.addWidget(self.prev_button)
+
+        self.page_indicator = QLabel(f"Page 1 of {len(self.file_paths)}")
+        self.page_indicator.setStyleSheet("font-size: 12px; padding: 0 10px;")
+        nav_layout.addWidget(self.page_indicator)
+
+        self.next_button = QPushButton("Next ▶")
+        self.next_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+            QPushButton:disabled {
+                background-color: #9CA3AF;
+            }
+        """)
+        self.next_button.clicked.connect(self._go_to_next)
+        self.next_button.setEnabled(len(self.file_paths) > 1)
+        nav_layout.addWidget(self.next_button)
+
+        header_layout.addLayout(nav_layout)
+        header_layout.addSpacing(20)
+
+        close_button = QPushButton("✕ Close")
+        close_button.setStyleSheet("""
+            QPushButton {
+                background-color: #DC2626;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #B91C1C;
+            }
+        """)
+        close_button.clicked.connect(self.close)
+        header_layout.addWidget(close_button)
+
+        layout.addLayout(header_layout)
+
+        # Scrollable area for pages
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Container for pages
+        pages_container = QWidget()
+        self.pages_layout = QHBoxLayout(pages_container)
+        self.pages_layout.setSpacing(15)
+        self.pages_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        # Add each page at 400px+ width
+        for i, file_path in enumerate(self.file_paths):
+            page_widget = self._create_enlarged_page(file_path, i + 1)
+            self.pages_layout.addWidget(page_widget)
+            self.page_widgets.append(page_widget)
+
+        self.scroll_area.setWidget(pages_container)
+        layout.addWidget(self.scroll_area)
+
+    def _create_enlarged_page(self, file_path: str, page_num: int) -> QWidget:
+        """Create an enlarged page widget scaled to fit dialog height"""
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(5)
+
+        # Get metadata for tooltip
+        metadata_tooltip = self._format_metadata_tooltip(file_path)
+
+        # Page label
+        page_label = QLabel(f"<b>Page {page_num}</b>")
+        page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        page_label.setStyleSheet("font-size: 12px; color: #333;")
+        page_label.setToolTip(metadata_tooltip)
+        container_layout.addWidget(page_label)
+
+        # Image label
+        image_label = QLabel()
+        image_label.setStyleSheet("""
+            border: 2px solid #CCCCCC;
+            background-color: #F8F8F8;
+        """)
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setToolTip(metadata_tooltip)
+
+        try:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                # Calculate target height for maximized window
+                # Leave room for header (~80px) + page label (~30px) + filename (~30px) + margins (~60px) = ~200px
+                # For a 1080p display (1920x1080), this gives ~880px for image
+                # Use 85% of screen height as target, which works well for most displays
+                from PyQt6.QtWidgets import QApplication
+                screen = QApplication.primaryScreen()
+                if screen:
+                    screen_height = screen.availableGeometry().height()
+                    target_height = int(screen_height * 0.75)  # 75% of screen height
+                else:
+                    target_height = 800  # Fallback if screen info unavailable
+
+                # Scale to fit height, maintaining aspect ratio
+                scaled_pixmap = pixmap.scaledToHeight(
+                    target_height, Qt.TransformationMode.SmoothTransformation
+                )
+                image_label.setPixmap(scaled_pixmap)
+                image_label.setFixedSize(scaled_pixmap.size())
+            else:
+                image_label.setText("No Preview Available")
+                image_label.setMinimumSize(400, 500)
+                image_label.setStyleSheet("""
+                    border: 2px solid #CCCCCC;
+                    background-color: #F8F8F8;
+                    color: #999;
+                    font-size: 14px;
+                """)
+        except Exception as e:
+            image_label.setText(f"Error loading image:\n{e}")
+            image_label.setMinimumSize(400, 500)
+            image_label.setStyleSheet("color: red; font-size: 12px;")
+
+        container_layout.addWidget(image_label)
+
+        # Filename label
+        filename_label = QLabel(os.path.basename(file_path))
+        filename_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        filename_label.setStyleSheet("font-size: 10px; color: #666;")
+        filename_label.setWordWrap(True)
+        container_layout.addWidget(filename_label)
+
+        return container
+
+    def _go_to_previous(self):
+        """Navigate to previous page"""
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            self._scroll_to_current_page()
+            self._update_navigation()
+
+    def _go_to_next(self):
+        """Navigate to next page"""
+        if self.current_page_index < len(self.file_paths) - 1:
+            self.current_page_index += 1
+            self._scroll_to_current_page()
+            self._update_navigation()
+
+    def _scroll_to_current_page(self):
+        """Scroll to the current page"""
+        if self.current_page_index < len(self.page_widgets):
+            target_widget = self.page_widgets[self.current_page_index]
+            # Scroll to make the target widget visible
+            self.scroll_area.ensureWidgetVisible(target_widget)
+
+    def _update_navigation(self):
+        """Update navigation button states and page indicator"""
+        self.prev_button.setEnabled(self.current_page_index > 0)
+        self.next_button.setEnabled(self.current_page_index < len(self.file_paths) - 1)
+        self.page_indicator.setText(f"Page {self.current_page_index + 1} of {len(self.file_paths)}")
+
+    def _format_metadata_tooltip(self, file_path: str) -> str:
+        """Format metadata from analysis database as a readable tooltip"""
+        try:
+            # Get analysis results from database
+            analysis = self.analysis_db.get_analysis(file_path)
+            if not analysis:
+                return "No metadata available"
+
+            # Extract metadata fields
+            filename = os.path.basename(file_path)
+            company = analysis.get("company") or "N/A"
+            doc_type = analysis.get("document_type") or "N/A"
+            doc_date = analysis.get("document_date") or "N/A"
+            tax_related = "Yes" if analysis.get("tax_related") else "No"
+            page_num = analysis.get("page_number") or "N/A"
+            total_pages = analysis.get("total_pages") or "N/A"
+            confidence = analysis.get("confidence_score", 0.0)
+            legibility = analysis.get("legibility") or "N/A"
+            rotation = analysis.get("rotation_needed") or "N/A"
+
+            # Format as multi-line tooltip
+            tooltip = f"""<b>{filename}</b><br>
+<br>
+<b>Document Info:</b><br>
+• Company: {company}<br>
+• Type: {doc_type}<br>
+• Date: {doc_date}<br>
+• Tax Related: {tax_related}<br>
+<br>
+<b>Page Info:</b><br>
+• Page: {page_num} of {total_pages}<br>
+• Legibility: {legibility}<br>
+• Rotation: {rotation}<br>
+• Confidence: {confidence:.1%}<br>
+"""
+            return tooltip
+        except Exception as e:
+            return f"Error loading metadata: {e}"
+
+    def keyPressEvent(self, event):
+        """Handle keyboard navigation"""
+        from PyQt6.QtCore import Qt
+
+        if event.key() == Qt.Key.Key_Left or event.key() == Qt.Key.Key_Up:
+            self._go_to_previous()
+        elif event.key() == Qt.Key.Key_Right or event.key() == Qt.Key.Key_Down:
+            self._go_to_next()
+        elif event.key() == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
 
 
 class BundleSuggestionCard(QFrame):
@@ -31,6 +322,9 @@ class BundleSuggestionCard(QFrame):
     def __init__(self, bundle_data: dict[str, Any], parent=None):
         super().__init__(parent)
         self.bundle_data = bundle_data
+        # Import here to avoid circular imports
+        from db.analysis_db import AnalysisDB
+        self.analysis_db = AnalysisDB()
         self._init_ui()
 
     def _init_ui(self):
@@ -184,20 +478,34 @@ class BundleSuggestionCard(QFrame):
         layout.addLayout(button_layout)
 
     def _create_thumbnail(self, file_path: str, label_text: str) -> QWidget:
-        """Create a thumbnail widget for a page"""
+        """Create a thumbnail widget for a page with metadata tooltip and click-to-enlarge"""
         container = QWidget()
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(2)
 
-        # Thumbnail image
-        thumbnail_label = QLabel()
+        # Thumbnail image (clickable)
+        thumbnail_label = ClickableLabel()
         thumbnail_label.setFixedSize(80, 100)
         thumbnail_label.setStyleSheet("""
-            border: 1px solid #CCCCCC;
-            background-color: #F8F8F8;
+            ClickableLabel {
+                border: 1px solid #CCCCCC;
+                background-color: #F8F8F8;
+            }
+            ClickableLabel:hover {
+                border: 2px solid #2563EB;
+                background-color: #EFF6FF;
+            }
         """)
         thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Get metadata for tooltip
+        metadata_tooltip = self._format_metadata_tooltip(file_path)
+        combined_tooltip = f"{metadata_tooltip}<br><br><i>Click to enlarge all pages in this bundle</i>"
+        thumbnail_label.setToolTip(combined_tooltip)
+
+        # Connect click to show enlarged pages
+        thumbnail_label.clicked.connect(lambda: self._show_enlarged_pages())
 
         try:
             pixmap = QPixmap(file_path)
@@ -227,9 +535,49 @@ class BundleSuggestionCard(QFrame):
         page_label = QLabel(label_text)
         page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         page_label.setStyleSheet("font-size: 9px; color: #666;")
+        page_label.setToolTip(combined_tooltip)  # Also add tooltip to label
         container_layout.addWidget(page_label)
 
         return container
+
+    def _format_metadata_tooltip(self, file_path: str) -> str:
+        """Format metadata from analysis database as a readable tooltip"""
+        try:
+            # Get analysis results from database
+            analysis = self.analysis_db.get_analysis(file_path)
+            if not analysis:
+                return "No metadata available"
+
+            # Extract metadata fields
+            filename = os.path.basename(file_path)
+            company = analysis.get("company") or "N/A"
+            doc_type = analysis.get("document_type") or "N/A"
+            doc_date = analysis.get("document_date") or "N/A"
+            tax_related = "Yes" if analysis.get("tax_related") else "No"
+            page_num = analysis.get("page_number") or "N/A"
+            total_pages = analysis.get("total_pages") or "N/A"
+            confidence = analysis.get("confidence_score", 0.0)
+            legibility = analysis.get("legibility") or "N/A"
+            rotation = analysis.get("rotation_needed") or "N/A"
+
+            # Format as multi-line tooltip
+            tooltip = f"""<b>{filename}</b><br>
+<br>
+<b>Document Info:</b><br>
+• Company: {company}<br>
+• Type: {doc_type}<br>
+• Date: {doc_date}<br>
+• Tax Related: {tax_related}<br>
+<br>
+<b>Page Info:</b><br>
+• Page: {page_num} of {total_pages}<br>
+• Legibility: {legibility}<br>
+• Rotation: {rotation}<br>
+• Confidence: {confidence:.1%}<br>
+"""
+            return tooltip
+        except Exception as e:
+            return f"Error loading metadata: {e}"
 
     def _on_accept(self):
         """Handle accept button click"""
@@ -242,6 +590,16 @@ class BundleSuggestionCard(QFrame):
     def _on_reject(self):
         """Handle reject button click"""
         self.rejected.emit(self.bundle_data)
+
+    def _show_enlarged_pages(self):
+        """Show enlarged view of all pages in this bundle (maximized and fit to height)"""
+        file_paths = self.bundle_data.get("file_paths", [])
+        if not file_paths:
+            return
+
+        dialog = EnlargedPagesDialog(file_paths, self.analysis_db, self)
+        dialog.showMaximized()
+        dialog.exec()
 
 
 class BundleSuggestionsView(QWidget):
