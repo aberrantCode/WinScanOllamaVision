@@ -211,8 +211,6 @@ class ProgressBannerWidget(QWidget):
             self.setFixedHeight(120)
             self.details_toggled.emit(False)
 
-        self.details_toggled.emit(self.details_expanded)
-
     def update_progress(self, current: int, total: int, status_text: str = ""):
         """Update progress display"""
         if total > 0:
@@ -1706,7 +1704,8 @@ class ConvertImagesWindow(QMainWindow):
         self._setup_keyboard_shortcuts()
 
         # Auto-start import scans after UI is initialized
-        QTimer.singleShot(100, self._scan_and_group)
+        # Start immediately to reduce perceived loading time
+        QTimer.singleShot(0, self._scan_and_group)
 
     def _init_ui(self):
         """Initialize the three-step workflow UI"""
@@ -1930,8 +1929,8 @@ class ConvertImagesWindow(QMainWindow):
         self.last_ollama_response = None
         self.last_ollama_response_type = ""
 
-        # Initialize with loading UI (will transition to Step 1 after scan completes)
-        self._setup_loading_ui()
+        # Don't show loading UI - let bundle suggestions appear immediately
+        # The bundle view will be shown directly by _load_and_show_bundle_suggestions
 
     def _setup_zoom_controls(self):
         """Create enhanced zoom control toolbar overlaid on large preview (Phase 8)"""
@@ -3927,39 +3926,48 @@ class ConvertImagesWindow(QMainWindow):
             self.current_group = []
             self.completed_groups = []
 
-            # Phase 7: Setup Step 1 UI first (needed for layout structure)
-            self._setup_step1_ui()
+            # Phase 7: Don't setup Step 1 UI yet - wait for bundle suggestions first
+            # Keep initial minimal UI state until we know if we have bundles
+            # _setup_step1_ui() will be called when entering manual workflow
 
-            # Check if files need analysis before bundling
-            unanalyzed_files = []
+            # Filter to only include files that have already been analyzed
+            # Convert Scans should only work with pre-analyzed files
+            analyzed_files = []
+            unanalyzed_count = 0
             for file_path in self.all_files:
-                if not self.analysis_db.get_analysis(file_path):
-                    unanalyzed_files.append(file_path)
+                if self.analysis_db.get_analysis(file_path):
+                    analyzed_files.append(file_path)
+                else:
+                    unanalyzed_count += 1
 
-            if unanalyzed_files:
-                # Trigger analysis for unanalyzed files
+            if not analyzed_files:
+                # No analyzed files found
+                show_information(
+                    self,
+                    "No Analyzed Files",
+                    f"Found {len(self.all_files)} file(s) but none have been analyzed yet.\n\n"
+                    "Please use the Analysis Status window to analyze files first,\n"
+                    "then return here to create document bundles.",
+                )
+                self.status_label.setText("No analyzed files available.")
+                return
+
+            # Use only analyzed files for bundling
+            self.all_files = analyzed_files
+
+            if unanalyzed_count > 0:
                 self.status_label.setText(
-                    f"Found {len(self.all_files)} file(s). Analyzing {len(unanalyzed_files)} unanalyzed file(s)..."
+                    f"Found {len(analyzed_files)} analyzed file(s) ({unanalyzed_count} unanalyzed files skipped). Generating bundle suggestions..."
                 )
-                print(
-                    f"[ConvertImages] Analyzing {len(unanalyzed_files)} unanalyzed files before bundling"
-                )
-
-                # Start analysis service
-                self.analysis_worker = SpecificFilesAnalysisWorker(
-                    self.analysis_service, unanalyzed_files
-                )
-                self.analysis_worker.progress.connect(self._on_analysis_progress)
-                self.analysis_worker.finished.connect(
-                    self._on_analysis_complete_proceed_to_bundling
-                )
-                self.analysis_worker.start()
             else:
-                # All files already analyzed, proceed to bundling
                 self.status_label.setText(
-                    f"Found {len(self.all_files)} file(s). Generating bundle suggestions..."
+                    f"Found {len(analyzed_files)} analyzed file(s). Generating bundle suggestions..."
                 )
-                self._load_and_show_bundle_suggestions()
+
+            print(f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling")
+
+            # Generate bundle suggestions immediately (no analysis needed)
+            self._load_and_show_bundle_suggestions()
 
         except Exception as e:
             show_critical(self, "Error Scanning", f"An error occurred: {e}")
@@ -5599,12 +5607,14 @@ Files being sent to Ollama:
                     or self.bundle_suggestions_view is None
                 ):
                     print("[Bundle Suggestions] ERROR: bundle_suggestions_view not initialized!")
+                    self._setup_step1_ui()
                     self._show_manual_view()
                     self._load_next_page_for_stitching()
                     return
+
+                print(f"[Bundle Suggestions] Showing bundle view with {len(bundles)} suggestions")
                 self._show_bundle_view()
                 self.bundle_suggestions_view.set_bundles(bundles)
-                print(f"[Bundle Suggestions] Showing {len(bundles)} suggestions")
                 self.status_label.setText(
                     f"Found {len(bundles)} bundle suggestion(s). Review and accept/modify/reject each."
                 )
@@ -5870,6 +5880,23 @@ Files being sent to Ollama:
         """Show bundle suggestions view and hide three-column layout"""
         print("[Bundle View] Showing bundle suggestions view")
 
+        # Stop and clear any loading UI
+        if hasattr(self, "loading_spinner_timer") and self.loading_spinner_timer.isActive():
+            self.loading_spinner_timer.stop()
+
+        # Clear loading UI from preview area
+        if hasattr(self, "large_preview_label"):
+            old_layout = self.large_preview_label.layout()
+            if old_layout:
+                # Remove all widgets from the layout
+                while old_layout.count():
+                    item = old_layout.takeAt(0)
+                    if item.widget():
+                        item.widget().deleteLater()
+                # Delete the layout itself
+                QWidget().setLayout(old_layout)
+            self.large_preview_label.clear()
+
         # Show bundle suggestions view
         self.bundle_suggestions_view.setVisible(True)
 
@@ -5905,6 +5932,10 @@ Files being sent to Ollama:
     def _on_skip_to_manual_workflow(self):
         """Skip bundle suggestions and go to manual stitching"""
         print("[Bundle] Skipping to manual workflow")
+
+        # Setup Step 1 UI if not already done
+        if self.current_step != WorkflowStep.STITCHING:
+            self._setup_step1_ui()
 
         # Show manual view
         self._show_manual_view()
@@ -6516,22 +6547,31 @@ class SpecificFilesAnalysisWorker(QThread):
     progress = pyqtSignal(str, int, int)
     finished = pyqtSignal(dict)
 
-    def __init__(self, analysis_service, file_paths):
+    def __init__(self, config_manager, file_paths):
         super().__init__()
-        self.analysis_service = analysis_service
+        self.config_manager = config_manager
         self.file_paths = file_paths
         self._cancelled = False
 
     def run(self):
         """Run analysis for specific files in background thread"""
         try:
+            # Create fresh database connections in this worker thread
+            # SQLite connections cannot be shared across threads
+            from db.analysis_db import AnalysisDB
+            from db.metadata_db import MetadataDB
+            from services.analysis_service import AnalysisService
+
+            analysis_db = AnalysisDB()
+            metadata_db = MetadataDB()
+            analysis_service = AnalysisService(self.config_manager, analysis_db, metadata_db)
 
             def progress_callback(status_text, current, total):
                 if self._cancelled:
                     raise InterruptedError("Analysis cancelled by user")
                 self.progress.emit(status_text, current, total)
 
-            stats = self.analysis_service.analyze_specific_files(
+            stats = analysis_service.analyze_specific_files(
                 file_paths=self.file_paths,
                 force_reanalysis=False,
                 progress_callback=progress_callback,
