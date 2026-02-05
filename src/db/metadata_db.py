@@ -1,0 +1,167 @@
+"""
+Refactored MetadataDB - thin wrapper around repositories.
+
+Maintains existing API while delegating to focused repository classes.
+"""
+
+import hashlib
+from typing import Any
+
+from db.connection import DatabaseConnection, get_appdata_db_path
+from db.repositories import MetadataRepository, RotationRepository
+from db.schema import create_all_tables
+
+
+class MetadataDB:
+    """Manages SQLite database for page metadata caching and archival."""
+
+    def __init__(self, db_path: str = None):
+        """
+        Initialize metadata database connection.
+
+        Args:
+            db_path: Path to SQLite database file. If None, uses AppData directory.
+        """
+        if db_path is None:
+            db_path = get_appdata_db_path()
+
+        self.db_path = db_path
+        self.connection = DatabaseConnection(db_path)
+
+        # Create tables
+        create_all_tables(self.connection)
+
+        # Initialize repositories
+        self._metadata = MetadataRepository(self.connection)
+        self._rotation = RotationRepository(self.connection)
+
+        # Field history cache
+        self._companies_cache = None
+        self._titles_cache = None
+
+    @staticmethod
+    def compute_file_hash(file_path: str) -> str:
+        """
+        Compute SHA-256 hash of file.
+
+        Args:
+            file_path: Path to file
+
+        Returns:
+            Hexadecimal hash string
+        """
+        sha256_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+
+    def save_metadata(
+        self,
+        file_path: str,
+        metadata: dict[str, Any],
+        model_used: str = None,
+        processing_time_ms: int = None,
+    ) -> None:
+        """Save or update metadata for a file."""
+        self._metadata.save_metadata(file_path, metadata, model_used, processing_time_ms)
+
+    def get_metadata(self, file_path: str) -> dict[str, Any] | None:
+        """Retrieve metadata for a file."""
+        return self._metadata.get_metadata(file_path)
+
+    def delete_metadata(self, file_path: str) -> None:
+        """Delete metadata for a file."""
+        self._metadata.delete_metadata(file_path)
+
+    def archive_document(
+        self, pdf_path: str, source_files: list[str], document_metadata: dict[str, Any]
+    ) -> None:
+        """Archive metadata for a completed document."""
+        self._metadata.archive_document(pdf_path, source_files, document_metadata)
+        self.invalidate_field_history_cache()
+
+    def get_archived_document(self, pdf_path: str) -> dict[str, Any] | None:
+        """Retrieve archived metadata for a PDF."""
+        return self._metadata.get_archived_document(pdf_path)
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Get database statistics."""
+        return self._metadata.get_statistics()
+
+    def cleanup_orphaned_metadata(self) -> int:
+        """Remove metadata for files that no longer exist."""
+        return self._metadata.cleanup_orphaned_metadata()
+
+    def create_backup(self, backup_path: str | None = None) -> str:
+        """Create database backup."""
+        return self._metadata.create_backup(backup_path)
+
+    def save_rotation(self, file_path: str, rotation_degrees: int) -> None:
+        """Save rotation angle for a file."""
+        self._rotation.save(file_path, rotation_degrees)
+
+    def get_rotation(self, file_path: str) -> int:
+        """Get rotation angle for a file."""
+        return self._rotation.get(file_path)
+
+    def get_unique_companies(self, use_cache: bool = True) -> list[str]:
+        """Get list of unique companies."""
+        if use_cache and self._companies_cache is not None:
+            return self._companies_cache
+
+        cursor = self.connection.connection.cursor()
+        cursor.execute("""
+            SELECT DISTINCT company
+            FROM active_metadata
+            WHERE company IS NOT NULL AND company != ''
+            ORDER BY company
+        """)
+        companies = [row[0] for row in cursor.fetchall()]
+
+        if use_cache:
+            self._companies_cache = companies
+
+        return companies
+
+    def get_unique_titles(self, use_cache: bool = True) -> list[str]:
+        """Get list of unique document types."""
+        if use_cache and self._titles_cache is not None:
+            return self._titles_cache
+
+        cursor = self.connection.connection.cursor()
+        cursor.execute("""
+            SELECT DISTINCT document_type
+            FROM active_metadata
+            WHERE document_type IS NOT NULL AND document_type != ''
+            ORDER BY document_type
+        """)
+        titles = [row[0] for row in cursor.fetchall()]
+
+        if use_cache:
+            self._titles_cache = titles
+
+        return titles
+
+    def invalidate_field_history_cache(self) -> None:
+        """Clear field history cache."""
+        self._companies_cache = None
+        self._titles_cache = None
+
+    def get_schema_version(self) -> int:
+        """Get current database schema version."""
+        from db.schema import get_schema_version
+
+        return get_schema_version(self.connection)
+
+    def close(self):
+        """Close database connection."""
+        self.connection.close()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()

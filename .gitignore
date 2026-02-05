@@ -46,9 +46,27 @@ htmlcov/
 *.log
 *.tmp
 
+# Database files (runtime-generated, should be in AppData)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Configuration files
 settings.ini # Our planned settings file
-.env # Environment variables
+
+# Environment files - NEVER commit
+.env
+.env.*
+!.env.example
+
+# Secrets - NEVER commit
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.json
+service-account*.json
 
 # Ollama-related (if any local store is created in the repo)
 .ollama/

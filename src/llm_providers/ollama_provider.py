@@ -3,22 +3,20 @@ Ollama Provider
 Wraps the existing OllamaService to conform to BaseLLMProvider interface.
 """
 
-import time
 import json
-from typing import Dict, Any, List, Optional
-from .base_provider import BaseLLMProvider
+import time
+from typing import Any
 
 # Import the existing OllamaService
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from ollama_service import OllamaService
+from llm_providers.ollama_service import OllamaService
+
+from .base_provider import BaseLLMProvider
 
 
 class OllamaProvider(BaseLLMProvider):
     """Ollama LLM provider implementation"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """
         Initialize Ollama provider.
 
@@ -29,22 +27,16 @@ class OllamaProvider(BaseLLMProvider):
                 - model: Default model name
         """
         super().__init__(config)
-        self.base_url = config.get('base_url', 'http://localhost:11434')
-        self.timeout = config.get('timeout', 300)
-        self.default_model = config.get('model', 'qwen2.5-vl')
+        self.base_url = config.get("base_url", "http://localhost:11434")
+        self.timeout = config.get("timeout", 300)
+        self.default_model = config.get("model", "qwen2.5-vl")
 
         # Create OllamaService instance
-        self.service = OllamaService(
-            base_url=self.base_url,
-            timeout=float(self.timeout)
-        )
+        self.service = OllamaService(base_url=self.base_url, timeout=float(self.timeout))
 
     def analyze_images(
-        self,
-        image_paths: List[str],
-        prompt: str,
-        model: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, image_paths: list[str], prompt: str, model: str | None = None
+    ) -> dict[str, Any]:
         """
         Analyze images using Ollama vision model.
 
@@ -62,22 +54,19 @@ class OllamaProvider(BaseLLMProvider):
         try:
             # Use the existing chat_with_vision_model method
             response = self.service.chat_with_vision_model(
-                model_name=model_to_use,
-                image_paths=image_paths,
-                prompt=prompt,
-                format_json=True
+                model_name=model_to_use, image_paths=image_paths, prompt=prompt, format_json=True
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
             # Parse response content
-            content = response.get('content', '{}')
+            content = response.get("content", "{}")
 
             # Clean JSON if needed
             content = content.strip()
             if content.startswith("```"):
-                lines = content.split('\n')
-                content = '\n'.join(line for line in lines if not line.strip().startswith("```"))
+                lines = content.split("\n")
+                content = "\n".join(line for line in lines if not line.strip().startswith("```"))
                 content = content.strip()
 
             # Try to parse as JSON
@@ -85,26 +74,26 @@ class OllamaProvider(BaseLLMProvider):
                 metadata = json.loads(content)
             except json.JSONDecodeError:
                 # If not valid JSON, return raw content
-                metadata = {'raw_content': content}
+                metadata = {"raw_content": content}
 
             return {
-                'response': content,
-                'metadata': metadata,
-                'processing_time_ms': processing_time_ms,
-                'model_used': model_to_use,
-                'success': True,
-                'error': None
+                "response": content,
+                "metadata": metadata,
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": True,
+                "error": None,
             }
 
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
             return {
-                'response': '',
-                'metadata': {},
-                'processing_time_ms': processing_time_ms,
-                'model_used': model_to_use,
-                'success': False,
-                'error': str(e)
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": str(e),
             }
 
     def get_default_model(self) -> str:
@@ -116,7 +105,7 @@ class OllamaProvider(BaseLLMProvider):
         """
         return self.default_model
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """
         Get list of available Ollama models.
 
@@ -125,7 +114,7 @@ class OllamaProvider(BaseLLMProvider):
         """
         try:
             models = self.service.list_models()
-            return [model['name'] for model in models]
+            return [model["name"] for model in models]
         except Exception as e:
             print(f"Error listing Ollama models: {e}")
             return []
@@ -143,7 +132,7 @@ class OllamaProvider(BaseLLMProvider):
         except Exception:
             return False
 
-    def validate_config(self) -> tuple[bool, Optional[str]]:
+    def validate_config(self) -> tuple[bool, str | None]:
         """
         Validate Ollama configuration.
 
@@ -159,40 +148,26 @@ class OllamaProvider(BaseLLMProvider):
             return False, "Model name is required"
 
         # Check if base_url is valid
-        if not self.base_url or not self.base_url.startswith('http'):
+        if not self.base_url or not self.base_url.startswith("http"):
             return False, "Invalid base_url (must start with http:// or https://)"
 
         return True, None
 
     # Convenience methods that wrap existing OllamaService functionality
-    def validate_grouping(self, image_paths: List[str], custom_prompt: str = None) -> bool:
+    def validate_grouping(self, image_paths: list[str], custom_prompt: str = None) -> bool:
         """Check if images belong to same document"""
-        return self.service.validate_grouping(
-            self.default_model,
-            image_paths,
-            custom_prompt
-        )
+        return self.service.validate_grouping(self.default_model, image_paths, custom_prompt)
 
     def validate_grouping_with_page_number(
-        self,
-        image_paths: List[str],
-        custom_prompt: str = None
-    ) -> Dict[str, Any]:
+        self, image_paths: list[str], custom_prompt: str = None
+    ) -> dict[str, Any]:
         """Validate grouping and extract metadata"""
         return self.service.validate_grouping_with_page_number(
-            self.default_model,
-            image_paths,
-            custom_prompt
+            self.default_model, image_paths, custom_prompt
         )
 
     def extract_document_info(
-        self,
-        image_paths: List[str],
-        title_keywords: str
-    ) -> Dict[str, Optional[str]]:
+        self, image_paths: list[str], title_keywords: str
+    ) -> dict[str, str | None]:
         """Extract document metadata"""
-        return self.service.extract_document_info(
-            self.default_model,
-            image_paths,
-            title_keywords
-        )
+        return self.service.extract_document_info(self.default_model, image_paths, title_keywords)

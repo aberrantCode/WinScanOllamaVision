@@ -2,415 +2,390 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Skills
+
+Read and follow these skills before writing any code:
+- `.claude/skills/base/SKILL.md` - Universal coding patterns, TDD workflow, atomic todos
+- `.claude/skills/security/SKILL.md` - Security best practices and OWASP patterns
+- `.claude/skills/python/SKILL.md` - Python development with ruff, mypy, pytest
+- `.claude/skills/llm-patterns/SKILL.md` - AI-first application patterns and LLM testing
+- `.claude/skills/session-management/SKILL.md` - Context preservation and state tracking
+- `.claude/skills/project-tooling/SKILL.md` - CLI tooling (gh, vercel, supabase)
+
 ## Project Overview
 
-WinScanLLM is a Python/PyQt6 desktop application for intelligently organizing scanned documents using AI-powered analysis. It supports multiple LLM providers (Ollama, Claude CLI, Gemini CLI), automatically groups scanned pages into documents, extracts metadata via vision models, and creates organized, searchable PDFs.
+**WinScanLLM** - A PyQt6 desktop application for document scanning and analysis using multiple LLM providers (Ollama, Claude CLI, Gemini CLI). The application provides automatic document metadata extraction, batch processing, and intelligent file organization.
 
-**Repository:** https://github.com/aberrantCode/WinScanLLM.git
+**Goals:**
+- Multi-provider LLM integration with unified interface
+- Robust error handling and incremental processing
+- Local-first with AppData storage (databases, logs, settings)
+- Clean architecture with testable components
+
+## Atomic Todos
+
+All work is tracked in `_project_specs/todos/`:
+- `active.md` - Current work
+- `backlog.md` - Future work
+- `completed.md` - Done (for reference)
+
+Every todo must have validation criteria and test cases. See `.claude/skills/base/SKILL.md` for format.
+
+## Session Management
+
+Maintain session state in `_project_specs/session/`:
+- `current-state.md` - Live session state (update every 15-20 tool calls)
+- `decisions.md` - Key architectural/implementation decisions (append-only)
+- `code-landmarks.md` - Important code locations for quick reference
+- `archive/` - Past session summaries
+
+See `.claude/skills/session-management/SKILL.md` for details.
+
+## File Organization (CRITICAL)
+
+**NEVER place new files in the repository root unless absolutely necessary.**
+
+Follow these strict placement rules:
+
+- **Tests** → `/tests` (with subfolder structure mirroring `/src`)
+- **Source code** → `/src` (with package structure as described below)
+- **Scripts & utilities** → `/scripts`
+- **Markdown documentation** → `/docs`
+- **Images & assets** → `/assets`
+- **Databases & import datasets** → `/data`
 
 ## Essential Commands
 
-### Setup & Installation
+### Running the Application
+```powershell
+python src/main.py
+```
+
+### Running Tests
+
+**Test Framework:** This project uses **pytest** (not unittest) for all tests.
+
+```powershell
+# Run all tests with coverage (recommended)
+python run_tests.py tests/
+
+# Run specific test module
+python run_tests.py tests/config/
+
+# Run specific test file
+python run_tests.py tests/config/test_config_manager.py
+
+# Run tests matching pattern
+python run_tests.py tests/ -k "provider"
+
+# Run tests with verbose output
+python run_tests.py tests/ -v
+
+# Run core tests only (config, db, llm_providers)
+python run_tests.py tests/ --ignore=tests/gui --ignore=tests/integration --ignore=tests/services --ignore=tests/prompt
+```
+
+**Note:** The `run_tests.py` script ensures `src/` is in the Python path for correct imports.
+
+### Development Setup
 ```powershell
 # Create virtual environment
 python -m venv venv
-
-# Activate virtual environment (PowerShell)
 .\venv\Scripts\Activate.ps1
-
-# Activate virtual environment (cmd.exe)
-.\venv\Scripts\activate.bat
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Install pre-commit hooks (run once after clone)
+pre-commit install
+pre-commit install --hook-type commit-msg
+
+# Verify tooling
+.\scripts\verify-tooling.ps1
+
+# Run security checks
+.\scripts\security-check.ps1
 ```
 
-### Running the Application
+### Code Quality
 ```powershell
-# Main entry point
-python src/main.py
+# Lint code
+ruff check src/
 
-# Alternative: Direct GUI launch
-python src/gui.py
-```
+# Format code
+ruff format src/
 
-### Testing
-```powershell
-# Run all tests
-python -m unittest discover tests
+# Type check
+mypy src/ --ignore-missing-imports
 
-# Run specific test file
-python -m unittest tests.test_config_manager
-python -m unittest tests.test_file_processor
-python -m unittest tests.test_ollama_service
-
-# Run with verbose output
-python -m unittest discover tests -v
-```
-
-### Development Tools
-```powershell
-# Check for TIFFs that need conversion
-ls "C:\Users\<username>\Pictures\Scans" | Where-Object { $_.Extension -match "\.tiff?$" }
-
-# View application logs
-Get-Content app.log -Tail 50
-
-# Clear logs
-Remove-Item app.log
+# Run all pre-commit hooks manually
+pre-commit run --all-files
 ```
 
 ## Architecture Overview
 
-### Multi-Window GUI Architecture
+### Package Structure
 
-The application uses a multi-window PyQt6 architecture with three main windows:
+The codebase follows a clean package-based structure with **NO compatibility shims**:
 
-1. **StartupWindow** (`src/gui.py`)
-   - Entry point with 4 main buttons
-   - Non-blocking analysis banner with real-time progress
-   - Scanner GIF animation (controlled by analysis state)
-   - Clickable scanner stats widget (opens AnalysisStatusWindow)
-
-2. **ConvertImagesWindow** (`src/gui.py`)
-   - Multi-step document bundling workflow
-   - Workflow steps: BUNDLE_SUGGESTIONS → STITCHING → ANALYSIS → ORDERING → FINALIZATION
-   - Full keyboard navigation support (see docs/keyboard_shortcuts_reference.md)
-   - Thumbnail gallery + center preview split view
-
-3. **ConvertPDFsWindow** (`src/gui.py`)
-   - PDF import and re-analysis workflow
-   - Extracts pages from existing PDFs
-   - Routes pages back through analysis pipeline
-
-### LLM Provider System
-
-**Plugin Architecture** (`src/llm_providers/`):
-- **BaseLLMProvider** (abstract): Defines interface for all providers
-- **OllamaProvider**: Local Ollama server integration (HTTP API)
-- **ClaudeCliProvider**: Claude Code CLI integration via subprocess
-- **GeminiCliProvider**: Google Gemini CLI integration via subprocess
-- **ProviderFactory**: Creates provider instances from config
-
-All providers implement:
-- `analyze_images(image_paths, prompt, model)` → metadata extraction
-- `get_available_models()` → list models
-- `test_connection()` → validate provider availability
-
-**Command Building** (`src/llm_providers/command_builder.py`):
-- Templated command construction for CLI-based providers
-- Variable substitution: `%%MODEL%%`, `%%IMAGE_PATHS%%`, `%%PROMPT%%`
-- Handles shell escaping and path formatting
-
-### Analysis & Caching System
-
-**AnalysisService** (`src/analysis_service.py`):
-- Orchestrates automatic startup analysis of all scan directories
-- Incremental analysis: skips already-cached files (file hash + mtime based)
-- Progress callbacks for real-time UI updates
-- Supports cancellation mid-analysis
-
-**AnalysisDB** (`src/analysis_db.py`):
-- SQLite database for analysis results cache
-- Stores: file paths, hashes, mtimes, analysis results, timestamps
-- Tracks analysis runs for statistics and history
-- Manages source directories (active/inactive state)
-
-**MetadataDB** (`src/metadata_db.py`):
-- SQLite database for document metadata
-- Two tables: `active_metadata` (current processing) and `archive_metadata` (completed)
-- Caches LLM extraction results: company, document_type, document_date, page numbers
-- Field history tracking for autocomplete suggestions
-
-### Bundling System
-
-**BundlingService** (`src/bundling_service.py`):
-- Generates intelligent document bundling recommendations
-- Two grouping strategies:
-  1. Explicit page numbers: Groups files marked as "page X of Y"
-  2. Metadata clustering: Groups by company + document_type + date proximity
-- Confidence scoring based on:
-  - Page number continuity
-  - Metadata consistency
-  - Temporal proximity (file mtimes)
-
-**BundleSuggestionsView** (`src/bundle_widgets.py`):
-- UI for reviewing AI-generated bundle suggestions
-- Card-based layout with preview thumbnails
-- Actions: Accept (auto-finalize), Modify (enter stitching workflow), Reject (exclude)
-- Confidence indicators (High/Medium/Low)
-
-### File Processing Pipeline
-
-**FileProcessor** (`src/file_processor.py`):
-- TIFF → PNG conversion (auto-deletes original TIFF)
-- Timestamp-based file grouping (within N seconds = same document)
-- PDF generation from image sequences
-- OCR integration via PyMuPDF for searchable PDFs
-- File move/rename operations with collision handling
-
-### Configuration System
-
-**ConfigManager** (`src/config_manager.py`):
-- INI-based configuration (stores in AppData/Roaming/WinScanLLM)
-- Sections: `[LLMProvider]`, `[Ollama]`, `[ClaudeCLI]`, `[GeminiCLI]`, `[DocumentProcessing]`, `[AutoAnalysis]`, `[GUI]`
-- Dynamic section creation for new providers
-- Active provider selection + per-provider model configuration
-
-**AppData Structure**:
 ```
-%APPDATA%\WinScanLLM\
-├── settings.ini         # Configuration
-├── metadata.db         # Document metadata cache
-└── analysis_cache.db   # Analysis results cache
+src/
+├── main.py              # Application entry point (ONLY file in root)
+├── config/              # Configuration management
+│   ├── config_manager.py
+│   └── appdata_manager.py
+├── db/                  # Database layer
+│   ├── analysis_db.py
+│   └── metadata_db.py
+├── services/            # Business logic and orchestration
+│   ├── analysis_service.py
+│   ├── file_service.py
+│   ├── bundling_service.py
+│   └── logging_service.py
+├── ui/                  # User interface components
+│   ├── gui.py
+│   ├── analysis_status_window.py
+│   ├── bundle_widgets.py
+│   ├── bundle_workflow_handlers.py  # UI event handler mixin
+│   ├── file_details_grid.py
+│   ├── settings_window_enhanced.py
+│   ├── collection_status_helpers.py
+│   ├── style.py
+│   ├── styles.py
+│   └── style.qss
+└── llm_providers/       # LLM provider implementations
+    ├── base_provider.py
+    ├── provider_factory.py
+    ├── ollama_provider.py
+    ├── ollama_service.py
+    ├── claude_cli_provider.py
+    ├── gemini_cli_provider.py
+    └── command_builder.py
 ```
 
-### UI Components & Styling
+**Import Rules:**
+- All imports MUST use full package paths (e.g., `from ui.gui import StartupWindow`)
+- No relative imports outside of package boundaries
+- No backward-compatibility shims exist in the root
 
-**Styles Module** (`src/styles.py`):
-- Standardized modal dialogs: `show_information()`, `show_warning()`, `show_critical()`, `show_question()`
-- Consistent color scheme and typography
-- Themed message boxes with custom icons
+### Key Architectural Patterns
 
-**ProgressBannerWidget** (`src/gui.py`):
-- Non-modal progress indicator at top of StartupWindow
-- Expandable details panel (current file, elapsed time, success/failure counts)
-- Auto-dismisses on completion (5s delay)
+#### 1. Provider Pattern for LLM Integration
+All LLM providers inherit from `BaseLLMProvider` and implement:
+- `analyze_images(image_paths, prompt, model) -> Dict`
+- `get_available_models() -> List[str]`
+- `test_connection() -> bool`
 
-**AnalysisStatusWindow** (`src/analysis_status_window.py`):
-- Detailed analysis history viewer
-- Run-by-run statistics and logs
-- File-level error inspection
-
-## Key Workflows
-
-### Startup Flow
-1. `src/main.py` initializes AppData directory
-2. Creates StartupWindow (visible immediately)
-3. Spawns AnalysisWorker thread (QThread) to run startup analysis
-4. ProgressBannerWidget shows real-time progress (non-blocking)
-5. Scanner GIF animates during analysis, stops when idle
-6. User can click any of 4 main buttons while analysis runs
-
-### Document Conversion Flow
-1. **Bundle Suggestions** (Step 0):
-   - Load AI-generated bundles from BundlingService
-   - User accepts/modifies/rejects each bundle
-   - Accepted bundles skip manual stitching → go to finalization
-
-2. **Stitching** (Step 1):
-   - Manual page selection from gallery
-   - Space = include, Delete = exclude
-   - Approve bundle → move to analysis
-
-3. **Analysis** (Step 2):
-   - LLM extracts metadata from selected pages
-   - Shows extracted company, document_type, document_date
-   - User can edit/override suggestions
-
-4. **Ordering** (Step 3):
-   - Drag-and-drop page reordering
-   - Arrow keys to reorder selected pages
-   - Approve order → move to finalization
-
-5. **Finalization** (Step 4):
-   - Review final bundle configuration
-   - Customize filename template
-   - Create PDF button → generates searchable PDF
-   - Final confirmation dialog with 3 options:
-     - Accept & Delete Source Files
-     - Accept & Keep Source Files
-     - Reject & Delete PDF
-
-### Configuration Changes
-- Changes to `settings.ini` require app restart to take effect
-- Provider changes trigger re-validation on next analysis
-- Model selection persists per provider
-
-## Important Implementation Details
-
-### Thread Safety
-- Analysis runs in QThread worker (AnalysisWorker)
-- Use `pyqtSignal` for worker → UI communication
-- Never update GUI directly from worker thread
-- All file operations must be thread-safe (SQLite handles this)
-
-### Database Schema Migrations
-- MetadataDB and AnalysisDB auto-create tables on init
-- Schema version tracking in `schema_version` table
-- No automatic migrations yet - handle schema changes manually
-
-### File Hash Caching Strategy
-- Cache key = MD5(file_path) + file_mtime + file_size
-- Changing file mtime invalidates cache (triggers re-analysis)
-- Moving files = new cache entry (different path)
-- Analysis results cached indefinitely (no TTL)
-
-### Provider Command Templates
-- ClaudeCliProvider and GeminiCliProvider use templated commands
-- Variables: `%%MODEL%%`, `%%IMAGE_PATHS%%`, `%%PROMPT%%`
-- Image paths are space-separated, quoted if containing spaces
-- Commands executed via `subprocess.run()` with timeout
-
-### Error Handling Patterns
-- Analysis errors stored in AnalysisDB with error messages
-- UI shows warning banners for failed analyses
-- Partial results still usable (e.g., 45/50 pages analyzed)
-- User can retry failed files via "Retry Failed" button in AnalysisStatusWindow
-
-## Common Development Tasks
-
-### Adding a New LLM Provider
-
-1. Create new provider class in `src/llm_providers/`:
+**Provider contract returns:**
 ```python
-from .base_provider import BaseLLMProvider
-
-class MyNewProvider(BaseLLMProvider):
-    def analyze_images(self, image_paths, prompt, model=None):
-        # Implementation
-        pass
-
-    def get_available_models(self):
-        return ['model1', 'model2']
-
-    def test_connection(self):
-        # Validation logic
-        return True
-```
-
-2. Register in `provider_factory.py`:
-```python
-PROVIDER_CLASSES = {
-    'ollama': OllamaProvider,
-    'claude_cli': ClaudeCliProvider,
-    'gemini_cli': GeminiCliProvider,
-    'my_new': MyNewProvider  # Add here
+{
+    'success': bool,
+    'response': str,           # Full LLM response text
+    'metadata': dict,          # Extracted metadata
+    'processing_time_ms': int,
+    'model_used': str,
+    'provider_name': str,
+    'error': str               # Only if success=False
 }
 ```
 
-3. Add config section in `config_manager.py`:
+Create providers via `ProviderFactory.create_from_config_manager(config_manager)`.
+
+#### 2. Configuration Management
+`ConfigManager` (in `src/config/config_manager.py`) manages all settings via INI file:
+- Defaults to `%APPDATA%/WinScanLLM/settings.ini`
+- Provides type-safe getters: `get_bool()`, `get_int()`, `get_directories()`
+- Provider-specific config via `get_provider_config(provider_name)`
+
+**Key configuration sections:**
+- `LLMProvider` - Active provider selection
+- `Ollama`, `ClaudeCLI`, `GeminiCLI` - Provider-specific settings
+- `AutoAnalysis` - Startup analysis behavior
+- `SourceDirectories` - Scan folder configuration (JSON array)
+- `OutputDirectory` - Output strategy settings
+
+#### 3. Analysis Service Architecture
+`AnalysisService` orchestrates automatic document analysis:
+- Scans configured directories for images (PNG, JPG, JPEG)
+- Uses incremental analysis (cache-aware via file hashing)
+- Saves results to both `AnalysisDB` and `MetadataDB`
+- Provides progress callbacks and abort checking
+- Tracks analysis runs with statistics (analyzed, cached, errors, skipped)
+
+**Key method:** `scan_all_directories(progress_callback, incremental, abort_check)`
+
+#### 4. Database Layer
+Two separate databases:
+- **AnalysisDB** (`db/analysis_db.py`) - Page analysis results, cache, and run tracking
+- **MetadataDB** (`db/metadata_db.py`) - Document metadata and field history
+
+Both use SQLite and include file hash-based caching.
+
+**IMPORTANT:** Database files are stored in the user's AppData directory (`%APPDATA%/WinScanLLM/`), NOT in the source directory. A blank template exists in `/data` for initialization.
+
+#### 5. Logging Service
+Centralized logging using Python's standard `logging` module:
+- **Singleton pattern** - One logger instance across the application
+- **Location:** Logs stored in `%APPDATA%/WinScanLLM/logs/app.log`
+- **Rotating file handler** - 10MB max file size, 5 backups retained
+- **Level-based logging** - DEBUG, INFO, WARNING, ERROR, CRITICAL
+- **Formatted output** - Timestamps, module names, and log levels
+
+**Usage:**
 ```python
-if 'MyNew' not in self.config:
-    self.config['MyNew'] = {
-        'api_key': '',
-        'endpoint': 'https://api.example.com',
-        'default_model': 'model1'
-    }
+from services.logging_service import get_logger
+
+logger = get_logger()
+logger.info("Application started")
+logger.error("Error occurred", exc_info=True)  # Includes traceback
 ```
 
-4. Add UI controls in `settings_window_enhanced.py`
+**DO NOT:**
+- Write directly to log files using `open()`
+- Use `print()` statements for logging (except debug during development)
+- Store log files in the source directory
 
-### Modifying Analysis Prompts
+### Multi-Provider Support
 
-LLM prompts are stored in settings under `[PromptOptimization]`:
-- Edit via EnhancedSettingsWindow → Prompt Optimization tab
-- Variables: `{title_keywords}`, `{company_keywords}`, `{date_format}`
-- Changes affect future analyses (not cached results)
+The application supports three LLM provider types:
 
-### Debugging Analysis Issues
+1. **Ollama** - Local Ollama server via HTTP API
+   - Default model: `qwen2.5-vl`
+   - Base URL: `http://localhost:11434`
 
-1. Check `app.log` for exceptions
-2. Open AnalysisStatusWindow to see per-file results
-3. Query AnalysisDB directly:
-```python
-from analysis_db import AnalysisDB
-db = AnalysisDB()
-failed = db.get_failed_analyses()
-for f in failed:
-    print(f['file_path'], f['error_message'])
+2. **Claude CLI** - Claude CLI command execution via subprocess
+   - Uses command template with `%%MODEL%%`, `%%IMAGE_PATHS%%`, `%%PROMPT%%` placeholders
+   - Default models: `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`
+
+3. **Gemini CLI** - Gemini CLI command execution via subprocess
+   - Similar template-based approach
+   - Default models: `gemini-2.0-flash-exp`, `gemini-1.5-pro`
+
+### JSON Response Handling
+
+**CRITICAL:** All prompts used for metadata extraction must request JSON-only responses. Providers include robust parsing that handles:
+- Markdown code fences (```json ... ```)
+- Extra text before/after JSON
+- Malformed JSON (fallback regex extraction)
+
+See `src/llm_providers/ollama_service.py` for JSON-cleaning examples.
+
+## Test Organization
+
+Tests mirror the `src/` package structure:
+
+```
+tests/
+├── config/              # ConfigManager tests
+├── db/                  # Database layer tests
+├── gui/                 # UI component tests
+├── llm_providers/       # Provider implementation tests
+├── services/            # Service layer tests
+├── integration/         # End-to-end integration tests
+├── prompt/              # Prompt optimization tests
+└── helpers/             # Test utilities
 ```
 
-### Testing Provider Integration
+### Testing Guidelines
+
+1. **Provider tests MUST mock subprocess calls** - Never call real CLI tools
+2. **Use pytest framework** - All tests use pytest fixtures and assertions
+3. **Test both success and failure cases** - Including malformed JSON responses
+4. **Follow existing patterns** - See `tests/llm_providers/test_claude_cli_provider.py`
+5. **Minimum 80% coverage required** - Use `python run_tests.py tests/` to check
+
+### Test Coverage Status
+
+| Module | Coverage | Status |
+|--------|----------|--------|
+| `src/config/` | 95%+ | ✓ Complete |
+| `src/db/` | 98%+ | ✓ Complete |
+| `src/llm_providers/` | 98%+ | ✓ Complete |
+| `src/services/` | 0% | ⚠ Needs tests |
+| `src/ui/` | Excluded | GUI (separate testing) |
+
+## Development Workflow
+
+### Adding a New LLM Provider
+
+1. Create provider class in `src/llm_providers/` inheriting from `BaseLLMProvider`
+2. Implement required methods: `analyze_images()`, `get_available_models()`, `test_connection()`
+3. Register in `ProviderFactory.PROVIDER_CLASSES` dict
+4. Add default config section to `ConfigManager._create_default_config()`
+5. Create unit tests in `tests/llm_providers/` with mocked subprocess calls
+
+### Working with Configuration
 
 ```python
-from config_manager import ConfigManager
-from llm_providers.provider_factory import ProviderFactory
+from config.config_manager import ConfigManager
 
 config = ConfigManager()
-provider = ProviderFactory.create_from_config_manager(config, 'ollama')
 
-# Test connection
-if provider.test_connection():
-    print("Provider is available")
+# Get provider config
+provider_config = config.get_provider_config('claude_cli')
 
-# Test analysis
-result = provider.analyze_images(
-    image_paths=['test.png'],
-    prompt='Extract company name from this document'
-)
-print(result)
+# Get typed values
+enabled = config.get_bool('AutoAnalysis', 'enabled', default=True)
+batch_size = config.get_int('AutoAnalysis', 'batch_size', default=10)
+
+# Manage directories
+directories = config.get_directories()
+config.add_directory('/path/to/new/dir')
 ```
 
-## Dependencies
+### Analysis Service Integration
 
-Core dependencies (from requirements.txt):
-- **PyQt6**: GUI framework
-- **PyMuPDF (fitz)**: PDF manipulation and OCR
-- **Pillow**: Image processing (TIFF conversion)
-- **requests**: HTTP client for Ollama API
+```python
+from services.analysis_service import AnalysisService
+from config.config_manager import ConfigManager
+from analysis_db import AnalysisDB
+from metadata_db import MetadataDB
 
-## AppData Storage
+# Initialize
+config = ConfigManager()
+analysis_db = AnalysisDB()
+metadata_db = MetadataDB()
+service = AnalysisService(config, analysis_db, metadata_db)
 
-All persistent data stored in `%APPDATA%\WinScanLLM\`:
-- `settings.ini`: User configuration
-- `metadata.db`: Document metadata cache (SQLite)
-- `analysis_cache.db`: Analysis results cache (SQLite)
+# Run analysis with progress callback
+def progress_callback(status_text, current, total):
+    print(f"[{current}/{total}] {status_text}")
 
-## Keyboard Shortcuts
+stats = service.scan_all_directories(
+    progress_callback=progress_callback,
+    incremental=True  # Use cache
+)
+```
 
-Full reference in `docs/keyboard_shortcuts_reference.md`. Key shortcuts:
-- `Space`: Include current page in bundle
-- `Delete`: Exclude current page from bundle
-- `Enter`: Approve/Continue to next step
-- `←`/`→`: Navigate images
-- `Ctrl+A`: Accept all high-confidence bundles
-- `F1` or `?`: Toggle shortcuts legend
+## Important Implementation Notes
 
-## External Dependencies
+### Prompt Engineering
+- Use `AnalysisService.DEFAULT_ANALYSIS_PROMPT` constant for standard analysis
+- Custom prompts can be set via `ConfigManager.get_setting('Prompts', 'document_metadata')`
+- Always instruct LLMs to return **valid JSON only** to avoid parsing issues
 
-### Ollama Setup
-1. Install from https://ollama.com/
-2. Pull a vision model: `ollama pull qwen2.5-vl`
-3. Server runs on http://localhost:11434 by default
+### Error Handling
+- Providers return structured error info in response dict (`success=False`, `error` field)
+- `AnalysisService` saves errors to database via `save_analysis_error()`
+- Long-running operations support abort checking via callback
 
-### Claude CLI Setup
-1. Install Claude Code CLI
-2. Authenticate: `claude auth`
-3. Verify: `claude --help`
+### File Hashing
+- `MetadataDB.compute_file_hash()` uses SHA-256 for cache validation
+- Hash stored alongside analysis results for incremental updates
 
-### Gemini CLI Setup
-1. Install Google Gemini CLI
-2. Configure API key
-3. Verify: `gemini --version`
+### Threading Considerations
+- GUI components use Qt threading
+- Analysis operations provide progress callbacks for UI updates
+- Abort checking enables graceful cancellation
 
-## Common Issues
+## Common Pitfalls
 
-### TIFF Files Not Converting
-- Ensure Pillow is installed: `pip install Pillow`
-- Check file permissions in scan folder
-- Review `app.log` for PIL errors
+1. **Don't import from root-level compatibility shims in new code** - Use package imports (`from config.config_manager import ConfigManager`)
 
-### Analysis Hangs/Timeouts
-- Check provider timeout settings (default: 300s)
-- Verify provider server is running (e.g., Ollama)
-- Large images may timeout - consider resizing
+2. **Don't hardcode prompts** - Use configuration or service defaults
 
-### Database Locked Errors
-- SQLite doesn't handle concurrent writes well
-- Ensure only one app instance running
-- If corrupted, delete `*.db` files (data loss) and restart
+3. **Don't forget to mock subprocess calls in tests** - Real CLI tools shouldn't be invoked during testing
 
-### PDF Not Searchable
-- Requires PyMuPDF with OCR support
-- Check `fitz.TOOLS.mupdf_supports_ocr()` returns True
-- Install Tesseract OCR if needed
+4. **Don't assume JSON responses are clean** - Always use the robust parsing from `ollama_service.py` patterns
 
-## Testing Notes
-
-Test files in `tests/`:
-- `test_config_manager.py`: Configuration loading/saving
-- `test_file_processor.py`: TIFF conversion, grouping, PDF generation
-- `test_ollama_service.py`: Ollama API integration (requires running server)
-
-Run tests from repository root to ensure correct imports.
+5. **Remember file placement rules** - Tests go in `/tests`, not root. Source code goes in `/src`, not root.

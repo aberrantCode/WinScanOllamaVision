@@ -6,15 +6,14 @@ Checks that all components are properly implemented.
 
 import os
 import sys
-import ast
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 # Set console encoding for Windows
-if sys.platform == 'win32':
+if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
     except:
         pass
 
@@ -23,15 +22,10 @@ def check_imports():
     """Check that all required imports exist in settings_window_enhanced.py"""
     print("\n1. Checking imports...")
 
-    with open('src/settings_window_enhanced.py', 'r', encoding='utf-8') as f:
+    with open("src/settings_window_enhanced.py", encoding="utf-8") as f:
         content = f.read()
 
-    required = [
-        'QThread',
-        'pyqtSignal',
-        'ProviderFactory',
-        'ConfigManager'
-    ]
+    required = ["QThread", "pyqtSignal", "ProviderFactory", "ConfigManager"]
 
     for item in required:
         if item in content:
@@ -49,9 +43,9 @@ def check_classes():
 
     try:
         from settings_window_enhanced import (
-            PromptOptimizationThread,
+            EnhancedSettingsWindow,
             PromptComparisonDialog,
-            EnhancedSettingsWindow
+            PromptOptimizationThread,
         )
 
         print("   ✓ PromptOptimizationThread exists")
@@ -69,10 +63,7 @@ def check_methods():
 
     from settings_window_enhanced import EnhancedSettingsWindow
 
-    required_methods = [
-        '_optimize_prompt',
-        '_handle_optimization_result'
-    ]
+    required_methods = ["_optimize_prompt", "_handle_optimization_result"]
 
     for method in required_methods:
         if hasattr(EnhancedSettingsWindow, method):
@@ -89,21 +80,19 @@ def check_thread_signals():
     print("\n4. Checking thread signals...")
 
     from settings_window_enhanced import PromptOptimizationThread
-    from PyQt6.QtCore import QMetaMethod
 
     # Check if finished signal exists
-    thread_instance = type('MockConfig', (), {
-        'get_active_provider': lambda self: 'ollama'
-    })()
+    thread_instance = type("MockConfig", (), {"get_active_provider": lambda self: "ollama"})()
 
     try:
         # Create minimal test instance
-        from config_manager import ConfigManager
+        from config.config_manager import ConfigManager
+
         config = ConfigManager()
         thread = PromptOptimizationThread(config, "test")
 
         # Check signal exists
-        if hasattr(thread, 'finished'):
+        if hasattr(thread, "finished"):
             print("   ✓ finished signal exists")
             return True
         else:
@@ -128,19 +117,19 @@ def check_dialog_ui():
 
         dialog = PromptComparisonDialog("original", "optimized")
 
-        if hasattr(dialog, 'original_text'):
+        if hasattr(dialog, "original_text"):
             print("   ✓ original_text widget exists")
         else:
             print("   ✗ original_text MISSING")
             return False
 
-        if hasattr(dialog, 'optimized_text'):
+        if hasattr(dialog, "optimized_text"):
             print("   ✓ optimized_text widget exists")
         else:
             print("   ✗ optimized_text MISSING")
             return False
 
-        if hasattr(dialog, 'get_final_prompt'):
+        if hasattr(dialog, "get_final_prompt"):
             print("   ✓ get_final_prompt method exists")
         else:
             print("   ✗ get_final_prompt MISSING")
@@ -156,14 +145,14 @@ def check_error_handling():
     """Check that error handling is implemented"""
     print("\n6. Checking error handling...")
 
-    with open('src/settings_window_enhanced.py', 'r', encoding='utf-8') as f:
+    with open("src/settings_window_enhanced.py", encoding="utf-8") as f:
         content = f.read()
 
     checks = [
-        ('Empty prompt validation', 'Empty Prompt' in content),
-        ('Provider error handling', 'Configuration Error' in content),
-        ('Timeout error', 'timeout' in content.lower()),
-        ('Connection error', 'connection' in content.lower() or 'connect' in content.lower()),
+        ("Empty prompt validation", "Empty Prompt" in content),
+        ("Provider error handling", "Configuration Error" in content),
+        ("Timeout error", "timeout" in content.lower()),
+        ("Connection error", "connection" in content.lower() or "connect" in content.lower()),
     ]
 
     all_passed = True
@@ -181,10 +170,10 @@ def check_provider_support():
     """Check that all three providers are supported"""
     print("\n7. Checking provider support...")
 
-    with open('src/settings_window_enhanced.py', 'r', encoding='utf-8') as f:
+    with open("src/settings_window_enhanced.py", encoding="utf-8") as f:
         content = f.read()
 
-    providers = ['ollama', 'claude_cli', 'gemini_cli']
+    providers = ["ollama", "claude_cli", "gemini_cli"]
 
     for provider in providers:
         if provider in content.lower():
@@ -201,8 +190,8 @@ def check_tests_exist():
     print("\n8. Checking test files...")
 
     test_files = [
-        'tests/test_prompt_optimization.py',
-        'tests/test_prompt_optimization_integration.py'
+        "tests/test_prompt_optimization.py",
+        "tests/test_prompt_optimization_integration.py",
     ]
 
     all_exist = True
@@ -218,9 +207,9 @@ def check_tests_exist():
 
 def main():
     """Run all verification checks"""
-    print("="*60)
+    print("=" * 60)
     print("PROMPT OPTIMIZATION FEATURE - VERIFICATION")
-    print("="*60)
+    print("=" * 60)
 
     checks = [
         ("Imports", check_imports),
@@ -243,9 +232,9 @@ def main():
             results.append((name, False))
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("VERIFICATION SUMMARY")
-    print("="*60)
+    print("=" * 60)
 
     passed = sum(1 for _, result in results if result)
     total = len(results)
@@ -264,12 +253,13 @@ def main():
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         exit_code = main()
         sys.exit(exit_code)
     except Exception as e:
         print(f"\n✗ Verification failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

@@ -1,13 +1,15 @@
 """Generate template database files for first-time setup"""
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from metadata_db import MetadataDB
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
 from analysis_db import AnalysisDB
+from metadata_db import MetadataDB
 
 # Create template database in data folder
-template_db_path = os.path.join('data', 'metadata.db')
+template_db_path = os.path.join("data", "metadata.db")
 
 # Remove existing template if present
 if os.path.exists(template_db_path):

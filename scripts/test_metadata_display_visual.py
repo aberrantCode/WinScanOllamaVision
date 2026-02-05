@@ -2,17 +2,18 @@
 Visual test for MetadataDisplayWidget
 Shows the widget with sample data to verify styling and layout
 """
-import sys
+
 import os
+import sys
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-from PyQt6.QtCore import Qt
 from unittest.mock import Mock
-from gui import MetadataDisplayWidget
+
 from analysis_db import AnalysisDB
+from gui import MetadataDisplayWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
 
 
 def create_mock_analysis_db():
@@ -21,43 +22,43 @@ def create_mock_analysis_db():
 
     # Sample high confidence analysis
     high_confidence_analysis = {
-        'confidence_score': 0.92,
-        'document_type': 'Invoice',
-        'company': 'Acme Corporation',
-        'document_date': '2024-01-15',
-        'page_number': 1,
-        'total_pages': 6,
-        'rotation_needed': False,
-        'suggested_rotation': 0
+        "confidence_score": 0.92,
+        "document_type": "Invoice",
+        "company": "Acme Corporation",
+        "document_date": "2024-01-15",
+        "page_number": 1,
+        "total_pages": 6,
+        "rotation_needed": False,
+        "suggested_rotation": 0,
     }
 
     # Sample medium confidence analysis
     medium_confidence_analysis = {
-        'confidence_score': 0.65,
-        'document_type': 'Statement',
-        'company': 'Beta Inc',
-        'document_date': '2024-01-12',
-        'page_number': 2,
-        'total_pages': 3,
-        'rotation_needed': False
+        "confidence_score": 0.65,
+        "document_type": "Statement",
+        "company": "Beta Inc",
+        "document_date": "2024-01-12",
+        "page_number": 2,
+        "total_pages": 3,
+        "rotation_needed": False,
     }
 
     # Sample low confidence analysis
     low_confidence_analysis = {
-        'confidence_score': 0.35,
-        'document_type': 'Receipt',
-        'company': 'Charlie Co',
-        'rotation_needed': True,
-        'suggested_rotation': 90
+        "confidence_score": 0.35,
+        "document_type": "Receipt",
+        "company": "Charlie Co",
+        "rotation_needed": True,
+        "suggested_rotation": 90,
     }
 
     # Return different data based on file path
     def get_analysis(file_path):
-        if 'invoice' in file_path.lower():
+        if "invoice" in file_path.lower():
             return high_confidence_analysis
-        elif 'statement' in file_path.lower():
+        elif "statement" in file_path.lower():
             return medium_confidence_analysis
-        elif 'receipt' in file_path.lower():
+        elif "receipt" in file_path.lower():
             return low_confidence_analysis
         else:
             return None
@@ -92,18 +93,12 @@ def main():
     metadata_widget.re_analyze_requested.connect(
         lambda path: print(f"Re-analyze requested for: {path}")
     )
-    metadata_widget.thumbnail_clicked.connect(
-        lambda path: print(f"Thumbnail clicked: {path}")
-    )
+    metadata_widget.thumbnail_clicked.connect(lambda path: print(f"Thumbnail clicked: {path}"))
 
     # Set sample data
     print("\n=== Testing High Confidence Display ===")
     metadata_widget.set_current_file("invoice_001.png")
-    metadata_widget.set_bundle_files([
-        "invoice_001.png",
-        "invoice_002.png",
-        "invoice_003.png"
-    ])
+    metadata_widget.set_bundle_files(["invoice_001.png", "invoice_002.png", "invoice_003.png"])
 
     # Show window
     window.show()
@@ -126,33 +121,41 @@ def main():
 
     def cycle_examples():
         """Cycle through different confidence levels"""
-        import time
 
         # After 5 seconds, show medium confidence
-        QTimer.singleShot(5000, lambda: (
-            print("\n=== Switching to Medium Confidence ==="),
-            metadata_widget.set_current_file("statement_001.png"),
-            metadata_widget.set_bundle_files(["statement_001.png", "statement_002.png"]),
-            print("Badge should be YELLOW: 'MEDIUM CONFIDENCE (65%)'")
-        ))
+        QTimer.singleShot(
+            5000,
+            lambda: (
+                print("\n=== Switching to Medium Confidence ==="),
+                metadata_widget.set_current_file("statement_001.png"),
+                metadata_widget.set_bundle_files(["statement_001.png", "statement_002.png"]),
+                print("Badge should be YELLOW: 'MEDIUM CONFIDENCE (65%)'"),
+            ),
+        )
 
         # After 10 seconds, show low confidence with rotation
-        QTimer.singleShot(10000, lambda: (
-            print("\n=== Switching to Low Confidence with Rotation ==="),
-            metadata_widget.set_current_file("receipt_001.png"),
-            metadata_widget.set_bundle_files(["receipt_001.png"]),
-            print("Badge should be RED: 'LOW CONFIDENCE (35%)'"),
-            print("Rotation should show: '90° suggested'")
-        ))
+        QTimer.singleShot(
+            10000,
+            lambda: (
+                print("\n=== Switching to Low Confidence with Rotation ==="),
+                metadata_widget.set_current_file("receipt_001.png"),
+                metadata_widget.set_bundle_files(["receipt_001.png"]),
+                print("Badge should be RED: 'LOW CONFIDENCE (35%)'"),
+                print("Rotation should show: '90° suggested'"),
+            ),
+        )
 
         # After 15 seconds, show no analysis
-        QTimer.singleShot(15000, lambda: (
-            print("\n=== Switching to No Analysis ==="),
-            metadata_widget.set_current_file("unknown_file.png"),
-            metadata_widget.set_bundle_files([]),
-            print("Badge should be GRAY: 'No Analysis Data'"),
-            print("All fields should show '--'")
-        ))
+        QTimer.singleShot(
+            15000,
+            lambda: (
+                print("\n=== Switching to No Analysis ==="),
+                metadata_widget.set_current_file("unknown_file.png"),
+                metadata_widget.set_bundle_files([]),
+                print("Badge should be GRAY: 'No Analysis Data'"),
+                print("All fields should show '--'"),
+            ),
+        )
 
     cycle_examples()
 
@@ -160,5 +163,5 @@ def main():
     sys.exit(app.exec())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

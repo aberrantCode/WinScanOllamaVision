@@ -4,24 +4,18 @@ Handles template processing with variable substitution.
 """
 
 import re
-from typing import List, Dict, Any
 
 
 class CommandBuilder:
     """Builds CLI commands from templates with variable substitution"""
 
     # Variable placeholders
-    VAR_MODEL = '%MODEL%'
-    VAR_IMAGE_PATHS = '%IMAGE_PATHS%'
-    VAR_PROMPT = '%PROMPT%'
+    VAR_MODEL = "%MODEL%"
+    VAR_IMAGE_PATHS = "%IMAGE_PATHS%"
+    VAR_PROMPT = "%PROMPT%"
 
     @staticmethod
-    def build_command(
-        template: str,
-        model: str,
-        image_paths: List[str],
-        prompt: str
-    ) -> List[str]:
+    def build_command(template: str, model: str, image_paths: list[str], prompt: str) -> list[str]:
         """
         Build command from template with variable substitution.
 
@@ -36,14 +30,16 @@ class CommandBuilder:
         """
         # Check if template is valid
         if not template:
-            raise ValueError("Command template is not configured. Please set up the CLI provider command template in settings.")
+            raise ValueError(
+                "Command template is not configured. Please set up the CLI provider command template in settings."
+            )
 
         # Replace variables
         command_str = template.replace(CommandBuilder.VAR_MODEL, model)
 
         # Handle multiple image paths
         # Most CLIs support space-separated paths or repeated flags
-        images_str = ' '.join(f'"{path}"' for path in image_paths)
+        images_str = " ".join(f'"{path}"' for path in image_paths)
         command_str = command_str.replace(CommandBuilder.VAR_IMAGE_PATHS, images_str)
 
         # Replace prompt (escape quotes)
@@ -87,7 +83,7 @@ class CommandBuilder:
         return True, ""
 
     @staticmethod
-    def extract_variables(template: str) -> List[str]:
+    def extract_variables(template: str) -> list[str]:
         """
         Extract all variable placeholders from template.
 
@@ -97,7 +93,7 @@ class CommandBuilder:
         Returns:
             List of variable names found
         """
-        pattern = r'%([A-Z_]+)%'
+        pattern = r"%([A-Z_]+)%"
         return re.findall(pattern, template)
 
     @staticmethod

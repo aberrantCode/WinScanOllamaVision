@@ -1,90 +1,89 @@
+import logging
 import sys
-import os
-import traceback
+
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QTimer
-from gui import StartupWindow
-from appdata_manager import initialize_appdata
-from analysis_service import AnalysisService
-from analysis_db import AnalysisDB
-from metadata_db import MetadataDB
-from config_manager import ConfigManager
 
-# Import style sheet
-from style import stylesheet
-
-log_file_path = "app.log"
-
-def log_message(message):
-    """Appends a message to the log file."""
-    with open(log_file_path, "a") as log_file:
-        log_file.write(f"{message}\n")
+from config.appdata_manager import initialize_appdata
+from config.config_manager import ConfigManager
+from db.analysis_db import AnalysisDB
+from db.metadata_db import MetadataDB
+from services.analysis_service import AnalysisService
+from services.logging_service import LoggingService, get_logger
+from ui.gui import StartupWindow
+from ui.theme_manager import ThemeManager
 
 if __name__ == "__main__":
-    # Clear previous log file
-    if os.path.exists(log_file_path):
-        os.remove(log_file_path)
+    # Initialize logging service
+    logging_service = LoggingService()
+    logging_service.initialize(log_level=logging.INFO)
+    logger = get_logger()
 
     try:
-        log_message("Application starting...")
+        logger.info("=" * 80)
+        logger.info("NEW SESSION STARTED")
+        logger.info("=" * 80)
+        logger.info("Application starting...")
 
         # Initialize AppData directory (settings and database)
-        log_message("Initializing AppData directory...")
+        logger.info("Initializing AppData directory...")
         settings_path, db_path = initialize_appdata()
-        log_message(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
+        logger.info(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
+
+        # Initialize config to get theme preference
+        logger.info("Loading configuration...")
+        config_manager = ConfigManager()
+        theme = config_manager.get_setting("Theme", "theme", "dark")
+        is_dark_mode = theme == "dark"
+        logger.info(f"Theme preference: {theme}")
 
         app = QApplication(sys.argv)
-        log_message("QApplication instance created.")
-        
-        app.setStyleSheet(stylesheet)
-        log_message("Stylesheet applied.")
-        
-        log_message("Creating StartupWindow...")
+        logger.info("QApplication instance created.")
+
+        # Apply centralized theme stylesheet
+        app.setStyleSheet(ThemeManager.get_stylesheet(is_dark_mode))
+        logger.info(f"ThemeManager stylesheet applied (dark_mode={is_dark_mode}).")
+
+        logger.info("Creating StartupWindow...")
         startup_window = StartupWindow()
-        log_message("StartupWindow instance created.")
+        logger.info("StartupWindow instance created.")
 
         # Initialize analysis service
-        log_message("Initializing AnalysisService...")
-        config_manager = ConfigManager()
+        logger.info("Initializing AnalysisService...")
         analysis_db = AnalysisDB()
         metadata_db = MetadataDB()
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
-        log_message("AnalysisService initialized.")
+        logger.info("AnalysisService initialized.")
 
         # Store analysis_service in window for manual button access
         startup_window.analysis_service = analysis_service
 
-        log_message("Showing StartupWindow...")
+        logger.info("Showing StartupWindow...")
         startup_window.show()
-        log_message("StartupWindow.show() called.")
+        logger.info("StartupWindow.show() called.")
 
         # Check for unanalyzed files and optionally start analysis
         # DISABLED: User can now use the "Analyze Documents" button to manually trigger analysis
         # def check_unanalyzed():
         #     try:
-        #         log_message("Checking for unanalyzed files...")
+        #         logger.info("Checking for unanalyzed files...")
         #         startup_window.check_for_unanalyzed_files(analysis_service)
-        #         log_message("Unanalyzed files check complete.")
+        #         logger.info("Unanalyzed files check complete.")
         #     except Exception as e:
-        #         log_message(f"Error checking for unanalyzed files: {e}")
-        #         import traceback as tb
-        #         log_message(tb.format_exc())
+        #         logger.error(f"Error checking for unanalyzed files: {e}", exc_info=True)
         #
         # QTimer.singleShot(1000, check_unanalyzed)  # Increased to 1 second to ensure window is fully rendered
 
-        log_message("Entering QApplication event loop...")
+        logger.info("Entering QApplication event loop...")
         exit_code = app.exec()
 
         # Cleanup
-        log_message("Cleaning up resources...")
+        logger.info("Cleaning up resources...")
         analysis_db.close()
         metadata_db.close()
 
-        log_message(f"Application exited with code {exit_code}.")
+        logger.info(f"Application exited with code {exit_code}.")
         sys.exit(exit_code)
 
-    except Exception as e:
-        log_message("An unhandled exception occurred:")
-        log_message(traceback.format_exc())
+    except Exception:
+        logger.exception("An unhandled exception occurred")
         sys.exit(1)
-

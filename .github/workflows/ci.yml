@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  push:
+    branches: [master, feat/*, fix/*]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-xfixes0 \
+            libxkbcommon-x11-0 \
+            libgl1 \
+            libglx0 \
+            libegl1 \
+            xvfb
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist pytest-timeout
+
+      - name: Run tests (Linux with Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a python -m pytest tests/ \
+            -v \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junit-xml=junit.xml \
+            --maxfail=5 \
+            --timeout=300 \
+            -n auto
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          python -m pytest tests/ `
+            -v `
+            --cov=src `
+            --cov-report=xml `
+            --cov-report=term-missing `
+            --junit-xml=junit.xml `
+            --maxfail=5 `
+            --timeout=300
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-${{ matrix.os }}-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            junit.xml
+            coverage.xml
+            htmlcov/
+
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy bandit[toml]
+          pip install -r requirements.txt
+
+      - name: Run Ruff linting
+        run: |
+          ruff check src/ tests/ --output-format=github
+
+      - name: Run Ruff formatting check
+        run: |
+          ruff format --check src/ tests/
+
+      - name: Run mypy type checking
+        run: |
+          mypy src/ --install-types --non-interactive || true
+
+      - name: Run Bandit security check
+        run: |
+          bandit -r src/ -f json -o bandit-report.json || true
+          bandit -r src/ -f screen || true
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: bandit-report.json
+
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+          sudo apt-get update
+          sudo apt-get install -y libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 libxkbcommon-x11-0 libgl1-mesa-glx xvfb
+
+      - name: Generate coverage report
+        run: |
+          xvfb-run -a python -m pytest tests/ --cov=src --cov-report=html --cov-report=term
+
+      - name: Upload coverage HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+      - name: Coverage comment
+        uses: py-cov-action/python-coverage-comment-action@v3
+        if: github.event_name == 'pull_request'
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          MINIMUM_GREEN: 90
+          MINIMUM_ORANGE: 80
+
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: |
+          python -m build
+
+      - name: Check package
+        run: |
+          twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

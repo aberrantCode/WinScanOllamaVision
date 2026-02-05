@@ -29,7 +29,7 @@ import os
 import sys
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from settings_window_enhanced import EnhancedSettingsWindow
@@ -39,9 +39,9 @@ def run_manual_test():
     """Run manual test of prompt optimization"""
     app = QApplication(sys.argv)
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PROMPT OPTIMIZATION FEATURE - MANUAL TEST")
-    print("="*60)
+    print("=" * 60)
     print("\nTest Instructions:")
     print("1. Navigate to 'LLM Provider' tab")
     print("2. Check your active provider in the dropdown")
@@ -58,7 +58,7 @@ def run_manual_test():
     print("- Ollama: Service must be running (http://localhost:11434)")
     print("- Claude CLI: 'claude' command must be available")
     print("- Gemini CLI: 'gemini' command must be available")
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
 
     # Show info dialog with test instructions
     QMessageBox.information(
@@ -66,7 +66,7 @@ def run_manual_test():
         "Prompt Optimization Test",
         "Settings window will open.\n\n"
         "Navigate to 'LLM Provider' tab and test the 'Optimize Prompt' button.\n\n"
-        "Check console for test instructions."
+        "Check console for test instructions.",
     )
 
     # Create and show settings window
@@ -80,12 +80,12 @@ def run_manual_test():
     # Run event loop
     exit_code = app.exec()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Test completed. Window closed.")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     return exit_code
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(run_manual_test())
