@@ -3,11 +3,12 @@ Provider Factory
 Creates LLM provider instances based on configuration.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
+
 from .base_provider import BaseLLMProvider
-from .ollama_provider import OllamaProvider
 from .claude_cli_provider import ClaudeCliProvider
 from .gemini_cli_provider import GeminiCliProvider
+from .ollama_provider import OllamaProvider
 
 
 class ProviderFactory:
@@ -15,13 +16,13 @@ class ProviderFactory:
 
     # Provider type mapping
     PROVIDER_CLASSES = {
-        'ollama': OllamaProvider,
-        'claude_cli': ClaudeCliProvider,
-        'gemini_cli': GeminiCliProvider
+        "ollama": OllamaProvider,
+        "claude_cli": ClaudeCliProvider,
+        "gemini_cli": GeminiCliProvider,
     }
 
     @staticmethod
-    def create_provider(provider_type: str, config: Dict[str, Any]) -> BaseLLMProvider:
+    def create_provider(provider_type: str, config: dict[str, Any]) -> BaseLLMProvider:
         """
         Create a provider instance based on type.
 
@@ -38,16 +39,17 @@ class ProviderFactory:
         provider_class = ProviderFactory.PROVIDER_CLASSES.get(provider_type.lower())
 
         if provider_class is None:
-            available = ', '.join(ProviderFactory.PROVIDER_CLASSES.keys())
+            available = ", ".join(ProviderFactory.PROVIDER_CLASSES.keys())
             raise ValueError(
-                f"Unknown provider type: '{provider_type}'. "
-                f"Available providers: {available}"
+                f"Unknown provider type: '{provider_type}'. Available providers: {available}"
             )
 
         return provider_class(config)
 
     @staticmethod
-    def create_from_config_manager(config_manager, provider_name: Optional[str] = None) -> BaseLLMProvider:
+    def create_from_config_manager(
+        config_manager, provider_name: str | None = None
+    ) -> BaseLLMProvider:
         """
         Create provider instance from ConfigManager.
 
@@ -67,9 +69,9 @@ class ProviderFactory:
 
         # Map provider name to type
         provider_type_mapping = {
-            'ollama': 'ollama',
-            'claude_cli': 'claude_cli',
-            'gemini_cli': 'gemini_cli'
+            "ollama": "ollama",
+            "claude_cli": "claude_cli",
+            "gemini_cli": "gemini_cli",
         }
 
         provider_type = provider_type_mapping.get(provider_name)
@@ -99,26 +101,22 @@ class ProviderFactory:
 # Example usage
 if __name__ == "__main__":
     # Test creating providers
-    ollama_config = {
-        'base_url': 'http://localhost:11434',
-        'timeout': 300,
-        'model': 'qwen2.5-vl'
-    }
+    ollama_config = {"base_url": "http://localhost:11434", "timeout": 300, "model": "qwen2.5-vl"}
 
     claude_config = {
-        'command_template': 'claude --model %MODEL% --image %IMAGE_PATHS% --prompt %PROMPT%',
-        'timeout': 300,
-        'default_model': 'claude-3-5-sonnet-20241022',
-        'models': ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022']
+        "command_template": "claude --model %MODEL% --image %IMAGE_PATHS% --prompt %PROMPT%",
+        "timeout": 300,
+        "default_model": "claude-3-5-sonnet-20241022",
+        "models": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
     }
 
     print("Creating Ollama provider...")
-    ollama_provider = ProviderFactory.create_provider('ollama', ollama_config)
+    ollama_provider = ProviderFactory.create_provider("ollama", ollama_config)
     print(f"Created: {ollama_provider}")
     print(f"Available models: {ollama_provider.get_available_models()}")
 
     print("\nCreating Claude CLI provider...")
-    claude_provider = ProviderFactory.create_provider('claude_cli', claude_config)
+    claude_provider = ProviderFactory.create_provider("claude_cli", claude_config)
     print(f"Created: {claude_provider}")
     print(f"Available models: {claude_provider.get_available_models()}")
 

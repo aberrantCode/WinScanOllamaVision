@@ -1,3 +1,3 @@
 """Config package"""
 
-__all__ = ['config_manager']
+__all__ = ["config_manager"]

@@ -4,14 +4,13 @@ Defines the interface that all LLM providers must implement.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
-from PIL import Image
+from typing import Any
 
 
 class BaseLLMProvider(ABC):
     """Abstract base class for LLM providers"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """
         Initialize provider with configuration.
 
@@ -19,15 +18,12 @@ class BaseLLMProvider(ABC):
             config: Provider configuration dictionary
         """
         self.config = config
-        self.provider_name = self.__class__.__name__.replace('Provider', '').lower()
+        self.provider_name = self.__class__.__name__.replace("Provider", "").lower()
 
     @abstractmethod
     def analyze_images(
-        self,
-        image_paths: List[str],
-        prompt: str,
-        model: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, image_paths: list[str], prompt: str, model: str | None = None
+    ) -> dict[str, Any]:
         """
         Analyze one or more images using the LLM provider.
 
@@ -51,7 +47,7 @@ class BaseLLMProvider(ABC):
         pass
 
     @abstractmethod
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """
         Get list of available models for this provider.
 
@@ -70,14 +66,14 @@ class BaseLLMProvider(ABC):
         """
         pass
 
-    def get_default_model(self) -> Optional[str]:
+    def get_default_model(self) -> str | None:
         """
         Get the default model for this provider.
 
         Returns:
             Default model name or None
         """
-        return self.config.get('default_model')
+        return self.config.get("default_model")
 
     def get_timeout(self) -> int:
         """
@@ -86,9 +82,9 @@ class BaseLLMProvider(ABC):
         Returns:
             Timeout in seconds
         """
-        return self.config.get('timeout', 300)
+        return self.config.get("timeout", 300)
 
-    def validate_config(self) -> tuple[bool, Optional[str]]:
+    def validate_config(self) -> tuple[bool, str | None]:
         """
         Validate provider configuration.
 

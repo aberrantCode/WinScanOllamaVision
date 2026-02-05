@@ -1,6 +1,3 @@
 """Services package"""
 
-__all__ = [
-    'analysis_service',
-    'file_processor'
-]
+__all__ = ["analysis_service", "file_service", "bundling_service", "logging_service"]

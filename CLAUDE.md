@@ -1,33 +1,369 @@
-<!-- Claude-specific instructions for AI agents working on WinScanLLM -->
-# Claude Provider — Agent Guide (WinScanLLM)
+# CLAUDE.md
 
-Purpose: Provide actionable, Claude-focused guidance for implementing and testing `claude` CLI-style providers in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-1) Where Claude fits
-- The codebase supports multiple provider types. Claude CLI integrations live conceptually under `src/llm_providers/` and are selected via `ProviderFactory.create_from_config_manager(...)`.
-- Use `ConfigManager`'s `ClaudeCLI` section to read command templates and timeouts (see `src/config_manager.py`).
+## Skills
 
-2) Implementation expectations
-- Provider contract: match the same shape as other providers used by `AnalysisService` — implement `analyze_images(image_paths: List[str], prompt: str) -> Dict` and provide `provider_name` and `model_used` in the returned dict. Include keys: `success`, `metadata`, `response`, `processing_time_ms`.
-- CLI execution: the Claude provider should build a command using `ConfigManager.get_provider_config('claude_cli')['command_template']`, substitute `%%MODEL%%`, `%%IMAGE_PATHS%%`, and `%%PROMPT%%`, then run it capturing stdout/stderr (use `subprocess.run([...], capture_output=True, text=True, timeout=...)`).
-- JSON-only responses: Prompts used for metadata extraction and validation must ask Claude to return ONLY valid JSON. The app's parsing code (see `src/ollama_service.py` for JSON-cleaning examples) expects and attempts to clean JSON — write providers/tests to handle malformed outputs.
+Read and follow these skills before writing any code:
+- `.claude/skills/base/SKILL.md` - Universal coding patterns, TDD workflow, atomic todos
+- `.claude/skills/security/SKILL.md` - Security best practices and OWASP patterns
+- `.claude/skills/python/SKILL.md` - Python development with ruff, mypy, pytest
+- `.claude/skills/llm-patterns/SKILL.md` - AI-first application patterns and LLM testing
+- `.claude/skills/session-management/SKILL.md` - Context preservation and state tracking
+- `.claude/skills/project-tooling/SKILL.md` - CLI tooling (gh, vercel, supabase)
 
-3) Testing & mocking
-- Unit tests should NOT call the real Claude CLI. Mock the subprocess call to return predictable stdout/stderr payloads. Cover both well-formed JSON responses and malformed cases (extra text, markdown code fences).
-- Add tests under `tests/test_phase2_providers.py`-style files and follow existing patterns for provider tests (see `tests/test_ollama_service.py`).
+## Project Overview
 
-4) Config & examples
-- `src/config_manager.py` includes a `ClaudeCLI` default template:
-  `claude --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%`
-- Example behavior: when invoked, the provider should:
-  - Replace `%%IMAGE_PATHS%%` with a space-joined list of image file paths.
-  - Pass the prompt via a safe mechanism (stdin or a temporary file) if the CLI supports it to avoid shell-escaping issues.
+**WinScanLLM** - A PyQt6 desktop application for document scanning and analysis using multiple LLM providers (Ollama, Claude CLI, Gemini CLI). The application provides automatic document metadata extraction, batch processing, and intelligent file organization.
 
-5) Integration tips
-- Keep CLI parsing robust: guard against partial JSON and include fallback heuristics similar to `OllamaService.extract_document_info` (strip fences, find the first/last braces, regex key extraction).
-- Respect `timeout` from `ConfigManager.get_provider_config('claude_cli')['timeout']` to avoid hanging tests or UI blocking threads.
+**Goals:**
+- Multi-provider LLM integration with unified interface
+- Robust error handling and incremental processing
+- Local-first with AppData storage (databases, logs, settings)
+- Clean architecture with testable components
 
-6) File placement
-- Implement provider code in `src/llm_providers/claude_cli_provider.py` and register it in `src/llm_providers/provider_factory.py`.
+## Atomic Todos
 
-If you'd like, I can scaffold a `claude_cli_provider.py` implementation and unit tests (with subprocess mocks) following these guidelines—should I proceed?
+All work is tracked in `_project_specs/todos/`:
+- `active.md` - Current work
+- `backlog.md` - Future work
+- `completed.md` - Done (for reference)
+
+Every todo must have validation criteria and test cases. See `.claude/skills/base/SKILL.md` for format.
+
+## Session Management
+
+Maintain session state in `_project_specs/session/`:
+- `current-state.md` - Live session state (update every 15-20 tool calls)
+- `decisions.md` - Key architectural/implementation decisions (append-only)
+- `code-landmarks.md` - Important code locations for quick reference
+- `archive/` - Past session summaries
+
+See `.claude/skills/session-management/SKILL.md` for details.
+
+## File Organization (CRITICAL)
+
+**NEVER place new files in the repository root unless absolutely necessary.**
+
+Follow these strict placement rules:
+
+- **Tests** → `/tests` (with subfolder structure mirroring `/src`)
+- **Source code** → `/src` (with package structure as described below)
+- **Scripts & utilities** → `/scripts`
+- **Markdown documentation** → `/docs`
+- **Images & assets** → `/assets`
+- **Databases & import datasets** → `/data`
+
+## Essential Commands
+
+### Running the Application
+```powershell
+python src/main.py
+```
+
+### Running Tests
+```powershell
+# Run all tests
+python -m unittest discover tests
+
+# Run specific test file
+python -m unittest tests.config.test_config_manager
+
+# Run tests from specific subfolder
+python -m unittest discover tests/llm_providers
+
+# Use test runner (helper script)
+python tests/helpers/run_all_tests.py
+```
+
+### Development Setup
+```powershell
+# Create virtual environment
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install pre-commit hooks (run once after clone)
+pre-commit install
+pre-commit install --hook-type commit-msg
+
+# Verify tooling
+.\scripts\verify-tooling.ps1
+
+# Run security checks
+.\scripts\security-check.ps1
+```
+
+### Code Quality
+```powershell
+# Lint code
+ruff check src/
+
+# Format code
+ruff format src/
+
+# Type check
+mypy src/ --ignore-missing-imports
+
+# Run all pre-commit hooks manually
+pre-commit run --all-files
+```
+
+## Architecture Overview
+
+### Package Structure
+
+The codebase follows a clean package-based structure with **NO compatibility shims**:
+
+```
+src/
+├── main.py              # Application entry point (ONLY file in root)
+├── config/              # Configuration management
+│   ├── config_manager.py
+│   └── appdata_manager.py
+├── db/                  # Database layer
+│   ├── analysis_db.py
+│   └── metadata_db.py
+├── services/            # Business logic and orchestration
+│   ├── analysis_service.py
+│   ├── file_service.py
+│   ├── bundling_service.py
+│   └── logging_service.py
+├── ui/                  # User interface components
+│   ├── gui.py
+│   ├── analysis_status_window.py
+│   ├── bundle_widgets.py
+│   ├── bundle_workflow_handlers.py  # UI event handler mixin
+│   ├── file_details_grid.py
+│   ├── settings_window_enhanced.py
+│   ├── collection_status_helpers.py
+│   ├── style.py
+│   ├── styles.py
+│   └── style.qss
+└── llm_providers/       # LLM provider implementations
+    ├── base_provider.py
+    ├── provider_factory.py
+    ├── ollama_provider.py
+    ├── ollama_service.py
+    ├── claude_cli_provider.py
+    ├── gemini_cli_provider.py
+    └── command_builder.py
+```
+
+**Import Rules:**
+- All imports MUST use full package paths (e.g., `from ui.gui import StartupWindow`)
+- No relative imports outside of package boundaries
+- No backward-compatibility shims exist in the root
+
+### Key Architectural Patterns
+
+#### 1. Provider Pattern for LLM Integration
+All LLM providers inherit from `BaseLLMProvider` and implement:
+- `analyze_images(image_paths, prompt, model) -> Dict`
+- `get_available_models() -> List[str]`
+- `test_connection() -> bool`
+
+**Provider contract returns:**
+```python
+{
+    'success': bool,
+    'response': str,           # Full LLM response text
+    'metadata': dict,          # Extracted metadata
+    'processing_time_ms': int,
+    'model_used': str,
+    'provider_name': str,
+    'error': str               # Only if success=False
+}
+```
+
+Create providers via `ProviderFactory.create_from_config_manager(config_manager)`.
+
+#### 2. Configuration Management
+`ConfigManager` (in `src/config/config_manager.py`) manages all settings via INI file:
+- Defaults to `%APPDATA%/WinScanLLM/settings.ini`
+- Provides type-safe getters: `get_bool()`, `get_int()`, `get_directories()`
+- Provider-specific config via `get_provider_config(provider_name)`
+
+**Key configuration sections:**
+- `LLMProvider` - Active provider selection
+- `Ollama`, `ClaudeCLI`, `GeminiCLI` - Provider-specific settings
+- `AutoAnalysis` - Startup analysis behavior
+- `SourceDirectories` - Scan folder configuration (JSON array)
+- `OutputDirectory` - Output strategy settings
+
+#### 3. Analysis Service Architecture
+`AnalysisService` orchestrates automatic document analysis:
+- Scans configured directories for images (PNG, JPG, JPEG)
+- Uses incremental analysis (cache-aware via file hashing)
+- Saves results to both `AnalysisDB` and `MetadataDB`
+- Provides progress callbacks and abort checking
+- Tracks analysis runs with statistics (analyzed, cached, errors, skipped)
+
+**Key method:** `scan_all_directories(progress_callback, incremental, abort_check)`
+
+#### 4. Database Layer
+Two separate databases:
+- **AnalysisDB** (`db/analysis_db.py`) - Page analysis results, cache, and run tracking
+- **MetadataDB** (`db/metadata_db.py`) - Document metadata and field history
+
+Both use SQLite and include file hash-based caching.
+
+**IMPORTANT:** Database files are stored in the user's AppData directory (`%APPDATA%/WinScanLLM/`), NOT in the source directory. A blank template exists in `/data` for initialization.
+
+#### 5. Logging Service
+Centralized logging using Python's standard `logging` module:
+- **Singleton pattern** - One logger instance across the application
+- **Location:** Logs stored in `%APPDATA%/WinScanLLM/logs/app.log`
+- **Rotating file handler** - 10MB max file size, 5 backups retained
+- **Level-based logging** - DEBUG, INFO, WARNING, ERROR, CRITICAL
+- **Formatted output** - Timestamps, module names, and log levels
+
+**Usage:**
+```python
+from services.logging_service import get_logger
+
+logger = get_logger()
+logger.info("Application started")
+logger.error("Error occurred", exc_info=True)  # Includes traceback
+```
+
+**DO NOT:**
+- Write directly to log files using `open()`
+- Use `print()` statements for logging (except debug during development)
+- Store log files in the source directory
+
+### Multi-Provider Support
+
+The application supports three LLM provider types:
+
+1. **Ollama** - Local Ollama server via HTTP API
+   - Default model: `qwen2.5-vl`
+   - Base URL: `http://localhost:11434`
+
+2. **Claude CLI** - Claude CLI command execution via subprocess
+   - Uses command template with `%%MODEL%%`, `%%IMAGE_PATHS%%`, `%%PROMPT%%` placeholders
+   - Default models: `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`
+
+3. **Gemini CLI** - Gemini CLI command execution via subprocess
+   - Similar template-based approach
+   - Default models: `gemini-2.0-flash-exp`, `gemini-1.5-pro`
+
+### JSON Response Handling
+
+**CRITICAL:** All prompts used for metadata extraction must request JSON-only responses. Providers include robust parsing that handles:
+- Markdown code fences (```json ... ```)
+- Extra text before/after JSON
+- Malformed JSON (fallback regex extraction)
+
+See `src/llm_providers/ollama_service.py` for JSON-cleaning examples.
+
+## Test Organization
+
+Tests mirror the `src/` package structure:
+
+```
+tests/
+├── config/              # ConfigManager tests
+├── db/                  # Database layer tests
+├── gui/                 # UI component tests
+├── llm_providers/       # Provider implementation tests
+├── services/            # Service layer tests
+├── integration/         # End-to-end integration tests
+├── prompt/              # Prompt optimization tests
+└── helpers/             # Test utilities
+```
+
+### Testing Guidelines
+
+1. **Provider tests MUST mock subprocess calls** - Never call real CLI tools
+2. **Use unittest framework** - All tests inherit from `unittest.TestCase`
+3. **Test both success and failure cases** - Including malformed JSON responses
+4. **Follow existing patterns** - See `tests/llm_providers/test_phase2_providers.py`
+
+## Development Workflow
+
+### Adding a New LLM Provider
+
+1. Create provider class in `src/llm_providers/` inheriting from `BaseLLMProvider`
+2. Implement required methods: `analyze_images()`, `get_available_models()`, `test_connection()`
+3. Register in `ProviderFactory.PROVIDER_CLASSES` dict
+4. Add default config section to `ConfigManager._create_default_config()`
+5. Create unit tests in `tests/llm_providers/` with mocked subprocess calls
+
+### Working with Configuration
+
+```python
+from config.config_manager import ConfigManager
+
+config = ConfigManager()
+
+# Get provider config
+provider_config = config.get_provider_config('claude_cli')
+
+# Get typed values
+enabled = config.get_bool('AutoAnalysis', 'enabled', default=True)
+batch_size = config.get_int('AutoAnalysis', 'batch_size', default=10)
+
+# Manage directories
+directories = config.get_directories()
+config.add_directory('/path/to/new/dir')
+```
+
+### Analysis Service Integration
+
+```python
+from services.analysis_service import AnalysisService
+from config.config_manager import ConfigManager
+from analysis_db import AnalysisDB
+from metadata_db import MetadataDB
+
+# Initialize
+config = ConfigManager()
+analysis_db = AnalysisDB()
+metadata_db = MetadataDB()
+service = AnalysisService(config, analysis_db, metadata_db)
+
+# Run analysis with progress callback
+def progress_callback(status_text, current, total):
+    print(f"[{current}/{total}] {status_text}")
+
+stats = service.scan_all_directories(
+    progress_callback=progress_callback,
+    incremental=True  # Use cache
+)
+```
+
+## Important Implementation Notes
+
+### Prompt Engineering
+- Use `AnalysisService.DEFAULT_ANALYSIS_PROMPT` constant for standard analysis
+- Custom prompts can be set via `ConfigManager.get_setting('Prompts', 'document_metadata')`
+- Always instruct LLMs to return **valid JSON only** to avoid parsing issues
+
+### Error Handling
+- Providers return structured error info in response dict (`success=False`, `error` field)
+- `AnalysisService` saves errors to database via `save_analysis_error()`
+- Long-running operations support abort checking via callback
+
+### File Hashing
+- `MetadataDB.compute_file_hash()` uses SHA-256 for cache validation
+- Hash stored alongside analysis results for incremental updates
+
+### Threading Considerations
+- GUI components use Qt threading
+- Analysis operations provide progress callbacks for UI updates
+- Abort checking enables graceful cancellation
+
+## Common Pitfalls
+
+1. **Don't import from root-level compatibility shims in new code** - Use package imports (`from config.config_manager import ConfigManager`)
+
+2. **Don't hardcode prompts** - Use configuration or service defaults
+
+3. **Don't forget to mock subprocess calls in tests** - Real CLI tools shouldn't be invoked during testing
+
+4. **Don't assume JSON responses are clean** - Always use the robust parsing from `ollama_service.py` patterns
+
+5. **Remember file placement rules** - Tests go in `/tests`, not root. Source code goes in `/src`, not root.

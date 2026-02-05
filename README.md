@@ -138,4 +138,4 @@ Placement rules (must-follow for new files):
 - Docs: add Markdown under `docs/`.
 - Assets/test data: `assets/` or `data/`.
 
-If you want, I can prepare a small refactor branch that moves files into this structure and updates imports and tests accordingly — should I proceed with a prototype refactor? 
+If you want, I can prepare a small refactor branch that moves files into this structure and updates imports and tests accordingly — should I proceed with a prototype refactor?

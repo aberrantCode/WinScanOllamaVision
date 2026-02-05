@@ -3,10 +3,11 @@ Gemini CLI Provider
 Uses Google Gemini CLI tool for vision analysis via subprocess.
 """
 
-import time
 import json
 import subprocess
-from typing import Dict, Any, List, Optional
+import time
+from typing import Any
+
 from .base_provider import BaseLLMProvider
 from .command_builder import CommandBuilder
 
@@ -14,7 +15,7 @@ from .command_builder import CommandBuilder
 class GeminiCliProvider(BaseLLMProvider):
     """Gemini CLI provider implementation"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """
         Initialize Gemini CLI provider.
 
@@ -26,17 +27,14 @@ class GeminiCliProvider(BaseLLMProvider):
                 - models: List of available models
         """
         super().__init__(config)
-        self.command_template = config.get('command_template', '')
-        self.timeout = config.get('timeout', 300)
-        self.default_model = config.get('default_model', 'gemini-2.0-flash-exp')
-        self.available_models = config.get('models', [])
+        self.command_template = config.get("command_template", "")
+        self.timeout = config.get("timeout", 300)
+        self.default_model = config.get("default_model", "gemini-2.0-flash-exp")
+        self.available_models = config.get("models", [])
 
     def analyze_images(
-        self,
-        image_paths: List[str],
-        prompt: str,
-        model: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, image_paths: list[str], prompt: str, model: str | None = None
+    ) -> dict[str, Any]:
         """
         Analyze images using Gemini CLI.
 
@@ -57,10 +55,10 @@ class GeminiCliProvider(BaseLLMProvider):
                 template=self.command_template,
                 model=model_to_use,
                 image_paths=image_paths,
-                prompt=prompt
+                prompt=prompt,
             )
 
-            print(f"\n=== DEBUG: Gemini CLI Request ===")
+            print("\n=== DEBUG: Gemini CLI Request ===")
             print(f"Command: {command}")
             print(f"Model: {model_to_use}")
             print(f"Images: {len(image_paths)}")
@@ -68,23 +66,19 @@ class GeminiCliProvider(BaseLLMProvider):
 
             # Execute command
             result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout
+                command, shell=True, capture_output=True, text=True, timeout=self.timeout
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)
 
             if result.returncode != 0:
                 return {
-                    'response': result.stderr,
-                    'metadata': {},
-                    'processing_time_ms': processing_time_ms,
-                    'model_used': model_to_use,
-                    'success': False,
-                    'error': f"CLI returned error code {result.returncode}: {result.stderr}"
+                    "response": result.stderr,
+                    "metadata": {},
+                    "processing_time_ms": processing_time_ms,
+                    "model_used": model_to_use,
+                    "success": False,
+                    "error": f"CLI returned error code {result.returncode}: {result.stderr}",
                 }
 
             # Parse response
@@ -95,44 +89,44 @@ class GeminiCliProvider(BaseLLMProvider):
                 metadata = json.loads(response_text)
             except json.JSONDecodeError:
                 # If not valid JSON, return raw content
-                metadata = {'raw_content': response_text}
+                metadata = {"raw_content": response_text}
 
-            print(f"\n=== DEBUG: Gemini CLI Response ===")
+            print("\n=== DEBUG: Gemini CLI Response ===")
             print(f"Response length: {len(response_text)} chars")
             print(f"Processing time: {processing_time_ms}ms")
             print("===================================\n")
 
             return {
-                'response': response_text,
-                'metadata': metadata,
-                'processing_time_ms': processing_time_ms,
-                'model_used': model_to_use,
-                'success': True,
-                'error': None
+                "response": response_text,
+                "metadata": metadata,
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": True,
+                "error": None,
             }
 
         except subprocess.TimeoutExpired:
             processing_time_ms = int((time.time() - start_time) * 1000)
             return {
-                'response': '',
-                'metadata': {},
-                'processing_time_ms': processing_time_ms,
-                'model_used': model_to_use,
-                'success': False,
-                'error': f"Command timed out after {self.timeout} seconds"
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": f"Command timed out after {self.timeout} seconds",
             }
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
             return {
-                'response': '',
-                'metadata': {},
-                'processing_time_ms': processing_time_ms,
-                'model_used': model_to_use,
-                'success': False,
-                'error': str(e)
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": str(e),
             }
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """
         Get list of available Gemini models.
 
@@ -151,17 +145,13 @@ class GeminiCliProvider(BaseLLMProvider):
         try:
             # Try to run 'gemini --version' or similar check
             result = subprocess.run(
-                'gemini --version',
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=10
+                "gemini --version", shell=True, capture_output=True, text=True, timeout=10
             )
             return result.returncode == 0
         except Exception:
             return False
 
-    def validate_config(self) -> tuple[bool, Optional[str]]:
+    def validate_config(self) -> tuple[bool, str | None]:
         """
         Validate Gemini CLI configuration.
 

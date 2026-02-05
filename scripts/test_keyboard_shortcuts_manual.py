@@ -27,16 +27,18 @@ Instructions:
 5. Press Tab to verify tab order through controls
 """
 
-import sys
 import os
+import sys
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
-from gui import ConvertImagesWindow
 import tempfile
+
+from gui import ConvertImagesWindow
 from PIL import Image
+from PyQt6.QtWidgets import QApplication, QMessageBox
+
 
 def create_test_images(count=20):
     """Create test images in a temporary directory"""
@@ -44,11 +46,12 @@ def create_test_images(count=20):
 
     for i in range(count):
         # Create a simple test image
-        img = Image.new('RGB', (800, 1000), color=(200, 200, 200))
+        img = Image.new("RGB", (800, 1000), color=(200, 200, 200))
         img_path = os.path.join(temp_dir, f"test_page_{i:03d}.png")
         img.save(img_path)
 
     return temp_dir
+
 
 def main():
     app = QApplication(sys.argv)
@@ -93,10 +96,11 @@ def main():
         "Watch for visual feedback:\n"
         "  - Green flash when including\n"
         "  - Red flash when excluding\n\n"
-        "Hover over buttons to see tooltips!"
+        "Hover over buttons to see tooltips!",
     )
 
     sys.exit(app.exec())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

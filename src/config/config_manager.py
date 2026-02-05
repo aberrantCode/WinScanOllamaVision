@@ -1,15 +1,18 @@
 import configparser
-import os
 import json
-from typing import List, Dict, Any, Optional
+import os
+from typing import Any
+
 
 class ConfigManager:
     def __init__(self, config_file=None):
         # If no config file specified, use AppData directory
         if config_file is None:
-            appdata_root = os.getenv('APPDATA', os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming'))
-            appdata_dir = os.path.join(appdata_root, 'WinScanLLM')
-            config_file = os.path.join(appdata_dir, 'settings.ini')
+            appdata_root = os.getenv(
+                "APPDATA", os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+            )
+            appdata_dir = os.path.join(appdata_root, "WinScanLLM")
+            config_file = os.path.join(appdata_dir, "settings.ini")
 
         self.config_file = config_file
         self.config = configparser.ConfigParser()
@@ -27,130 +30,122 @@ class ConfigManager:
 
     def _create_default_config(self):
         # Default LLM Provider settings
-        if 'LLMProvider' not in self.config:
-            self.config['LLMProvider'] = {
-                'active_provider': 'ollama',
-                'default_model': ''
-            }
+        if "LLMProvider" not in self.config:
+            self.config["LLMProvider"] = {"active_provider": "ollama", "default_model": ""}
 
         # Default Ollama settings
-        if 'Ollama' not in self.config:
-            self.config['Ollama'] = {
-                'model': 'qwen2.5-vl', # Default vision model
-                'base_url': 'http://localhost:11434',
-                'timeout': '300'  # Timeout in seconds (5 minutes default for vision models)
+        if "Ollama" not in self.config:
+            self.config["Ollama"] = {
+                "model": "qwen2.5-vl",  # Default vision model
+                "base_url": "http://localhost:11434",
+                "timeout": "300",  # Timeout in seconds (5 minutes default for vision models)
             }
 
         # Claude CLI settings
-        if 'ClaudeCLI' not in self.config:
-            self.config['ClaudeCLI'] = {
-                'command_template': 'claude --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%',
-                'timeout': '300',
-                'models': 'claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
-                'default_model': 'claude-3-5-sonnet-20241022'
+        if "ClaudeCLI" not in self.config:
+            self.config["ClaudeCLI"] = {
+                "command_template": "claude --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%",
+                "timeout": "300",
+                "models": "claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022",
+                "default_model": "claude-3-5-sonnet-20241022",
             }
 
         # Gemini CLI settings
-        if 'GeminiCLI' not in self.config:
-            self.config['GeminiCLI'] = {
-                'command_template': 'gemini --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%',
-                'timeout': '300',
-                'models': 'gemini-2.0-flash-exp,gemini-1.5-pro',
-                'default_model': 'gemini-2.0-flash-exp'
+        if "GeminiCLI" not in self.config:
+            self.config["GeminiCLI"] = {
+                "command_template": "gemini --model %%MODEL%% --image %%IMAGE_PATHS%% --prompt %%PROMPT%%",
+                "timeout": "300",
+                "models": "gemini-2.0-flash-exp,gemini-1.5-pro",
+                "default_model": "gemini-2.0-flash-exp",
             }
 
         # Default Document Processing settings
-        if 'DocumentProcessing' not in self.config:
-            self.config['DocumentProcessing'] = {
-                'scan_folder': os.path.join(os.path.expanduser('~'), 'Pictures', 'Scans'),
-                'organized_subfolder': 'ORGANIZED',
-                'title_keywords': 'Invoice, Statement, Bill, Receipt, Report, Contract, Agreement',
-                'auto_approval': 'false'
+        if "DocumentProcessing" not in self.config:
+            self.config["DocumentProcessing"] = {
+                "scan_folder": os.path.join(os.path.expanduser("~"), "Pictures", "Scans"),
+                "organized_subfolder": "ORGANIZED",
+                "title_keywords": "Invoice, Statement, Bill, Receipt, Report, Contract, Agreement",
+                "auto_approval": "false",
             }
 
         # Source directories configuration
-        if 'SourceDirectories' not in self.config:
-            default_scan_folder = os.path.join(os.path.expanduser('~'), 'Pictures', 'Scans')
-            self.config['SourceDirectories'] = {
-                'directories': json.dumps([default_scan_folder]),
-                'scan_on_startup': 'true'
+        if "SourceDirectories" not in self.config:
+            default_scan_folder = os.path.join(os.path.expanduser("~"), "Pictures", "Scans")
+            self.config["SourceDirectories"] = {
+                "directories": json.dumps([default_scan_folder]),
+                "scan_on_startup": "true",
             }
 
         # Auto-analysis settings
-        if 'AutoAnalysis' not in self.config:
-            self.config['AutoAnalysis'] = {
-                'enabled': 'true',
-                'incremental': 'true',
-                'batch_size': '10'
+        if "AutoAnalysis" not in self.config:
+            self.config["AutoAnalysis"] = {
+                "enabled": "true",
+                "incremental": "true",
+                "batch_size": "10",
             }
 
         # Theme and appearance settings
-        if 'Theme' not in self.config:
-            self.config['Theme'] = {
-                'theme': 'light',
-                'default_zoom_mode_png': 'fit_to_width',
-                'default_zoom_mode_pdf': 'fit_to_width',
-                'default_zoom_percent_png': '100',
-                'default_zoom_percent_pdf': '100'
+        if "Theme" not in self.config:
+            self.config["Theme"] = {
+                "theme": "light",
+                "default_zoom_mode_png": "fit_to_width",
+                "default_zoom_mode_pdf": "fit_to_width",
+                "default_zoom_percent_png": "100",
+                "default_zoom_percent_pdf": "100",
             }
 
         # Output directory settings
-        if 'OutputDirectory' not in self.config:
-            self.config['OutputDirectory'] = {
-                'strategy': 'same_as_source',
-                'subdirectory_name': 'ORGANIZED',
-                'global_custom_path': ''
+        if "OutputDirectory" not in self.config:
+            self.config["OutputDirectory"] = {
+                "strategy": "same_as_source",
+                "subdirectory_name": "ORGANIZED",
+                "global_custom_path": "",
             }
 
         # System tray settings
-        if 'SystemTray' not in self.config:
-            self.config['SystemTray'] = {
-                'minimize_to_tray': 'false',
-                'close_to_tray': 'false'
-            }
+        if "SystemTray" not in self.config:
+            self.config["SystemTray"] = {"minimize_to_tray": "false", "close_to_tray": "false"}
 
         # Audit trail settings
-        if 'AuditTrail' not in self.config:
-            self.config['AuditTrail'] = {
-                'enabled': 'false'
-            }
+        if "AuditTrail" not in self.config:
+            self.config["AuditTrail"] = {"enabled": "false"}
 
         # Default GUI settings (can be expanded later)
-        if 'GUI' not in self.config:
-            self.config['GUI'] = {
-                'app_name': 'WinScanLLM',
-                'window_width': '1024',
-                'window_height': '768'
+        if "GUI" not in self.config:
+            self.config["GUI"] = {
+                "app_name": "WinScanLLM",
+                "window_width": "1024",
+                "window_height": "768",
             }
 
     def _save_config(self):
-        with open(self.config_file, 'w') as configfile:
+        with open(self.config_file, "w") as configfile:
             self.config.write(configfile)
 
     def get_setting(self, section, key, default=None):
         if section in self.config and key in self.config[section]:
             return self.config[section][key]
-        return default # If not found, return the provided default
+        return default  # If not found, return the provided default
 
     def set_setting(self, section, key, value):
         if section not in self.config:
             self.config[section] = {}
-        self.config[section][key] = str(value) # Ensure value is string
+        self.config[section][key] = str(value)  # Ensure value is string
         self._save_config()
 
     # ==================== Extended Helper Methods ====================
 
-    def get_directories(self) -> List[str]:
+    def get_directories(self) -> list[str]:
         """Get list of source directories from JSON array"""
-        directories_json = self.get_setting('SourceDirectories', 'directories', '[]')
+        directories_json = self.get_setting("SourceDirectories", "directories", "[]")
         try:
             return json.loads(directories_json)
         except json.JSONDecodeError:
             return []
 
-    def set_directories(self, directories: List[str]) -> None:
+    def set_directories(self, directories: list[str]) -> None:
         """Set source directories as JSON array"""
-        self.set_setting('SourceDirectories', 'directories', json.dumps(directories))
+        self.set_setting("SourceDirectories", "directories", json.dumps(directories))
 
     def add_directory(self, directory_path: str) -> None:
         """Add a directory to the source directories list"""
@@ -168,54 +163,54 @@ class ConfigManager:
 
     def get_active_provider(self) -> str:
         """Get the currently active LLM provider"""
-        return self.get_setting('LLMProvider', 'active_provider', 'ollama')
+        return self.get_setting("LLMProvider", "active_provider", "ollama")
 
     def set_active_provider(self, provider_name: str) -> None:
         """Set the active LLM provider"""
-        self.set_setting('LLMProvider', 'active_provider', provider_name)
+        self.set_setting("LLMProvider", "active_provider", provider_name)
 
-    def get_provider_models(self, provider_name: str) -> List[str]:
+    def get_provider_models(self, provider_name: str) -> list[str]:
         """Get available models for a provider as list"""
-        if provider_name == 'ollama':
+        if provider_name == "ollama":
             # For Ollama, return single model as list
-            model = self.get_setting('Ollama', 'model', 'qwen2.5-vl')
+            model = self.get_setting("Ollama", "model", "qwen2.5-vl")
             return [model]
-        elif provider_name == 'claude_cli':
-            models_str = self.get_setting('ClaudeCLI', 'models', '')
-            return [m.strip() for m in models_str.split(',') if m.strip()]
-        elif provider_name == 'gemini_cli':
-            models_str = self.get_setting('GeminiCLI', 'models', '')
-            return [m.strip() for m in models_str.split(',') if m.strip()]
+        elif provider_name == "claude_cli":
+            models_str = self.get_setting("ClaudeCLI", "models", "")
+            return [m.strip() for m in models_str.split(",") if m.strip()]
+        elif provider_name == "gemini_cli":
+            models_str = self.get_setting("GeminiCLI", "models", "")
+            return [m.strip() for m in models_str.split(",") if m.strip()]
         return []
 
-    def get_provider_config(self, provider_name: str) -> Dict[str, Any]:
+    def get_provider_config(self, provider_name: str) -> dict[str, Any]:
         """Get full configuration for a provider"""
-        if provider_name == 'ollama':
+        if provider_name == "ollama":
             return {
-                'model': self.get_setting('Ollama', 'model'),
-                'base_url': self.get_setting('Ollama', 'base_url'),
-                'timeout': int(self.get_setting('Ollama', 'timeout', '300'))
+                "model": self.get_setting("Ollama", "model"),
+                "base_url": self.get_setting("Ollama", "base_url"),
+                "timeout": int(self.get_setting("Ollama", "timeout", "300")),
             }
-        elif provider_name == 'claude_cli':
+        elif provider_name == "claude_cli":
             return {
-                'command_template': self.get_setting('ClaudeCLI', 'command_template'),
-                'timeout': int(self.get_setting('ClaudeCLI', 'timeout', '300')),
-                'models': self.get_provider_models('claude_cli'),
-                'default_model': self.get_setting('ClaudeCLI', 'default_model')
+                "command_template": self.get_setting("ClaudeCLI", "command_template"),
+                "timeout": int(self.get_setting("ClaudeCLI", "timeout", "300")),
+                "models": self.get_provider_models("claude_cli"),
+                "default_model": self.get_setting("ClaudeCLI", "default_model"),
             }
-        elif provider_name == 'gemini_cli':
+        elif provider_name == "gemini_cli":
             return {
-                'command_template': self.get_setting('GeminiCLI', 'command_template'),
-                'timeout': int(self.get_setting('GeminiCLI', 'timeout', '300')),
-                'models': self.get_provider_models('gemini_cli'),
-                'default_model': self.get_setting('GeminiCLI', 'default_model')
+                "command_template": self.get_setting("GeminiCLI", "command_template"),
+                "timeout": int(self.get_setting("GeminiCLI", "timeout", "300")),
+                "models": self.get_provider_models("gemini_cli"),
+                "default_model": self.get_setting("GeminiCLI", "default_model"),
             }
         return {}
 
     def get_bool(self, section: str, key: str, default: bool = False) -> bool:
         """Get a boolean setting"""
         value = self.get_setting(section, key, str(default).lower())
-        return value.lower() in ('true', '1', 'yes', 'on')
+        return value.lower() in ("true", "1", "yes", "on")
 
     def get_int(self, section: str, key: str, default: int = 0) -> int:
         """Get an integer setting"""
