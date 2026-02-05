@@ -221,6 +221,22 @@ class EnhancedSettingsWindow(QDialog):
         self.setMinimumHeight(600)
         self._init_ui()
 
+    def closeEvent(self, event):
+        """Clean up resources when window closes."""
+        # Wait for optimization thread to finish
+        if self.optimization_thread and self.optimization_thread.isRunning():
+            self.optimization_thread.wait(2000)  # Wait up to 2 seconds
+            if self.optimization_thread.isRunning():
+                self.optimization_thread.terminate()
+
+        # Close database connections
+        if hasattr(self, 'metadata_db') and self.metadata_db:
+            self.metadata_db.close()
+        if hasattr(self, 'analysis_db') and self.analysis_db:
+            self.analysis_db.close()
+
+        event.accept()
+
     def _get_light_theme_stylesheet(self) -> str:
         """Return the complete light theme stylesheet."""
         return """

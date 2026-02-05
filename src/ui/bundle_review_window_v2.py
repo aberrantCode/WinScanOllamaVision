@@ -1294,28 +1294,37 @@ class BundleReviewWindow(QDialog):
             if title_label and "Extracted Metadata" in title_label.text():
                 # Update metadata inputs
                 content_frame = section.findChild(QFrame, "accordion_content")
-                if content_frame:
-                    # Get current content widget
-                    old_widget = content_frame.layout().itemAt(0).widget()
-                    new_widget = self._create_metadata_content()
-                    content_frame.layout().replaceWidget(old_widget, new_widget)
-                    old_widget.deleteLater()
+                if content_frame and content_frame.layout():
+                    # Get current content widget with null check
+                    item = content_frame.layout().itemAt(0)
+                    if item:
+                        old_widget = item.widget()
+                        if old_widget:
+                            new_widget = self._create_metadata_content()
+                            content_frame.layout().replaceWidget(old_widget, new_widget)
+                            old_widget.deleteLater()
 
             elif title_label and "File Information" in title_label.text():
                 content_frame = section.findChild(QFrame, "accordion_content")
-                if content_frame:
-                    old_widget = content_frame.layout().itemAt(0).widget()
-                    new_widget = self._create_file_info_content()
-                    content_frame.layout().replaceWidget(old_widget, new_widget)
-                    old_widget.deleteLater()
+                if content_frame and content_frame.layout():
+                    item = content_frame.layout().itemAt(0)
+                    if item:
+                        old_widget = item.widget()
+                        if old_widget:
+                            new_widget = self._create_file_info_content()
+                            content_frame.layout().replaceWidget(old_widget, new_widget)
+                            old_widget.deleteLater()
 
             elif title_label and "Analysis Information" in title_label.text():
                 content_frame = section.findChild(QFrame, "accordion_content")
-                if content_frame:
-                    old_widget = content_frame.layout().itemAt(0).widget()
-                    new_widget = self._create_analysis_content()
-                    content_frame.layout().replaceWidget(old_widget, new_widget)
-                    old_widget.deleteLater()
+                if content_frame and content_frame.layout():
+                    item = content_frame.layout().itemAt(0)
+                    if item:
+                        old_widget = item.widget()
+                        if old_widget:
+                            new_widget = self._create_analysis_content()
+                            content_frame.layout().replaceWidget(old_widget, new_widget)
+                            old_widget.deleteLater()
 
     def _update_cursor(self):
         """Update cursor."""

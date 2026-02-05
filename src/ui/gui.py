@@ -211,8 +211,6 @@ class ProgressBannerWidget(QWidget):
             self.setFixedHeight(120)
             self.details_toggled.emit(False)
 
-        self.details_toggled.emit(self.details_expanded)
-
     def update_progress(self, current: int, total: int, status_text: str = ""):
         """Update progress display"""
         if total > 0:
