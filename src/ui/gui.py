@@ -6155,23 +6155,37 @@ class StartupWindow(QWidget):
         """Manually trigger document analysis - opens status window with auto-start"""
         # Initialize analysis service if not already done
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from analysis_db import AnalysisDB
-            from metadata_db import MetadataDB
-
             from config.config_manager import ConfigManager
+            from db.analysis_db import AnalysisDB
+            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
             config_manager = ConfigManager()
-            analysis_db = AnalysisDB()
-            metadata_db = MetadataDB()
-            self.analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
+            self.analysis_db = AnalysisDB()
+            self.metadata_db = MetadataDB()
+            self.analysis_service = AnalysisService(
+                config_manager, self.analysis_db, self.metadata_db
+            )
 
-        # Open status window with auto-start
+        # Ensure database instances exist
+        if not hasattr(self, "analysis_db") or self.analysis_db is None:
+            from db.analysis_db import AnalysisDB
+
+            self.analysis_db = AnalysisDB()
+        if not hasattr(self, "metadata_db") or self.metadata_db is None:
+            from db.metadata_db import MetadataDB
+
+            self.metadata_db = MetadataDB()
+
+        # Open status window with auto-start based on config
+        auto_start = self.config_manager.get_bool("GUI", "auto_start_analysis", False)
         status_window = AnalysisStatusWindow(
             parent=self,
+            analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
             analysis_service=self.analysis_service,
             config_manager=self.config_manager,
-            auto_start_analysis=True,
+            auto_start_analysis=auto_start,
         )
         status_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         status_window.setModal(False)
@@ -6184,19 +6198,32 @@ class StartupWindow(QWidget):
         """Show the Analysis Status window"""
         # Initialize analysis service if needed
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from analysis_db import AnalysisDB
-            from metadata_db import MetadataDB
-
             from config.config_manager import ConfigManager
+            from db.analysis_db import AnalysisDB
+            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
             config_manager = ConfigManager()
-            analysis_db = AnalysisDB()
-            metadata_db = MetadataDB()
-            self.analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
+            self.analysis_db = AnalysisDB()
+            self.metadata_db = MetadataDB()
+            self.analysis_service = AnalysisService(
+                config_manager, self.analysis_db, self.metadata_db
+            )
+
+        # Ensure database instances exist
+        if not hasattr(self, "analysis_db") or self.analysis_db is None:
+            from db.analysis_db import AnalysisDB
+
+            self.analysis_db = AnalysisDB()
+        if not hasattr(self, "metadata_db") or self.metadata_db is None:
+            from db.metadata_db import MetadataDB
+
+            self.metadata_db = MetadataDB()
 
         status_window = AnalysisStatusWindow(
             parent=self,
+            analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
             analysis_service=self.analysis_service,
             config_manager=self.config_manager,
             auto_start_analysis=False,
@@ -6209,11 +6236,8 @@ class StartupWindow(QWidget):
         self._analysis_status_window = status_window
 
     def quit_application(self):
-        """Handle Quit button click with confirmation"""
-        reply = show_question(self, "Quit Application", "Are you sure you want to quit?")
-
-        if reply == QMessageBox.StandardButton.Yes:
-            QApplication.quit()
+        """Handle Quit button click - delegates to closeEvent for confirmation"""
+        self.close()
 
     def on_processing_finished(self):
         if self.processing_window:
@@ -6353,8 +6377,15 @@ class StartupWindow(QWidget):
                 if reply == QMessageBox.StandardButton.Yes:
                     logger.info(f"User chose to analyze {unanalyzed_count} documents")
                     # Open status window with auto-start
+                    from db.metadata_db import MetadataDB
+
+                    status_analysis_db = AnalysisDB()
+                    status_metadata_db = MetadataDB()
+
                     status_window = AnalysisStatusWindow(
                         parent=self,
+                        analysis_db=status_analysis_db,
+                        metadata_db=status_metadata_db,
                         analysis_service=analysis_service,
                         config_manager=self.config_manager,
                         auto_start_analysis=True,
@@ -6367,6 +6398,25 @@ class StartupWindow(QWidget):
                     logger.info("User chose to skip document analysis")
             except Exception as e:
                 logger.error(f"Exception showing dialog: {e}", exc_info=True)
+
+    def closeEvent(self, event):  # noqa: N802
+        """Handle window close event with optional confirmation"""
+        # Check if confirmation is enabled in settings
+        confirm_exit = self.config_manager.get_bool("GUI", "confirm_before_exit", True)
+
+        if confirm_exit:
+            reply = show_question(
+                self,
+                "Confirm Exit",
+                "Are you sure you want to exit the application?",
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
 
 
 class AnalysisWorker(QThread):

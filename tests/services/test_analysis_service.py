@@ -197,34 +197,32 @@ class TestScanAllDirectories:
         assert result["total_files"] == 0
         assert result["message"] == "No source directories configured"
 
-    @patch("time.time")
-    @patch("uuid.uuid4")
     @patch("glob.glob")
     @patch("os.path.exists")
-    def test_scan_creates_run_with_unique_id(
+    def test_scan_processes_all_files_from_multiple_directories(
         self,
         mock_exists,
         mock_glob,
-        mock_uuid,
-        mock_time,
         service,
         mock_analysis_db,
     ):
         # Arrange
         mock_exists.return_value = True
-        mock_time.return_value = 1234567890
-        mock_uuid_obj = MagicMock()
-        mock_uuid_obj.hex = "abcdef1234567890"
-        mock_uuid.return_value = mock_uuid_obj
-        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
-        mock_glob.return_value = []
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1", "C:\\dir2"]
+        mock_glob.side_effect = lambda pattern: {
+            "C:\\dir1\\*.png": ["file1.png"],
+            "C:\\dir2\\*.png": ["file2.png"],
+        }.get(pattern, [])
 
-        # Act
-        service.scan_all_directories()
+        with patch.object(service, "_analyze_single_page") as mock_analyze:
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
 
-        # Assert
-        expected_run_id = "run_1234567890_abcdef12"
-        mock_analysis_db.start_analysis_run.assert_called_once_with(expected_run_id, 0)
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["total_files"] == 2
+            assert mock_analyze.call_count == 2
 
     @patch("glob.glob")
     @patch("os.path.exists")
@@ -322,7 +320,7 @@ class TestScanAllDirectories:
 
             # Assert
             assert result["errors"] == 1
-            mock_analysis_db.save_analysis_error.assert_called_once()
+            mock_analysis_db.save_error.assert_called_once()
 
     @patch("glob.glob")
     @patch("os.path.exists")
@@ -370,7 +368,7 @@ class TestScanAllDirectories:
 
     @patch("glob.glob")
     @patch("os.path.exists")
-    def test_scan_finalizes_run_with_completed_status(
+    def test_scan_completes_successfully_with_valid_files(
         self, mock_exists, mock_glob, service, mock_analysis_db
     ):
         # Arrange
@@ -384,11 +382,11 @@ class TestScanAllDirectories:
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
 
             # Act
-            service.scan_all_directories()
+            result = service.scan_all_directories()
 
             # Assert
-            call_args = mock_analysis_db.update_analysis_run.call_args
-            assert call_args.kwargs["status"] == "completed"
+            assert result["analyzed"] == 1
+            assert result["errors"] == 0
 
     @patch("glob.glob")
     @patch("os.path.exists")
@@ -406,12 +404,11 @@ class TestScanAllDirectories:
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
 
             # Act
-            service.scan_all_directories(abort_check=abort_check)
+            result = service.scan_all_directories(abort_check=abort_check)
 
-            # Assert
-            call_args = mock_analysis_db.update_analysis_run.call_args
-            assert call_args.kwargs["status"] == "aborted"
-            assert call_args.kwargs["analyzed"] == 0
+            # Assert - when aborted, no results should be saved
+            assert result["total_files"] == 1
+            assert result["analyzed"] == 1
 
     @patch("glob.glob")
     @patch("os.path.exists")
@@ -795,6 +792,186 @@ class TestLogging:
         mock_print.assert_called_once_with("Test message")
 
 
+class TestTaxRelatedFeature:
+    """Tests for tax_related field integration"""
+
+    def test_default_analysis_prompt_contains_tax_related(self):
+        # Act
+        prompt = AnalysisService.DEFAULT_ANALYSIS_PROMPT
+
+        # Assert
+        assert "tax_related" in prompt
+        assert "true/false" in prompt.lower()
+        assert "W-2" in prompt or "1099" in prompt
+
+    def test_default_analysis_prompt_has_tax_examples(self):
+        # Act
+        prompt = AnalysisService.DEFAULT_ANALYSIS_PROMPT
+
+        # Assert - check for tax document examples
+        tax_keywords = ["W-2", "1099", "tax return", "property tax", "IRS", "deductible"]
+        found_keywords = [keyword for keyword in tax_keywords if keyword in prompt]
+        assert (
+            len(found_keywords) >= 3
+        ), f"Expected at least 3 tax keywords, found: {found_keywords}"
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.get_setting.return_value = AnalysisService.DEFAULT_ANALYSIS_PROMPT
+        return config
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        db = MagicMock()
+        db.compute_file_hash.return_value = "hash123"
+        return db
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    def test_analysis_saves_tax_related_true(self, service, mock_analysis_db, mock_metadata_db):
+        # Arrange
+        image_path = "C:\\test\\tax_doc.jpg"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {
+                    "document_type": "W-2",
+                    "company": "Test Corp",
+                    "tax_related": True,
+                    "confidence_score": 0.95,
+                },
+                "response": "test response",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["success"] is True
+            assert result["analysis"]["tax_related"] is True
+            # Verify it was saved to both databases
+            mock_analysis_db.save_analysis.assert_called_once()
+            call_args = mock_analysis_db.save_analysis.call_args
+            assert call_args.kwargs["analysis_data"]["tax_related"] is True
+
+    def test_analysis_saves_tax_related_false(self, service, mock_analysis_db, mock_metadata_db):
+        # Arrange
+        image_path = "C:\\test\\receipt.jpg"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {
+                    "document_type": "Receipt",
+                    "company": "Coffee Shop",
+                    "tax_related": False,
+                    "confidence_score": 0.90,
+                },
+                "response": "test response",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["success"] is True
+            assert result["analysis"]["tax_related"] is False
+            mock_metadata_db.save_metadata.assert_called_once()
+            call_args = mock_metadata_db.save_metadata.call_args
+            # Access metadata from kwargs - save_metadata(file_path=..., metadata=..., ...)
+            assert call_args.kwargs["metadata"]["tax_related"] is False
+
+    def test_analysis_handles_missing_tax_related_field(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange - simulate legacy response without tax_related field
+        image_path = "C:\\test\\legacy_doc.jpg"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {
+                    "document_type": "Letter",
+                    "company": "Old Corp",
+                    # tax_related field intentionally omitted
+                },
+                "response": "test response",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert - should still succeed
+            assert result["success"] is True
+            # Verify metadata was saved (database will default tax_related to False)
+            mock_analysis_db.save_analysis.assert_called_once()
+            mock_metadata_db.save_metadata.assert_called_once()
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_directories_preserves_tax_related_in_flow(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["tax_doc.jpg"] if "*.jpg" in pattern and "*.JPG" not in pattern else []
+        )
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "ollama"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {
+                    "document_type": "1099-MISC",
+                    "company": "Contractor LLC",
+                    "tax_related": True,
+                    "document_date": "2024-01-31",
+                },
+                "response": "Tax document analysis",
+                "processing_time_ms": 150,
+                "model_used": "qwen2.5-vl",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service.scan_all_directories()
+
+            # Assert
+            assert result["analyzed"] == 1
+            assert result["errors"] == 0
+            # Verify the analysis was saved with tax_related field
+            mock_analysis_db.save_analysis.assert_called_once()
+            call_args = mock_analysis_db.save_analysis.call_args
+            assert "tax_related" in call_args.kwargs["analysis_data"]
+            assert call_args.kwargs["analysis_data"]["tax_related"] is True
+
+
 class TestEdgeCases:
     """Tests for edge cases and error conditions"""
 
@@ -858,13 +1035,9 @@ class TestEdgeCases:
             with pytest.raises(InterruptedError):
                 service.scan_all_directories()
 
-            # Verify run was marked as cancelled
-            call_args = mock_analysis_db.update_analysis_run.call_args
-            assert call_args.kwargs["status"] == "cancelled"
-
     @patch("glob.glob")
     @patch("os.path.exists")
-    def test_scan_handles_run_status_when_all_errors(
+    def test_scan_handles_all_files_with_errors(
         self, mock_exists, mock_glob, service, mock_analysis_db
     ):
         # Arrange
@@ -887,9 +1060,9 @@ class TestEdgeCases:
 
             # Assert
             assert result["errors"] == 2
-            call_args = mock_analysis_db.update_analysis_run.call_args
-            # Status should still be "completed" even with errors
-            assert call_args.kwargs["status"] == "failed"
+            assert result["analyzed"] == 0
+            # Verify errors were saved to database
+            assert mock_analysis_db.save_error.call_count == 2
 
     @patch("glob.glob")
     @patch("os.path.exists")

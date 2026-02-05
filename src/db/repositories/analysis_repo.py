@@ -51,9 +51,9 @@ class AnalysisRepository:
                 document_type, company, document_date,
                 page_number, total_pages, belongs_to_same_doc,
                 confidence_score, rotation_needed, suggested_rotation,
-                rotation_confidence, raw_response, extracted_metadata,
+                rotation_confidence, tax_related, raw_response, extracted_metadata,
                 processing_time_ms, analyzed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
             (
                 file_path,
@@ -70,6 +70,7 @@ class AnalysisRepository:
                 analysis_data.get("rotation_needed", False),
                 analysis_data.get("suggested_rotation", 0),
                 analysis_data.get("rotation_confidence"),
+                analysis_data.get("tax_related", False),
                 raw_response,
                 json.dumps(analysis_data),
                 processing_time_ms,
@@ -97,6 +98,7 @@ class AnalysisRepository:
             "total_pages": "total_pages",
             "rotation_needed": "rotation_needed",
             "confidence_score": "confidence_score",
+            "tax_related": "tax_related",
         }
 
         for meta_key, db_column in field_mapping.items():
@@ -112,11 +114,12 @@ class AnalysisRepository:
             # Add file_path for WHERE clause
             values.append(file_path)
 
+            # Column names from internal code, values parameterized - safe from injection
             query = f"""
                 UPDATE analysis_results
                 SET {", ".join(update_fields)}
                 WHERE file_path = ?
-            """
+            """  # nosec B608
 
             self.conn.execute(query, tuple(values))
             self.conn.commit()

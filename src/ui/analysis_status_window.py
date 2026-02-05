@@ -29,6 +29,7 @@ class AnalysisStatusWindow(QDialog):
         self,
         parent=None,
         analysis_db=None,
+        metadata_db=None,
         config_manager=None,
         analysis_service=None,
         auto_start_analysis: bool = False,
@@ -38,6 +39,13 @@ class AnalysisStatusWindow(QDialog):
         self.config_manager = config_manager
         self.analysis_service = analysis_service
         self._auto_start_analysis = auto_start_analysis
+
+        # Initialize metadata_db for delete operations
+        if metadata_db is None:
+            from db.metadata_db import MetadataDB
+
+            metadata_db = MetadataDB()
+        self.metadata_db = metadata_db
 
         # Determine theme
         self.is_dark_mode = False
@@ -126,18 +134,18 @@ class AnalysisStatusWindow(QDialog):
         toolbar_layout.addStretch()
 
         # Right side: Control buttons
-        # Start button uses accent color for primary action
+        # Start button uses green color for primary action
         self.start_analysis_btn = QPushButton("▶ Start Analysis")
         self.start_analysis_btn.setStyleSheet("""
             QPushButton {
-                background-color: #3B82F6;
+                background-color: #10B981;
                 color: white;
                 font-weight: 600;
                 padding: 6px 16px;
                 border: none;
             }
             QPushButton:hover {
-                background-color: #2563EB;
+                background-color: #059669;
             }
         """)
         self.start_analysis_btn.clicked.connect(self._on_toolbar_start_analysis)
@@ -301,11 +309,9 @@ class AnalysisStatusWindow(QDialog):
             "Total number of image files detected in all configured source directories"
         )
 
-        self.analyzed_pages_card = create_metric_card(
-            self.theme_colors, "✅ Analyzed Pages", "0 (0%)"
-        )
+        self.analyzed_pages_card = create_metric_card(self.theme_colors, "✅ Analyzed Pages", "0%")
         self.analyzed_pages_card.setToolTip(
-            "Number of pages that have been analyzed by the LLM to extract metadata (percentage of total files)"
+            "Percentage of files analyzed by the LLM to extract metadata"
         )
 
         self.documents_card = create_metric_card(self.theme_colors, "📦 Documents", "0 (0p)")
@@ -313,27 +319,34 @@ class AnalysisStatusWindow(QDialog):
             "Number of multi-page documents created from bundled pages (total pages in parentheses)"
         )
 
-        self.cache_card = create_metric_card(self.theme_colors, "⚡ Cache Hit Rate", "0%")
-        self.cache_card.setToolTip(
-            "Percentage of files served from cache (based on file hash) without re-analyzing"
+        self.metadata_quality_card = create_metric_card(
+            self.theme_colors, "📋 Missing Metadata", "0%"
+        )
+        self.metadata_quality_card.setToolTip(
+            "Percentage of files missing key metadata (company, document type, or date)"
         )
 
         self.avg_processing_card = create_metric_card(self.theme_colors, "⏱️ Avg Processing", "--")
         self.avg_processing_card.setToolTip(
-            "Average time to process a single file and extract metadata (excludes cached files)"
+            "Average time to analyze a file with the LLM (files analyzed from cache show 0ms)"
         )
+
+        self.tax_related_card = create_metric_card(self.theme_colors, "💰 Tax Related", "0%")
+        self.tax_related_card.setToolTip("Percentage of documents identified as tax-related")
 
         self.total_files_card.setMinimumWidth(140)
         self.analyzed_pages_card.setMinimumWidth(160)
         self.documents_card.setMinimumWidth(140)
-        self.cache_card.setMinimumWidth(140)
+        self.metadata_quality_card.setMinimumWidth(160)
         self.avg_processing_card.setMinimumWidth(140)
+        self.tax_related_card.setMinimumWidth(140)
 
         metrics_row.addWidget(self.total_files_card)
         metrics_row.addWidget(self.analyzed_pages_card)
         metrics_row.addWidget(self.documents_card)
-        metrics_row.addWidget(self.cache_card)
+        metrics_row.addWidget(self.metadata_quality_card)
         metrics_row.addWidget(self.avg_processing_card)
+        metrics_row.addWidget(self.tax_related_card)
 
         # Create main grid layout
         grid = QGridLayout()
@@ -553,6 +566,39 @@ class AnalysisStatusWindow(QDialog):
         """Calculate comprehensive collection statistics from database"""
         import os
 
+        # Verify database connection is valid
+        if (
+            not self.analysis_db
+            or not hasattr(self.analysis_db, "connection")
+            or not self.analysis_db.connection
+            or not hasattr(self.analysis_db.connection, "connection")
+            or not self.analysis_db.connection.connection
+        ):
+            # Return default empty stats if database not available
+            return {
+                "files_detected": 0,
+                "files_analyzed": 0,
+                "high_confidence": 0,
+                "pages_bundled": 0,
+                "documents_archived": 0,
+                "missing_metadata_pct": 0,
+                "processing_speed": 0,
+                "eta_minutes": 0,
+                "avg_confidence": 0,
+                "error_rate": 0,
+                "metadata_completeness": 0,
+                "pending_analysis": 0,
+                "pending_bundles": 0,
+                "failed_files": 0,
+                "unbundled_files": 0,
+                "bundle_acceptance_rate": 0,
+                "type_distribution": {},
+                "company_distribution": {},
+                "total_archived_pages": 0,
+                "cached_count": 0,
+                "avg_processing_time_ms": 0,
+            }
+
         cursor = self.analysis_db.connection.connection.cursor()
 
         # Total files detected (scan actual directories, not just analyzed files)
@@ -566,8 +612,8 @@ class AnalysisStatusWindow(QDialog):
                             if file.lower().endswith((".png", ".jpg", ".jpeg")):
                                 files_detected += 1
 
-        # Files analyzed (non-cached)
-        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 0")
+        # Files analyzed (all files with analysis results, including cached)
+        cursor.execute("SELECT COUNT(*) FROM analysis_results")
         files_analyzed = cursor.fetchone()[0]
 
         # High confidence (>= 80%)
@@ -599,10 +645,24 @@ class AnalysisStatusWindow(QDialog):
         )
         documents_archived = cursor.fetchone()[0]
 
-        # Cache hit rate
+        # Cached files count (for stats dictionary)
         cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 1")
         cached_count = cursor.fetchone()[0]
-        cache_hit_rate = (cached_count / files_detected * 100) if files_detected > 0 else 0
+
+        # Missing metadata percentage (files missing company, document type, or date)
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_results
+            WHERE (company IS NULL OR company = '' OR company = 'N/A')
+               OR (document_type IS NULL OR document_type = '' OR document_type = 'N/A')
+               OR (document_date IS NULL OR document_date = '' OR document_date = 'N/A')
+        """
+        )
+        missing_metadata_count = cursor.fetchone()[0]
+        missing_metadata_pct = (
+            (missing_metadata_count / files_detected * 100) if files_detected > 0 else 0
+        )
 
         # Processing speed (last 100 analyses, non-cached)
         cursor.execute(
@@ -649,12 +709,13 @@ class AnalysisStatusWindow(QDialog):
         # Metadata completeness
         metadata_completeness = {}
         for field in ["company", "document_type", "document_date", "page_number"]:
+            # Field names from hardcoded list - safe from injection
             cursor.execute(
                 f"""
                 SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM analysis_results)
                 FROM analysis_results
                 WHERE {field} IS NOT NULL AND {field} != ''
-            """
+            """  # nosec B608
             )
             result = cursor.fetchone()[0]
             metadata_completeness[field] = result if result else 0
@@ -708,16 +769,21 @@ class AnalysisStatusWindow(QDialog):
         archived_pages_result = cursor.fetchone()[0]
         total_archived_pages = archived_pages_result if archived_pages_result else 0
 
-        # Average processing time (non-cached files only)
+        # Average processing time (includes all non-cached files, even failed or 0ms)
         cursor.execute(
             """
-            SELECT AVG(processing_time_ms)
+            SELECT AVG(COALESCE(processing_time_ms, 0))
             FROM analysis_results
-            WHERE is_cached = 0 AND processing_time_ms IS NOT NULL
+            WHERE is_cached = 0
         """
         )
         avg_processing_result = cursor.fetchone()[0]
         avg_processing_time_ms = avg_processing_result if avg_processing_result else 0
+
+        # Tax related count and percentage
+        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE tax_related = 1")
+        tax_related_count = cursor.fetchone()[0]
+        tax_related_pct = (tax_related_count / files_analyzed * 100) if files_analyzed > 0 else 0
 
         return {
             "files_detected": files_detected,
@@ -725,7 +791,7 @@ class AnalysisStatusWindow(QDialog):
             "high_confidence": high_confidence,
             "pages_bundled": pages_bundled,
             "documents_archived": documents_archived,
-            "cache_hit_rate": cache_hit_rate,
+            "missing_metadata_pct": missing_metadata_pct,
             "processing_speed": processing_speed,
             "eta_minutes": eta_minutes,
             "avg_confidence": avg_confidence,
@@ -741,6 +807,8 @@ class AnalysisStatusWindow(QDialog):
             "total_archived_pages": total_archived_pages,
             "cached_count": cached_count,
             "avg_processing_time_ms": avg_processing_time_ms,
+            "tax_related_count": tax_related_count,
+            "tax_related_pct": tax_related_pct,
         }
 
     def _update_metric_cards(self, stats):
@@ -750,14 +818,19 @@ class AnalysisStatusWindow(QDialog):
             str(stats["files_detected"])
         )
 
-        # Analyzed Pages (with percentage)
+        # Analyzed Pages (percentage only, count in tooltip)
         analyzed_pct = (
             (stats["files_analyzed"] / stats["files_detected"] * 100)
             if stats["files_detected"] > 0
             else 0
         )
         self.analyzed_pages_card.findChild(QLabel, "✅_analyzed_pages_value").setText(
-            f"{stats['files_analyzed']} ({analyzed_pct:.1f}%)"
+            f"{analyzed_pct:.1f}%"
+        )
+        # Update tooltip with count
+        self.analyzed_pages_card.setToolTip(
+            f"Percentage of files analyzed by the LLM to extract metadata\n\n"
+            f"{stats['files_analyzed']:,} of {stats['files_detected']:,} files analyzed"
         )
 
         # Documents (with page count)
@@ -765,9 +838,9 @@ class AnalysisStatusWindow(QDialog):
             f"{stats['documents_archived']} ({stats['total_archived_pages']}p)"
         )
 
-        # Cache Hit Rate
-        self.cache_card.findChild(QLabel, "⚡_cache_hit_rate_value").setText(
-            f"{stats['cache_hit_rate']:.1f}%"
+        # Missing Metadata Percentage
+        self.metadata_quality_card.findChild(QLabel, "📋_missing_metadata_value").setText(
+            f"{stats['missing_metadata_pct']:.1f}%"
         )
 
         # Average Processing Time
@@ -785,6 +858,18 @@ class AnalysisStatusWindow(QDialog):
                 )
         else:
             self.avg_processing_card.findChild(QLabel, "⏱️_avg_processing_value").setText("--")
+
+        # Tax Related Percentage
+        tax_related_pct = stats.get("tax_related_pct", 0)
+        tax_related_count = stats.get("tax_related_count", 0)
+        self.tax_related_card.findChild(QLabel, "💰_tax_related_value").setText(
+            f"{tax_related_pct:.1f}%"
+        )
+        # Update tooltip with count
+        self.tax_related_card.setToolTip(
+            f"Percentage of documents identified as tax-related\n\n"
+            f"{tax_related_count:,} of {stats['files_analyzed']:,} files are tax-related"
+        )
 
     def _update_funnel(self, stats):
         """Update analysis completion funnel"""
@@ -1145,16 +1230,18 @@ class AnalysisStatusWindow(QDialog):
         """Handle progress updates from analysis thread"""
         # Update toolbar progress
         percentage = int((current / total) * 100) if total > 0 else 0
+        # Append current filename to status text
+        display_text = f"Analyzing... {status_text}"
         self._update_toolbar_status(
-            "analyzing", "Analyzing...", f"{current}/{total} files ({percentage}%)"
+            "analyzing", display_text, f"{current}/{total} files ({percentage}%)"
         )
 
         # Update stats (increment based on status text)
-        if "cached" in status_text.lower():
-            self._analysis_stats["cached"] += 1
-        elif "error" in status_text.lower() or "failed" in status_text.lower():
+        # Note: "cached" is treated as "analyzed" - it's just an implementation detail
+        if "error" in status_text.lower() or "failed" in status_text.lower():
             self._analysis_stats["errors"] += 1
         else:
+            # Both fresh analysis and cached results count as "analyzed"
             self._analysis_stats["analyzed"] += 1
 
     def _on_analysis_complete(self, stats: dict):
@@ -1182,7 +1269,6 @@ class AnalysisStatusWindow(QDialog):
                 f"Analysis Complete!\n\n"
                 f"Total Files: {total}\n"
                 f"Analyzed: {analyzed}\n"
-                f"Cached: {stats.get('cached', 0)}\n"
                 f"Errors: {errors}"
             )
 
@@ -1281,9 +1367,8 @@ class AnalysisStatusWindow(QDialog):
             # Determine status
             if row.get("confidence_score") is None:
                 status = "Failed"
-            elif row.get("is_cached"):
-                status = "Cached"
             else:
+                # Both fresh analysis and cached results show as "Analyzed"
                 status = "Analyzed"
 
             # Get file stats if file exists
@@ -1322,6 +1407,7 @@ class AnalysisStatusWindow(QDialog):
                 "error_message": "",  # TODO: Get from errors table
                 "file_hash": row.get("file_hash", ""),
                 "raw_response": row.get("raw_response", ""),
+                "tax_related": bool(row.get("tax_related", False)),
             }
 
             transformed.append(transformed_row)

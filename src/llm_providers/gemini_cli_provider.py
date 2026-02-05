@@ -64,9 +64,13 @@ class GeminiCliProvider(BaseLLMProvider):
             print(f"Images: {len(image_paths)}")
             print("=================================\n")
 
-            # Execute command
+            # Execute command (shell=True required for command templates with pipes/redirects)
             result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=self.timeout
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,  # nosec B602
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)

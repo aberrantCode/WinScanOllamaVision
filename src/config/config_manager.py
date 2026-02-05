@@ -116,13 +116,22 @@ class ConfigManager:
                 "app_name": "WinScanLLM",
                 "window_width": "1024",
                 "window_height": "768",
+                "auto_start_analysis": "false",
+                "confirm_before_exit": "true",
             }
 
     def _save_config(self):
         with open(self.config_file, "w") as configfile:
             self.config.write(configfile)
 
+    def _reload_config(self):
+        """Reload configuration from disk to pick up external changes"""
+        if os.path.exists(self.config_file):
+            self.config.read(self.config_file)
+
     def get_setting(self, section, key, default=None):
+        # Reload config to ensure we have the latest values
+        self._reload_config()
         if section in self.config and key in self.config[section]:
             return self.config[section][key]
         return default  # If not found, return the provided default

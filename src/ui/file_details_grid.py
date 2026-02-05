@@ -21,6 +21,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QAction, QColor, QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -43,7 +44,7 @@ class FileDetailsTableModel(QAbstractTableModel):
     """
     Table model for file analysis details.
 
-    Supports 18 columns with configurable visibility.
+    Supports 19 columns with configurable visibility.
     """
 
     # Column definitions
@@ -54,6 +55,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("company", "Company", True),
         ("document_type", "Type", True),
         ("document_date", "Date", True),
+        ("tax_related", "Tax Related", True),
         ("page_number", "Page", True),
         ("total_pages", "Total", True),
         ("file_size", "Size", True),
@@ -176,7 +178,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             return self._format_datetime(value)
         elif col_key == "processing_duration":
             return self._format_duration(value)
-        elif col_key == "cache_hit":
+        elif col_key in ("cache_hit", "tax_related"):
             return "Yes" if value else "No"
         elif col_key == "error_message":
             # Truncate long error messages
@@ -253,6 +255,8 @@ class FileDetailsTableModel(QAbstractTableModel):
             "processing_duration",
         ):
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        elif col_key in ("cache_hit", "tax_related"):
+            return Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
         return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
     def _get_column_tooltip(self, col_key: str, header: str) -> str:
@@ -264,6 +268,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "company": "Extracted company/organization name",
             "document_type": "Type of document (Invoice, Receipt, etc.)",
             "document_date": "Date extracted from document",
+            "tax_related": "Whether document is related to taxes (W-2, 1099, tax returns, etc.)",
             "page_number": "Page number (if detected)",
             "total_pages": "Total pages in document (if detected)",
             "file_size": "Size of file on disk",
@@ -666,9 +671,9 @@ class FileDetailsDialog(QDialog):
             f"background-color: {self.theme_colors['bg_secondary']}; padding: 10px;"
         )
 
-        view_doc_btn = QPushButton("📄 View Document")
-        view_doc_btn.clicked.connect(self._view_document)
-        button_box.addButton(view_doc_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        open_doc_btn = QPushButton("📄 Open Document")
+        open_doc_btn.clicked.connect(self._view_document)
+        button_box.addButton(open_doc_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
         save_metadata_btn = QPushButton("💾 Save Metadata")
         save_metadata_btn.clicked.connect(self._save_metadata)
@@ -955,8 +960,40 @@ class FileDetailsDialog(QDialog):
             lbl.setMinimumWidth(130)
             row_layout.addWidget(lbl)
 
-            # Input field (text or dropdown)
-            if widget_type == "dropdown":
+            # Input field (text, dropdown, or checkbox)
+            if widget_type == "checkbox":
+                input_widget = QCheckBox()
+                # Handle boolean conversion
+                if isinstance(current_value, bool):
+                    input_widget.setChecked(current_value)
+                elif isinstance(current_value, (int, str)):
+                    input_widget.setChecked(
+                        bool(int(current_value)) if str(current_value).isdigit() else False
+                    )
+                else:
+                    input_widget.setChecked(False)
+                input_widget.setStyleSheet(f"""
+                    QCheckBox {{
+                        background: transparent;
+                        color: {self.theme_colors["text_primary"]};
+                        spacing: 5px;
+                    }}
+                    QCheckBox::indicator {{
+                        width: 18px;
+                        height: 18px;
+                        border: 1px solid {self.theme_colors["border"]};
+                        border-radius: 3px;
+                        background-color: {self.theme_colors["bg_primary"]};
+                    }}
+                    QCheckBox::indicator:checked {{
+                        background-color: {self.theme_colors["accent"]};
+                        border-color: {self.theme_colors["accent"]};
+                    }}
+                    QCheckBox::indicator:hover {{
+                        border-color: {self.theme_colors["accent"]};
+                    }}
+                """)
+            elif widget_type == "dropdown":
                 input_widget = QComboBox()
                 input_widget.setEditable(False)
                 input_widget.addItems(["none", "90_cw", "90_ccw", "180"])
@@ -1070,6 +1107,14 @@ class FileDetailsDialog(QDialog):
 
         add_editable_row(
             "Confidence Score", "confidence_score", confidence_display, "0-100 percentage"
+        )
+
+        # Tax related checkbox
+        add_editable_row(
+            "Tax Related",
+            "tax_related",
+            self.file_data.get("tax_related", False),
+            widget_type="checkbox",
         )
 
         return widget
@@ -1201,10 +1246,15 @@ class FileDetailsDialog(QDialog):
                 value = input_widget.text().strip()
             elif isinstance(input_widget, QComboBox):
                 value = input_widget.currentText()
+            elif isinstance(input_widget, QCheckBox):
+                value = input_widget.isChecked()
+                # Always include checkbox values (even False)
+                updated_metadata[field_name] = value
+                continue
             else:
                 continue
 
-            # Only include non-empty values
+            # Only include non-empty values (for text fields)
             if value:
                 updated_metadata[field_name] = value
 
@@ -1238,6 +1288,7 @@ class FileDetailsDialog(QDialog):
                         "total_pages": updated_metadata.get("total_pages", ""),
                         "rotation_needed": updated_metadata.get("rotation_needed", ""),
                         "confidence_score": updated_metadata.get("confidence_score", ""),
+                        "tax_related": updated_metadata.get("tax_related", False),
                     }
 
                     # Update analysis database
@@ -1334,6 +1385,15 @@ class FileDetailsGrid(QWidget):
 
         # Get theme colors
         self.theme_colors = self._get_theme_colors()
+
+        # Get config manager from parent or create new one
+        self.config_manager = None
+        if parent and hasattr(parent, "config_manager"):
+            self.config_manager = parent.config_manager
+        else:
+            from config.config_manager import ConfigManager
+
+            self.config_manager = ConfigManager()
 
         self.model = FileDetailsTableModel()
         self.proxy_model = FileDetailsSortFilterProxyModel()
@@ -1527,6 +1587,20 @@ class FileDetailsGrid(QWidget):
         dropdown_layout.addWidget(type_label)
         dropdown_layout.addWidget(self.type_filter)
 
+        self.tax_filter = QComboBox()
+        self.tax_filter.setStyleSheet(combo_style)
+        self.tax_filter.addItem("All Tax Status", None)
+        self.tax_filter.addItem("Tax Related", True)
+        self.tax_filter.addItem("Not Tax Related", False)
+        self.tax_filter.currentIndexChanged.connect(self._apply_column_filters)
+
+        tax_label = QLabel("Tax:")
+        tax_label.setStyleSheet(
+            f"font-weight: 600; color: {self.theme_colors['text_primary']}; background: transparent; border: none; margin-left: 12px; font-size: 9pt;"
+        )
+        dropdown_layout.addWidget(tax_label)
+        dropdown_layout.addWidget(self.tax_filter)
+
         dropdown_layout.addStretch()
 
         filter_main_layout.addLayout(dropdown_layout)
@@ -1649,11 +1723,18 @@ class FileDetailsGrid(QWidget):
         for i in range(self.model.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
+        # Connect signals for persisting column state
+        header.sectionResized.connect(self._save_column_state)
+        header.sectionMoved.connect(self._save_column_state)
+
         # Set row height
         self.table_view.verticalHeader().setDefaultSectionSize(36)
         self.table_view.verticalHeader().setVisible(False)  # Hide row numbers
 
         layout.addWidget(self.table_view, stretch=1)
+
+        # Load saved column state after UI is initialized
+        self._load_column_state()
 
         # Status bar with better styling
         status_frame = QWidget()
@@ -1692,6 +1773,73 @@ class FileDetailsGrid(QWidget):
         if data:
             self.table_view.resizeColumnsToContents()
 
+    def _save_column_state(self):
+        """Save column widths, order, and visibility to config."""
+        if not self.config_manager:
+            return
+
+        header = self.table_view.horizontalHeader()
+
+        # Save column widths
+        widths = []
+        for i in range(self.model.columnCount()):
+            widths.append(header.sectionSize(i))
+
+        # Save visual index order (for moved columns)
+        visual_order = []
+        for i in range(self.model.columnCount()):
+            visual_order.append(header.visualIndex(i))
+
+        # Save visible columns
+        visible_columns = self.model.get_visible_columns()
+
+        # Store as JSON in config
+        import json
+
+        self.config_manager.set_setting("FileGridColumns", "widths", json.dumps(widths))
+        self.config_manager.set_setting("FileGridColumns", "visual_order", json.dumps(visual_order))
+        self.config_manager.set_setting(
+            "FileGridColumns", "visible_columns", json.dumps(visible_columns)
+        )
+
+    def _load_column_state(self):
+        """Load column widths, order, and visibility from config."""
+        if not self.config_manager:
+            return
+
+        import json
+
+        try:
+            # Load column widths
+            widths_json = self.config_manager.get_setting("FileGridColumns", "widths")
+            if widths_json:
+                widths = json.loads(widths_json)
+                header = self.table_view.horizontalHeader()
+                for i, width in enumerate(widths):
+                    if i < self.model.columnCount():
+                        header.resizeSection(i, width)
+
+            # Load visual order (column positions)
+            order_json = self.config_manager.get_setting("FileGridColumns", "visual_order")
+            if order_json:
+                visual_order = json.loads(order_json)
+                header = self.table_view.horizontalHeader()
+                for logical_index, visual_index in enumerate(visual_order):
+                    if logical_index < self.model.columnCount():
+                        header.moveSection(header.visualIndex(logical_index), visual_index)
+
+            # Load visible columns
+            visible_json = self.config_manager.get_setting("FileGridColumns", "visible_columns")
+            if visible_json:
+                visible_columns = json.loads(visible_json)
+                self.model.set_visible_columns(visible_columns)
+                # Update column visibility in view
+                for i in range(len(self.model.COLUMNS)):
+                    self.table_view.setColumnHidden(i, i not in visible_columns)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            # If there's any error loading the config, just use defaults
+            pass
+
     def apply_quick_filter(self, filter_name: str):
         """Apply a quick filter preset (for cross-tab navigation)."""
         # Uncheck all other quick filter buttons
@@ -1726,6 +1874,10 @@ class FileDetailsGrid(QWidget):
         if doc_type:
             filters["document_type"] = doc_type
 
+        tax_related = self.tax_filter.currentData()
+        if tax_related is not None:
+            filters["tax_related"] = tax_related
+
         self.proxy_model.set_filters(filters)
         self._update_status_label()
 
@@ -1745,6 +1897,7 @@ class FileDetailsGrid(QWidget):
         self.status_filter.setCurrentIndex(0)
         self.company_filter.setCurrentIndex(0)
         self.type_filter.setCurrentIndex(0)
+        self.tax_filter.setCurrentIndex(0)
         self.proxy_model.set_filters({})
 
         # Clear search
@@ -1845,6 +1998,8 @@ class FileDetailsGrid(QWidget):
             visible_columns.remove(col_index)
 
         self.model.set_visible_columns(visible_columns)
+        # Save column state when visibility changes
+        self._save_column_state()
 
     def _show_context_menu(self, pos):
         """Show context menu for row actions."""
@@ -1887,11 +2042,11 @@ class FileDetailsGrid(QWidget):
             }}
         """)
 
-        # View Document (only show if single selection)
+        # Open Document (only show if single selection)
         if len(selection) == 1:
-            view_action = QAction("📄 View Document", menu)
-            view_action.triggered.connect(self._view_selected_document)
-            menu.addAction(view_action)
+            open_action = QAction("📄 Open Document", menu)
+            open_action.triggered.connect(self._view_selected_document)
+            menu.addAction(open_action)
             menu.addSeparator()
 
         re_analyze_action = QAction("Re-analyze Selected", menu)
@@ -2113,10 +2268,89 @@ class FileDetailsGrid(QWidget):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # TODO: Implement database deletion
-            # This would require access to AnalysisDB
-            QMessageBox.information(
-                self,
-                "Not Implemented",
-                "Database deletion not yet implemented.\n\nPlease use the Analysis Status window to manage records.",
-            )
+            # Get database instances from parent chain
+            parent_widget = self.parent()
+            analysis_db = None
+            metadata_db = None
+
+            while parent_widget:
+                if hasattr(parent_widget, "analysis_db") and hasattr(parent_widget, "metadata_db"):
+                    analysis_db = parent_widget.analysis_db
+                    metadata_db = parent_widget.metadata_db
+                    break
+                parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+            if not analysis_db or not metadata_db:
+                QMessageBox.warning(
+                    self,
+                    "Database Not Available",
+                    "Cannot delete records: database connection not available.",
+                )
+                return
+
+            # Collect file paths from selected rows
+            file_paths = []
+            for index in selection:
+                source_index = self.proxy_model.mapToSource(index)
+                row_data = self.model.get_row_data(source_index.row())
+                if row_data:
+                    file_path = row_data.get("full_path")
+                    if file_path:
+                        file_paths.append(file_path)
+
+            if not file_paths:
+                QMessageBox.warning(self, "No Records", "No valid records found to delete.")
+                return
+
+            # Delete from both databases
+            deleted_count = 0
+            errors = []
+
+            for file_path in file_paths:
+                try:
+                    # Delete from analysis_db
+                    if hasattr(analysis_db, "delete_analysis"):
+                        analysis_db.delete_analysis(file_path)
+                    else:
+                        # Fallback: direct SQL deletion
+                        cursor = analysis_db.connection.connection.cursor()
+                        cursor.execute(
+                            "DELETE FROM analysis_results WHERE file_path = ?", (file_path,)
+                        )
+                        analysis_db.connection.commit()
+
+                    # Delete from metadata_db
+                    if hasattr(metadata_db, "delete_metadata"):
+                        metadata_db.delete_metadata(file_path)
+                    else:
+                        # Fallback: direct SQL deletion
+                        cursor = metadata_db.connection.cursor()
+                        cursor.execute("DELETE FROM metadata WHERE file_path = ?", (file_path,))
+                        metadata_db.connection.commit()
+
+                    deleted_count += 1
+                except Exception as e:
+                    errors.append(f"{file_path}: {str(e)}")
+
+            # Refresh the grid by reloading from database
+            if hasattr(self.parent(), "_refresh_file_grid"):
+                self.parent()._refresh_file_grid()
+            else:
+                # Fallback: reload current data excluding deleted files
+                updated_data = [
+                    row for row in self.model._data if row.get("full_path") not in file_paths
+                ]
+                self.refresh_data(updated_data)
+
+            # Show result message
+            if deleted_count > 0:
+                message = f"Successfully deleted {deleted_count} record(s) from the database."
+                if errors:
+                    message += f"\n\nErrors ({len(errors)}):\n" + "\n".join(errors[:5])
+                    if len(errors) > 5:
+                        message += f"\n... and {len(errors) - 5} more errors"
+                QMessageBox.information(self, "Deletion Complete", message)
+            else:
+                QMessageBox.warning(
+                    self, "Deletion Failed", "No records were deleted.\n\n" + "\n".join(errors[:10])
+                )

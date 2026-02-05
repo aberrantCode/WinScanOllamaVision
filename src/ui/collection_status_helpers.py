@@ -36,8 +36,9 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     card_layout = QVBoxLayout(card)
     card_layout.setSpacing(8)
 
-    # Title label - no border
+    # Title label - no border, centered
     title_label = QLabel(title)
+    title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     title_label.setStyleSheet(f"""
         color: {theme_colors["text_tertiary"]};
         font-size: 10pt;
@@ -47,9 +48,10 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     """)
     card_layout.addWidget(title_label)
 
-    # Value label - no border
+    # Value label - no border, centered
     value_label = QLabel(value)
     value_label.setObjectName(f"{title.lower().replace(' ', '_')}_value")
+    value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     value_label.setStyleSheet(f"""
         color: {theme_colors["text_primary"]};
         font-size: 24pt;

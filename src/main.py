@@ -16,10 +16,12 @@ if __name__ == "__main__":
     # Initialize logging service
     logging_service = LoggingService()
     logging_service.initialize(log_level=logging.INFO)
-    logging_service.clear_log_file()  # Clear previous log
     logger = get_logger()
 
     try:
+        logger.info("=" * 80)
+        logger.info("NEW SESSION STARTED")
+        logger.info("=" * 80)
         logger.info("Application starting...")
 
         # Initialize AppData directory (settings and database)

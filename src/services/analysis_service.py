@@ -6,7 +6,6 @@ Orchestrates automatic page analysis on startup with caching support.
 import glob
 import os
 import time
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -26,6 +25,8 @@ class AnalysisService:
         "- document_type: Type of document (invoice, receipt, contract, letter, etc.)\n"
         "- company: Company name that issued this document\n"
         "- document_date: Date on the document (YYYY-MM-DD format if possible)\n"
+        "- tax_related: Is this document related to taxes? (true/false) Examples include: W-2, 1099, "
+        "tax returns, property tax bills, tax receipts, IRS correspondence, deductible expense receipts\n"
         "- page_number: Current page number (if visible)\n"
         "- total_pages: Total number of pages (if visible)\n"
         "- rotation_needed: Analyze if the document needs rotation for proper reading. "
@@ -121,9 +122,6 @@ class AnalysisService:
             "processing_time_ms": 0,
         }
 
-        # Generate unique run ID
-        run_id = f"run_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-
         start_time = time.time()
 
         # Collect all files first to get total count
@@ -140,10 +138,7 @@ class AnalysisService:
             all_files.extend([(directory, f) for f in image_files])
 
         stats["total_files"] = len(all_files)
-
-        # Start tracking this run
-        self._log(f"[SCAN] Starting run {run_id} with {stats['total_files']} files")
-        self.analysis_db.start_analysis_run(run_id, stats["total_files"])
+        self._log(f"[SCAN] Starting analysis of {stats['total_files']} files")
 
         try:
             # Process all files
@@ -174,8 +169,7 @@ class AnalysisService:
                     )
 
                     # Save error to database
-                    self.analysis_db.save_analysis_error(
-                        run_id=run_id,
+                    self.analysis_db.save_error(
                         file_path=image_path,
                         error_message=error_msg,
                         error_type="analysis_failed",
@@ -192,41 +186,18 @@ class AnalysisService:
 
             stats["processing_time_ms"] = int((time.time() - start_time) * 1000)
 
-            # Finalize the run
-            run_status = (
-                "completed"
-                if stats["errors"] == 0
-                else "failed"
-                if stats["errors"] == stats["total_files"]
-                else "completed"
-            )
-
         except InterruptedError:
             # Analysis was cancelled - update with partial results
             stats["processing_time_ms"] = int((time.time() - start_time) * 1000)
-            run_status = "cancelled"
-            self._log(f"[SCAN] Run {run_id} cancelled by user")
+            self._log("[SCAN] Analysis cancelled by user")
             raise  # Re-raise to let caller handle it
 
         finally:
             # Check if analysis was aborted (don't save results)
             if abort_check and abort_check():
-                # Abort mode - mark as aborted with zero stats
-                self.analysis_db.update_analysis_run(
-                    run_id=run_id, analyzed=0, cached=0, errors=0, skipped=0, status="aborted"
-                )
-                self._log(f"[SCAN] Run {run_id} aborted - no results saved")
+                self._log("[SCAN] Analysis aborted - no results saved")
             else:
-                # Normal completion or stop (save partial results)
-                self.analysis_db.update_analysis_run(
-                    run_id=run_id,
-                    analyzed=stats["analyzed"],
-                    cached=stats["cached"],
-                    errors=stats["errors"],
-                    skipped=stats["skipped"],
-                    status=run_status,
-                )
-                self._log(f"[SCAN] Run {run_id} finalized - Stats: {stats}")
+                self._log(f"[SCAN] Analysis finalized - Stats: {stats}")
 
         return stats
 

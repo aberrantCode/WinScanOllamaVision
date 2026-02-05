@@ -1235,6 +1235,28 @@ class EnhancedSettingsWindow(QDialog):
 
         layout.addWidget(audit_group)
 
+        # Application Behavior Group
+        behavior_group = QGroupBox("Application Behavior")
+        behavior_layout = QVBoxLayout(behavior_group)
+
+        self.auto_start_analysis_checkbox = QCheckBox("Auto Start Analysis")
+        auto_start_enabled = self.config_manager.get_bool("GUI", "auto_start_analysis", False)
+        self.auto_start_analysis_checkbox.setChecked(auto_start_enabled)
+        self.auto_start_analysis_checkbox.setToolTip(
+            "Automatically start analysis when opening the Analysis Status window"
+        )
+        behavior_layout.addWidget(self.auto_start_analysis_checkbox)
+
+        self.confirm_exit_checkbox = QCheckBox("Confirm Before Exit")
+        confirm_exit_enabled = self.config_manager.get_bool("GUI", "confirm_before_exit", True)
+        self.confirm_exit_checkbox.setChecked(confirm_exit_enabled)
+        self.confirm_exit_checkbox.setToolTip(
+            "Show confirmation dialog when closing the application"
+        )
+        behavior_layout.addWidget(self.confirm_exit_checkbox)
+
+        layout.addWidget(behavior_group)
+
         layout.addStretch()
         return widget
 
@@ -2058,6 +2080,16 @@ Example response:
                 "AuditTrail",
                 "enabled",
                 "true" if self.audit_trail_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "GUI",
+                "auto_start_analysis",
+                "true" if self.auto_start_analysis_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "GUI",
+                "confirm_before_exit",
+                "true" if self.confirm_exit_checkbox.isChecked() else "false",
             )
 
             # LLM Provider Tab

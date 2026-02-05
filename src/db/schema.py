@@ -257,34 +257,10 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
         )
     """)
 
-    # Analysis runs - track each analysis run
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS analysis_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id TEXT UNIQUE NOT NULL,
-
-            -- Run statistics
-            total_files INTEGER NOT NULL,
-            analyzed INTEGER DEFAULT 0,
-            cached INTEGER DEFAULT 0,
-            errors INTEGER DEFAULT 0,
-            skipped INTEGER DEFAULT 0,
-
-            -- Timing
-            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP,
-            duration_ms INTEGER,
-
-            -- Status
-            status TEXT DEFAULT 'running'
-        )
-    """)
-
     # Analysis errors - track individual file failures
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS analysis_errors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id TEXT NOT NULL,
             file_path TEXT NOT NULL,
 
             -- Error details
@@ -292,9 +268,7 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
             error_type TEXT,
 
             -- Timestamp
-            error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id)
+            error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -407,6 +381,67 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         """)
         conn.commit()
         current_version = 2
+
+    # Migration 3: Remove run tracking (analysis_runs and run_id from analysis_errors)
+    if current_version < 3:
+        # Check if analysis_runs table exists
+        cursor.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='analysis_runs'
+        """)
+        if cursor.fetchone():
+            # Drop analysis_runs table
+            cursor.execute("DROP TABLE IF EXISTS analysis_runs")
+
+        # Check if analysis_errors has run_id column
+        cursor.execute("PRAGMA table_info(analysis_errors)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if "run_id" in columns:
+            # Create new analysis_errors table without run_id
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_errors_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_path TEXT NOT NULL,
+                    error_message TEXT,
+                    error_type TEXT,
+                    error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Copy existing data (excluding run_id)
+            cursor.execute("""
+                INSERT INTO analysis_errors_new (id, file_path, error_message, error_type, error_at)
+                SELECT id, file_path, error_message, error_type, error_at
+                FROM analysis_errors
+            """)
+
+            # Drop old table and rename new one
+            cursor.execute("DROP TABLE analysis_errors")
+            cursor.execute("ALTER TABLE analysis_errors_new RENAME TO analysis_errors")
+
+        cursor.execute("""
+            INSERT INTO schema_version (version, description)
+            VALUES (3, 'Remove run tracking: drop analysis_runs table and run_id from analysis_errors')
+        """)
+        conn.commit()
+        current_version = 3
+
+    # Migration 4: Add tax_related column to analysis_results
+    if current_version < 4:
+        # Check if column exists
+        cursor.execute("PRAGMA table_info(analysis_results)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if "tax_related" not in columns:
+            cursor.execute("""
+                ALTER TABLE analysis_results
+                ADD COLUMN tax_related BOOLEAN DEFAULT 0
+            """)
+        cursor.execute("""
+            INSERT INTO schema_version (version, description)
+            VALUES (4, 'Add tax_related column for tax document classification')
+        """)
+        conn.commit()
+        current_version = 4
 
 
 def get_schema_version(conn: DatabaseConnection) -> int:

@@ -196,63 +196,9 @@ class TestAnalysisDBCore:
         assert isinstance(stats, dict)
         assert "total_analyzed_pages" in stats
 
-    def test_start_analysis_run(self, db):
-        # Act
-        db.start_analysis_run("run123", total_files=10)
-
-        # Assert
-        cursor = db.connection.connection.cursor()
-        result = cursor.execute(
-            "SELECT run_id FROM analysis_runs WHERE run_id = ?",
-            ("run123",),
-        ).fetchone()
-        assert result is not None
-
-    def test_update_analysis_run(self, db):
-        # Arrange
-        db.start_analysis_run("run123", total_files=10)
-
-        # Act
-        db.update_analysis_run("run123", analyzed=5, cached=2)
-
-        # Assert
-        cursor = db.connection.connection.cursor()
-        result = cursor.execute(
-            "SELECT analyzed FROM analysis_runs WHERE run_id = ?",
-            ("run123",),
-        ).fetchone()
-        assert result[0] == 5
-
-    def test_save_analysis_error(self, db):
-        # Arrange
-        db.start_analysis_run("run123", total_files=10)
-
-        # Act
-        db.save_analysis_error("run123", "/test/file.jpg", "Test error")
-
-        # Assert
-        cursor = db.connection.connection.cursor()
-        result = cursor.execute(
-            "SELECT file_path FROM analysis_errors WHERE file_path = ?",
-            ("/test/file.jpg",),
-        ).fetchone()
-        assert result is not None
-
-    def test_get_recent_runs(self, db):
-        # Arrange
-        db.start_analysis_run("run1", total_files=10)
-        db.start_analysis_run("run2", total_files=20)
-
-        # Act
-        runs = db.get_recent_runs(limit=5)
-
-        # Assert
-        assert len(runs) >= 2
-
     def test_get_failed_analyses(self, db):
         # Arrange
-        db.start_analysis_run("run123", total_files=10)
-        db.save_analysis_error("run123", "/test/failed.jpg", "Test error")
+        db.save_error("/test/failed.jpg", "Test error", "analysis_failed")
 
         # Act
         failed = db.get_failed_analyses()

@@ -15,10 +15,10 @@ from db.repositories import (
     AuditRepository,
     BundleRepository,
     DirectoryRepository,
+    ErrorRepository,
     MetadataRepository,
     ProviderRepository,
     RotationRepository,
-    RunTrackingRepository,
 )
 
 
@@ -184,6 +184,71 @@ class TestAnalysisRepository:
         # Assert
         assert result["company"] == "Test Corp"
         assert result["provider_name"] == "ollama"
+
+    def test_save_with_tax_related_field(self, repo):
+        # Arrange
+        analysis_data = {"document_type": "Invoice", "company": "Test Corp", "tax_related": True}
+
+        # Act
+        repo.save(
+            file_path="/test/tax_doc.jpg",
+            file_hash="xyz789",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data=analysis_data,
+            raw_response='{"test": "data"}',
+            processing_time_ms=100,
+        )
+        result = repo.get_by_path("/test/tax_doc.jpg")
+
+        # Assert
+        assert result["tax_related"] == 1  # SQLite stores boolean as integer
+        assert result["company"] == "Test Corp"
+
+    def test_save_without_tax_related_defaults_to_false(self, repo):
+        # Arrange - analysis_data without tax_related field
+        analysis_data = {"document_type": "Receipt", "company": "Other Corp"}
+
+        # Act
+        repo.save(
+            file_path="/test/non_tax_doc.jpg",
+            file_hash="def456",
+            provider_name="claude",
+            model_name="claude-3",
+            analysis_data=analysis_data,
+            raw_response='{"test": "data"}',
+            processing_time_ms=150,
+        )
+        result = repo.get_by_path("/test/non_tax_doc.jpg")
+
+        # Assert
+        assert result["tax_related"] == 0  # Should default to False (0)
+
+    def test_update_metadata_with_tax_related(self, repo):
+        # Arrange - save initial analysis
+        repo.save(
+            file_path="/test/update_tax.jpg",
+            file_hash="hash123",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data={"document_type": "Invoice", "tax_related": False},
+            raw_response='{"test": "data"}',
+            processing_time_ms=100,
+        )
+
+        # Act - update metadata with tax_related
+        updated_metadata = {
+            "document_type": "Tax Invoice",
+            "tax_related": True,
+            "company": "Updated Corp",
+        }
+        repo.update_metadata("/test/update_tax.jpg", updated_metadata)
+        result = repo.get_by_path("/test/update_tax.jpg")
+
+        # Assert
+        assert result["tax_related"] == 1
+        assert result["document_type"] == "Tax Invoice"
+        assert result["company"] == "Updated Corp"
 
     def test_get_all_with_filters(self, repo):
         # Arrange
@@ -449,8 +514,8 @@ class TestAuditRepository:
         assert result is not None
 
 
-class TestRunTrackingRepository:
-    """Tests for RunTrackingRepository"""
+class TestErrorRepository:
+    """Tests for ErrorRepository"""
 
     @pytest.fixture
     def temp_db_path(self):
@@ -471,89 +536,68 @@ class TestRunTrackingRepository:
 
     @pytest.fixture
     def repo(self, conn):
-        return RunTrackingRepository(conn)
-
-    def test_start_and_update_run(self, repo):
-        # Act
-        repo.start_run("run123", total_files=10)
-        repo.update_run("run123", analyzed=5, cached=2)
-
-        # Assert - verify run was created and updated
-        cursor = repo.conn.connection.cursor()
-        result = cursor.execute(
-            "SELECT analyzed, cached FROM analysis_runs WHERE run_id = ?",
-            ("run123",),
-        ).fetchone()
-        assert result["analyzed"] == 5
-        assert result["cached"] == 2
+        return ErrorRepository(conn)
 
     def test_save_error(self, repo):
-        # Arrange
-        repo.start_run("run123", total_files=10)
-
         # Act
-        repo.save_error("run123", "/test/file.jpg", "Test error", "test_type")
+        repo.save_error("/test/file.jpg", "Test error message", "analysis_failed")
 
         # Assert
-        cursor = repo.conn.connection.cursor()
-        result = cursor.execute(
-            "SELECT error_type FROM analysis_errors WHERE file_path = ?",
-            ("/test/file.jpg",),
-        ).fetchone()
-        assert result["error_type"] == "test_type"
+        errors = repo.get_all_errors()
+        assert len(errors) == 1
+        assert errors[0]["file_path"] == "/test/file.jpg"
+        assert errors[0]["error_message"] == "Test error message"
+        assert errors[0]["error_type"] == "analysis_failed"
 
-    def test_get_recent_runs(self, repo):
+    def test_get_all_errors(self, repo):
         # Arrange
-        repo.start_run("run1", 10)
-        repo.start_run("run2", 20)
+        repo.save_error("/file1.jpg", "Error 1", "type1")
+        repo.save_error("/file2.jpg", "Error 2", "type2")
 
         # Act
-        runs = repo.get_recent_runs(limit=5)
+        errors = repo.get_all_errors()
 
         # Assert
-        assert len(runs) >= 2
+        assert len(errors) == 2
+        assert any(e["file_path"] == "/file1.jpg" for e in errors)
+        assert any(e["file_path"] == "/file2.jpg" for e in errors)
 
-    def test_update_run_with_completed_status(self, repo):
+    def test_get_error_count(self, repo):
         # Arrange
-        repo.start_run("run_complete", total_files=10)
+        repo.save_error("/file1.jpg", "Error 1", "type1")
+        repo.save_error("/file2.jpg", "Error 2", "type2")
+        repo.save_error("/file3.jpg", "Error 3", "type3")
 
         # Act
-        repo.update_run("run_complete", analyzed=10, cached=0, status="completed")
+        count = repo.get_error_count()
 
-        # Assert - verify completed_at and duration_ms were set
-        cursor = repo.conn.connection.cursor()
-        result = cursor.execute(
-            "SELECT status, completed_at, duration_ms FROM analysis_runs WHERE run_id = ?",
-            ("run_complete",),
-        ).fetchone()
-        assert result["status"] == "completed"
-        assert result["completed_at"] is not None
-        assert result["duration_ms"] is not None
+        # Assert
+        assert count == 3
 
-    def test_get_recent_runs_status_categorization(self, repo):
-        # Arrange - create runs with different outcomes
-        # Success: 0 errors
-        repo.start_run("success_run", total_files=10)
-        repo.update_run("success_run", analyzed=10, errors=0, status="completed")
-
-        # Failed: all errors
-        repo.start_run("failed_run", total_files=5)
-        repo.update_run("failed_run", analyzed=0, errors=5, status="completed")
-
-        # Partial: some errors
-        repo.start_run("partial_run", total_files=10)
-        repo.update_run("partial_run", analyzed=8, errors=2, status="completed")
-
-        # Running: still in progress
-        repo.start_run("running_run", total_files=10)
+    def test_clear_error(self, repo):
+        # Arrange
+        repo.save_error("/file1.jpg", "Error 1", "type1")
+        repo.save_error("/file2.jpg", "Error 2", "type2")
 
         # Act
-        runs = repo.get_recent_runs(limit=10)
+        repo.clear_error("/file1.jpg")
 
-        # Assert - find each run and verify status
-        runs_by_id = {run["run_id"]: run for run in runs}
+        # Assert
+        errors = repo.get_all_errors()
+        assert len(errors) == 1
+        assert errors[0]["file_path"] == "/file2.jpg"
 
-        assert runs_by_id["success_run"]["status"] == "success"
-        assert runs_by_id["failed_run"]["status"] == "failed"
-        assert runs_by_id["partial_run"]["status"] == "partial"
-        assert runs_by_id["running_run"]["status"] == "running"
+    def test_get_error_count_empty(self, repo):
+        # Act
+        count = repo.get_error_count()
+
+        # Assert
+        assert count == 0
+
+    def test_clear_error_nonexistent(self, repo):
+        # Act - should not raise exception
+        repo.clear_error("/nonexistent.jpg")
+
+        # Assert
+        count = repo.get_error_count()
+        assert count == 0

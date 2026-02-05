@@ -13,9 +13,9 @@ from db.repositories import (
     AuditRepository,
     BundleRepository,
     DirectoryRepository,
+    ErrorRepository,
     ProviderRepository,
     RotationRepository,
-    RunTrackingRepository,
 )
 from db.schema import create_all_tables
 
@@ -44,7 +44,7 @@ class AnalysisDB:
         self._providers = ProviderRepository(self.connection)
         self._directories = DirectoryRepository(self.connection)
         self._bundles = BundleRepository(self.connection)
-        self._runs = RunTrackingRepository(self.connection)
+        self._errors = ErrorRepository(self.connection)
         self._rotation = RotationRepository(self.connection)
         self._audit = AuditRepository(self.connection)
 
@@ -171,43 +171,29 @@ class AnalysisDB:
         """Log user action to audit trail."""
         self._audit.log_action(action_type, action_details, file_path, bundle_id)
 
-    # ==================== Analysis Run Methods ====================
-
-    def start_analysis_run(self, run_id: str, total_files: int) -> None:
-        """Start a new analysis run."""
-        self._runs.start_run(run_id, total_files)
-
-    def update_analysis_run(
-        self,
-        run_id: str,
-        analyzed: int = 0,
-        cached: int = 0,
-        errors: int = 0,
-        skipped: int = 0,
-        status: str = "running",
-    ) -> None:
-        """Update analysis run statistics."""
-        self._runs.update_run(run_id, analyzed, cached, errors, skipped, status)
-
-    def save_analysis_error(
-        self, run_id: str, file_path: str, error_message: str, error_type: str = "analysis_failed"
-    ) -> None:
-        """Save an analysis error record."""
-        self._runs.save_error(run_id, file_path, error_message, error_type)
-
-    def get_recent_runs(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent analysis runs."""
-        return self._runs.get_recent_runs(limit)
+    # ==================== Error Management Methods ====================
 
     def get_failed_analyses(self) -> list[dict[str, Any]]:
         """Get list of failed analyses."""
-        cursor = self.connection.connection.cursor()
-        cursor.execute("""
-            SELECT file_path, error_message, error_type, error_at
-            FROM analysis_errors
-            ORDER BY error_at DESC
-        """)
-        return [dict(row) for row in cursor.fetchall()]
+        return self._errors.get_all_errors()
+
+    def save_error(
+        self, file_path: str, error_message: str, error_type: str = "analysis_failed"
+    ) -> None:
+        """Save an analysis error record."""
+        self._errors.save_error(file_path, error_message, error_type)
+
+    def get_all_errors(self) -> list[dict[str, Any]]:
+        """Get all error records."""
+        return self._errors.get_all_errors()
+
+    def get_error_count(self) -> int:
+        """Get total count of errors."""
+        return self._errors.get_error_count()
+
+    def clear_error(self, file_path: str) -> None:
+        """Clear error record for a specific file."""
+        self._errors.clear_error(file_path)
 
     # ==================== Statistics Methods ====================
 
