@@ -9,6 +9,7 @@ import csv
 import json
 import os
 from datetime import datetime
+from html import escape as html_escape
 from typing import Any
 
 from PyQt6.QtCore import (
@@ -703,33 +704,25 @@ class FileDetailsDialog(QDialog):
         # File Information
         html += "<h3 style='color: #2563eb;'>File Information</h3>"
         html += "<table cellpadding='5'>"
-        html += (
-            f"<tr><td><b>Filename:</b></td><td>{self.file_data.get('filename', 'N/A')}</td></tr>"
-        )
-        html += (
-            f"<tr><td><b>Full Path:</b></td><td>{self.file_data.get('full_path', 'N/A')}</td></tr>"
-        )
-        html += f"<tr><td><b>File Size:</b></td><td>{self._format_size(self.file_data.get('file_size'))}</td></tr>"
-        html += f"<tr><td><b>Modified:</b></td><td>{self._format_dt(self.file_data.get('modified_time'))}</td></tr>"
-        html += (
-            f"<tr><td><b>File Hash:</b></td><td>{self.file_data.get('file_hash', 'N/A')}</td></tr>"
-        )
+        html += f"<tr><td><b>Filename:</b></td><td>{html_escape(str(self.file_data.get('filename', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Full Path:</b></td><td>{html_escape(str(self.file_data.get('full_path', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>File Size:</b></td><td>{html_escape(self._format_size(self.file_data.get('file_size')))}</td></tr>"
+        html += f"<tr><td><b>Modified:</b></td><td>{html_escape(self._format_dt(self.file_data.get('modified_time')))}</td></tr>"
+        html += f"<tr><td><b>File Hash:</b></td><td>{html_escape(str(self.file_data.get('file_hash', 'N/A')))}</td></tr>"
         html += "</table>"
 
         # Analysis Information
         html += "<h3 style='color: #2563eb;'>Analysis Information</h3>"
         html += "<table cellpadding='5'>"
-        html += f"<tr><td><b>Status:</b></td><td>{self.file_data.get('status', 'N/A')}</td></tr>"
-        html += f"<tr><td><b>Analyzed:</b></td><td>{self._format_dt(self.file_data.get('analysis_time'))}</td></tr>"
-        html += f"<tr><td><b>Processing Time:</b></td><td>{self._format_duration(self.file_data.get('processing_duration'))}</td></tr>"
-        html += (
-            f"<tr><td><b>Provider:</b></td><td>{self.file_data.get('provider', 'N/A')}</td></tr>"
-        )
-        html += f"<tr><td><b>Model:</b></td><td>{self.file_data.get('model_used', 'N/A')}</td></tr>"
+        html += f"<tr><td><b>Status:</b></td><td>{html_escape(str(self.file_data.get('status', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Analyzed:</b></td><td>{html_escape(self._format_dt(self.file_data.get('analysis_time')))}</td></tr>"
+        html += f"<tr><td><b>Processing Time:</b></td><td>{html_escape(self._format_duration(self.file_data.get('processing_duration')))}</td></tr>"
+        html += f"<tr><td><b>Provider:</b></td><td>{html_escape(str(self.file_data.get('provider', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Model:</b></td><td>{html_escape(str(self.file_data.get('model_used', 'N/A')))}</td></tr>"
         html += f"<tr><td><b>Cached:</b></td><td>{'Yes' if self.file_data.get('cache_hit') else 'No'}</td></tr>"
 
         if self.file_data.get("error_message"):
-            html += f"<tr><td><b>Error:</b></td><td style='color: red;'>{self.file_data.get('error_message')}</td></tr>"
+            html += f"<tr><td><b>Error:</b></td><td style='color: red;'>{html_escape(str(self.file_data.get('error_message')))}</td></tr>"
 
         html += "</table>"
 
@@ -751,20 +744,20 @@ class FileDetailsDialog(QDialog):
             )
             html += f"<tr><td><b>Confidence:</b></td><td style='color: {conf_color}; font-weight: bold;'>{conf_float:.1f}%</td></tr>"
         except (ValueError, TypeError):
-            html += f"<tr><td><b>Confidence:</b></td><td>{confidence}</td></tr>"
+            html += f"<tr><td><b>Confidence:</b></td><td>{html_escape(str(confidence))}</td></tr>"
 
-        html += f"<tr><td><b>Company:</b></td><td>{self.file_data.get('company', 'N/A')}</td></tr>"
-        html += f"<tr><td><b>Document Type:</b></td><td>{self.file_data.get('document_type', 'N/A')}</td></tr>"
-        html += f"<tr><td><b>Document Date:</b></td><td>{self.file_data.get('document_date', 'N/A')}</td></tr>"
+        html += f"<tr><td><b>Company:</b></td><td>{html_escape(str(self.file_data.get('company', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Document Type:</b></td><td>{html_escape(str(self.file_data.get('document_type', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Document Date:</b></td><td>{html_escape(str(self.file_data.get('document_date', 'N/A')))}</td></tr>"
 
         page_num = self.file_data.get("page_number")
         total_pages = self.file_data.get("total_pages")
         if page_num and total_pages:
-            html += f"<tr><td><b>Pages:</b></td><td>{page_num} of {total_pages}</td></tr>"
+            html += f"<tr><td><b>Pages:</b></td><td>{html_escape(str(page_num))} of {html_escape(str(total_pages))}</td></tr>"
         elif page_num:
-            html += f"<tr><td><b>Page Number:</b></td><td>{page_num}</td></tr>"
+            html += f"<tr><td><b>Page Number:</b></td><td>{html_escape(str(page_num))}</td></tr>"
         elif total_pages:
-            html += f"<tr><td><b>Total Pages:</b></td><td>{total_pages}</td></tr>"
+            html += f"<tr><td><b>Total Pages:</b></td><td>{html_escape(str(total_pages))}</td></tr>"
 
         html += "</table>"
         html += "</body></html>"
@@ -950,10 +943,12 @@ class FileDetailsDialog(QDialog):
         try:
             # Safe to use in query now that field_name is whitelisted
             query = f"SELECT DISTINCT {field_name} FROM analyses WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
-            result = self.analysis_db.conn.execute(query).fetchall()
+            result = self.analysis_db.connection.execute(query).fetchall()
             return [row[0] for row in result if row[0]]
         except Exception as e:
-            print(f"Error getting distinct values for {field_name}: {e}")
+            from services.logging_service import get_logger
+
+            get_logger().error(f"Error getting distinct values for {field_name}: {e}")
             return []
 
     def _create_metadata_content(self):
@@ -2385,16 +2380,10 @@ class FileDetailsGrid(QWidget):
 
             for file_path in file_paths:
                 try:
-                    # Delete from analysis_db
-                    if hasattr(analysis_db, "delete_analysis"):
-                        analysis_db.delete_analysis(file_path)
-                    else:
-                        # Fallback: direct SQL deletion
-                        cursor = analysis_db.connection.connection.cursor()
-                        cursor.execute(
-                            "DELETE FROM analysis_results WHERE file_path = ?", (file_path,)
-                        )
-                        analysis_db.connection.commit()
+                    # Delete from analysis_db using direct SQL
+                    cursor = analysis_db.connection.connection.cursor()
+                    cursor.execute("DELETE FROM analysis_results WHERE file_path = ?", (file_path,))
+                    analysis_db.connection.commit()
 
                     # Delete from metadata_db
                     if hasattr(metadata_db, "delete_metadata"):
