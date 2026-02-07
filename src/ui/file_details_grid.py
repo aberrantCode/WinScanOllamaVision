@@ -477,7 +477,9 @@ class FileDetailsDialog(QDialog):
 
     re_analyze_requested = pyqtSignal(str)  # Emits file path
 
-    def __init__(self, file_data: dict[str, Any], parent=None, analysis_db=None):
+    def __init__(
+        self, file_data: dict[str, Any], parent=None, analysis_db=None, config_manager=None
+    ):
         super().__init__(parent)
         self.file_data = file_data
         self.analysis_db = analysis_db  # Store database reference
@@ -493,6 +495,25 @@ class FileDetailsDialog(QDialog):
         self.theme_colors = self._get_theme_colors()
 
         self.accordion_sections: list[QWidget] = []  # Track accordion sections
+
+        # Get config manager for zoom settings
+        self.config_manager = config_manager
+        if self.config_manager is None and parent and hasattr(parent, "config_manager"):
+            self.config_manager = parent.config_manager
+
+        # Read default zoom settings from config
+        if self.config_manager:
+            self.default_zoom_mode = (
+                self.config_manager.get_setting("Theme", "default_zoom_mode_png", "fit_to_width")
+                .lower()
+                .replace(" ", "_")
+            )
+            self.default_zoom_percent = int(
+                self.config_manager.get_setting("Theme", "default_zoom_percent_png", "100")
+            )
+        else:
+            self.default_zoom_mode = "fit_to_width"
+            self.default_zoom_percent = 100
 
         # Correct the file path if it's in a temp folder
         stored_path = self.file_data.get("full_path")
@@ -586,14 +607,13 @@ class FileDetailsDialog(QDialog):
                 # Store original pixmap for potential rescaling
                 self.original_pixmap = pixmap
 
-                # Calculate available width (50% of dialog width minus margins/padding/border)
+                # Calculate available dimensions (50% of dialog width minus margins/padding/border)
                 # Dialog width: 1050, 50% = 525, minus margins (15*2) and border/padding (~20) = ~480
                 available_width = 480
+                available_height = 800 - 150  # Dialog height minus margins and bottom section
 
-                # Scale to fit width while maintaining aspect ratio
-                scaled_pixmap = pixmap.scaledToWidth(
-                    available_width, Qt.TransformationMode.SmoothTransformation
-                )
+                # Apply zoom based on configured mode
+                scaled_pixmap = self._scale_image_to_mode(pixmap, available_width, available_height)
                 self.image_label.setPixmap(scaled_pixmap)
             else:
                 self.original_pixmap = None
@@ -628,8 +648,8 @@ class FileDetailsDialog(QDialog):
         accordion_container = QWidget()
         # No maximum width constraint - let splitter control the width
         accordion_layout = QVBoxLayout(accordion_container)
-        accordion_layout.setContentsMargins(15, 15, 15, 15)
-        accordion_layout.setSpacing(12)
+        accordion_layout.setContentsMargins(0, 0, 0, 0)  # No margins - flush with panel
+        accordion_layout.setSpacing(0)  # No spacing between accordions
 
         # Extracted Metadata Section (moved to top, always first)
         metadata_section = self._create_accordion_section(
@@ -669,33 +689,48 @@ class FileDetailsDialog(QDialog):
 
         main_layout.addWidget(splitter)
 
-        # Button box at bottom
-        button_box = QDialogButtonBox()
-        button_box.setStyleSheet(
-            f"background-color: {self.theme_colors['bg_secondary']}; padding: 10px;"
+        # Bottom container with status label and buttons
+        bottom_container = QWidget()
+        bottom_container.setStyleSheet(f"background-color: {self.theme_colors['bg_secondary']};")
+        bottom_layout = QVBoxLayout(bottom_container)
+        bottom_layout.setContentsMargins(15, 10, 15, 15)  # Left, Top, Right, Bottom margins
+        bottom_layout.setSpacing(8)
+
+        # Status label in bottom left corner
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(
+            f"color: {self.theme_colors['text_secondary']}; font-size: 9pt; background: transparent;"
         )
+        self.status_label.setVisible(False)
+        bottom_layout.addWidget(self.status_label)
 
-        open_doc_btn = QPushButton("📄 Open Document")
-        open_doc_btn.clicked.connect(self._view_document)
-        button_box.addButton(open_doc_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        # Button box
+        button_box = QDialogButtonBox()
+        button_box.setStyleSheet("background: transparent; padding: 0px;")
 
-        save_metadata_btn = QPushButton("💾 Save Metadata")
-        save_metadata_btn.clicked.connect(self._save_metadata)
-        button_box.addButton(save_metadata_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        self.open_doc_btn = QPushButton("📄 Open Document")
+        self.open_doc_btn.clicked.connect(self._view_document)
+        button_box.addButton(self.open_doc_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
-        copy_json_btn = QPushButton("Copy JSON")
-        copy_json_btn.clicked.connect(self._copy_json)
-        button_box.addButton(copy_json_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        self.save_metadata_btn = QPushButton("💾 Save Metadata")
+        self.save_metadata_btn.clicked.connect(self._save_metadata)
+        button_box.addButton(self.save_metadata_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
-        re_analyze_btn = QPushButton("Re-analyze")
-        re_analyze_btn.clicked.connect(self._re_analyze)
-        button_box.addButton(re_analyze_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        self.copy_json_btn = QPushButton("Copy JSON")
+        self.copy_json_btn.clicked.connect(self._copy_json)
+        button_box.addButton(self.copy_json_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        button_box.addButton(close_btn, QDialogButtonBox.ButtonRole.RejectRole)
+        self.re_analyze_btn = QPushButton("Re-analyze")
+        self.re_analyze_btn.clicked.connect(self._re_analyze)
+        button_box.addButton(self.re_analyze_btn, QDialogButtonBox.ButtonRole.ActionRole)
 
-        main_layout.addWidget(button_box)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.accept)
+        button_box.addButton(self.close_btn, QDialogButtonBox.ButtonRole.RejectRole)
+
+        bottom_layout.addWidget(button_box)
+
+        main_layout.addWidget(bottom_container)
 
     def _format_summary(self) -> str:
         """Format summary information as HTML."""
@@ -868,21 +903,24 @@ class FileDetailsDialog(QDialog):
         def toggle():
             is_visible = content_frame.isVisible()
 
-            # If expanding this section, collapse all others
-            if not is_visible:
-                for other_section in getattr(self, "accordion_sections", []):
-                    if other_section != section:
-                        # Find and collapse other sections
-                        other_content = other_section.findChild(QFrame, "accordion_content")
-                        other_toggle = other_section.findChild(QLabel, "accordion_toggle")
-                        if other_content:
-                            other_content.setVisible(False)
-                        if other_toggle:
-                            other_toggle.setText("▶")
+            # If already expanded, do nothing (don't close it)
+            if is_visible:
+                return
 
-            # Toggle this section
-            content_frame.setVisible(not is_visible)
-            toggle_indicator.setText("▶" if is_visible else "▼")
+            # Expanding this section - collapse all others
+            for other_section in getattr(self, "accordion_sections", []):
+                if other_section != section:
+                    # Find and collapse other sections
+                    other_content = other_section.findChild(QFrame, "accordion_content")
+                    other_toggle = other_section.findChild(QLabel, "accordion_toggle")
+                    if other_content:
+                        other_content.setVisible(False)
+                    if other_toggle:
+                        other_toggle.setText("▶")
+
+            # Expand this section
+            content_frame.setVisible(True)
+            toggle_indicator.setText("▼")
 
         header.mousePressEvent = lambda e: toggle()  # type: ignore[method-assign]
         section_layout.addWidget(header)
@@ -1246,25 +1284,56 @@ class FileDetailsDialog(QDialog):
         """)
         return text_edit
 
+    def _scale_image_to_mode(self, pixmap, available_width, available_height):
+        """Scale image according to configured zoom mode."""
+        if self.default_zoom_mode == "fit_to_width":
+            return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
+        elif self.default_zoom_mode == "fit_to_height":
+            return pixmap.scaledToHeight(
+                available_height, Qt.TransformationMode.SmoothTransformation
+            )
+        elif self.default_zoom_mode == "fit_to_window":
+            # Scale to fit both dimensions (aspect ratio preserved)
+            return pixmap.scaled(
+                available_width,
+                available_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        elif self.default_zoom_mode == "custom_%":
+            # Scale by percentage
+            scale_factor = self.default_zoom_percent / 100.0
+            return pixmap.scaled(
+                int(pixmap.width() * scale_factor),
+                int(pixmap.height() * scale_factor),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        else:
+            # Fallback to fit width
+            return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
+
     def _on_splitter_moved(self, pos, index):
         """Rescale image when splitter is moved."""
         if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
             return
 
-        # Get current width of left panel
+        # Get current dimensions of left panel
         left_width = self.left_panel.width()
+        left_height = self.left_panel.height()
 
-        # Calculate available width for image (subtract margins and padding)
+        # Calculate available dimensions for image (subtract margins and padding)
         # Margins: 15*2, border/padding: ~20
         available_width = left_width - 50
+        available_height = left_height - 50
 
-        # Don't scale if width is too small
-        if available_width < 100:
+        # Don't scale if dimensions are too small
+        if available_width < 100 or available_height < 100:
             return
 
-        # Rescale image to fit new width
-        scaled_pixmap = self.original_pixmap.scaledToWidth(
-            available_width, Qt.TransformationMode.SmoothTransformation
+        # Rescale image according to configured mode
+        scaled_pixmap = self._scale_image_to_mode(
+            self.original_pixmap, available_width, available_height
         )
         self.image_label.setPixmap(scaled_pixmap)
 
@@ -1421,11 +1490,210 @@ class FileDetailsDialog(QDialog):
         return None
 
     def _re_analyze(self):
-        """Request re-analysis of this file."""
+        """Re-analyze this file with live progress updates."""
+        from PyQt6.QtCore import QThread, pyqtSignal
+
         file_path = self.file_data.get("full_path") or self.file_data.get("filename")
-        if file_path:
-            self.re_analyze_requested.emit(file_path)
-            self.accept()
+        if not file_path:
+            QMessageBox.warning(self, "No File Path", "Cannot re-analyze: file path not found.")
+            return
+
+        # Disable all buttons and edit controls
+        self._set_controls_enabled(False)
+
+        # Show status label
+        self.status_label.setVisible(True)
+        self.status_label.setText("Starting analysis...")
+
+        # Find parent's config manager and database instances
+        parent_widget = self.parent()
+        config_manager = None
+        analysis_db = None
+        metadata_db = None
+
+        while parent_widget:
+            if hasattr(parent_widget, "config_manager"):
+                config_manager = parent_widget.config_manager
+            if hasattr(parent_widget, "analysis_db"):
+                analysis_db = parent_widget.analysis_db
+            if hasattr(parent_widget, "metadata_db"):
+                metadata_db = parent_widget.metadata_db
+            if config_manager and analysis_db and metadata_db:
+                break
+            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+        if not config_manager:
+            QMessageBox.warning(
+                self, "Config Not Available", "Cannot re-analyze: configuration not available."
+            )
+            self._set_controls_enabled(True)
+            self.status_label.setVisible(False)
+            return
+
+        # Create analysis thread
+        class _ReAnalysisThread(QThread):
+            progress = pyqtSignal(str)  # Status text updates
+            finished = pyqtSignal(dict)  # Analysis result
+
+            def __init__(self, file_path, config_manager):
+                super().__init__()
+                self.file_path = file_path
+                self.config_manager = config_manager
+
+            def run(self):
+                from db.analysis_db import AnalysisDB
+                from db.metadata_db import MetadataDB
+                from services.analysis_service import AnalysisService
+
+                try:
+                    # Create thread-local database instances
+                    thread_analysis_db = AnalysisDB()
+                    thread_metadata_db = MetadataDB()
+                    thread_analysis_service = AnalysisService(
+                        self.config_manager, thread_analysis_db, thread_metadata_db
+                    )
+
+                    self.progress.emit("Analyzing file with LLM...")
+
+                    # Analyze single file (force re-analysis by setting incremental=False)
+                    result = thread_analysis_service._analyze_single_page(
+                        self.file_path,
+                        incremental=False,  # Force re-analysis
+                    )
+
+                    # Close thread-local connections
+                    thread_analysis_db.close()
+                    thread_metadata_db.close()
+
+                    self.finished.emit(result)
+
+                except Exception as e:
+                    import traceback
+
+                    self.finished.emit(
+                        {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+                    )
+
+        # Create and start thread
+        self._analysis_thread = _ReAnalysisThread(file_path, config_manager)
+        self._analysis_thread.progress.connect(self._on_analysis_progress)
+        self._analysis_thread.finished.connect(self._on_analysis_finished)
+        self._analysis_thread.start()
+
+    def _on_analysis_progress(self, status_text: str):
+        """Handle progress updates from analysis thread."""
+        self.status_label.setText(status_text)
+
+    def _on_analysis_finished(self, result: dict):
+        """Handle analysis completion."""
+        if result.get("success"):
+            self.status_label.setText("Analysis complete! Updating fields...")
+
+            # Extract metadata from result
+            metadata = result.get("metadata", {})
+
+            # Update file_data
+            self.file_data.update(
+                {
+                    "company": metadata.get("company", ""),
+                    "document_type": metadata.get("document_type", ""),
+                    "document_date": metadata.get("document_date", ""),
+                    "page_number": metadata.get("page_number", ""),
+                    "total_pages": metadata.get("total_pages", ""),
+                    "confidence": result.get("confidence_score", 0) * 100,
+                    "raw_response": result.get("response", ""),
+                }
+            )
+
+            # Update input fields
+            self._update_metadata_fields()
+
+            # Apply rotation if needed
+            rotation = metadata.get("rotation_needed", "none")
+            if rotation and rotation != "none":
+                self._apply_rotation(rotation)
+
+            # Hide status after 2 seconds
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(2000, lambda: self.status_label.setVisible(False))
+
+        else:
+            error_msg = result.get("error", "Unknown error")
+            self.status_label.setText(f"Analysis failed: {error_msg}")
+            QMessageBox.critical(
+                self, "Analysis Failed", f"Failed to re-analyze file:\n\n{error_msg}"
+            )
+
+        # Re-enable all controls
+        self._set_controls_enabled(True)
+
+    def _set_controls_enabled(self, enabled: bool):
+        """Enable or disable all buttons and edit controls."""
+        # Buttons
+        self.open_doc_btn.setEnabled(enabled)
+        self.save_metadata_btn.setEnabled(enabled)
+        self.copy_json_btn.setEnabled(enabled)
+        self.re_analyze_btn.setEnabled(enabled)
+        self.close_btn.setEnabled(enabled)
+
+        # Edit controls
+        if hasattr(self, "metadata_inputs"):
+            for input_widget in self.metadata_inputs.values():
+                input_widget.setEnabled(enabled)
+
+    def _update_metadata_fields(self):
+        """Update metadata input fields with current file_data values."""
+        from PyQt6.QtWidgets import QComboBox, QLineEdit
+
+        if not hasattr(self, "metadata_inputs"):
+            return
+
+        for field_name, input_widget in self.metadata_inputs.items():
+            value = self.file_data.get(field_name, "")
+
+            if isinstance(input_widget, QLineEdit):
+                input_widget.setText(str(value) if value else "")
+            elif isinstance(input_widget, QComboBox):
+                if value:
+                    input_widget.setCurrentText(str(value))
+            elif isinstance(input_widget, QCheckBox):
+                input_widget.setChecked(bool(value))
+
+    def _apply_rotation(self, rotation: str):
+        """Apply rotation to the displayed image."""
+        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
+            return
+
+        from PyQt6.QtGui import QTransform
+
+        # Map rotation strings to angles
+        rotation_map = {"90_cw": -90, "90_ccw": 90, "180": 180, "none": 0}
+
+        angle = rotation_map.get(rotation, 0)
+        if angle == 0:
+            return
+
+        # Create rotation transform
+        transform = QTransform()
+        transform.rotate(angle)
+
+        # Apply rotation to original pixmap
+        rotated_pixmap = self.original_pixmap.transformed(
+            transform, Qt.TransformationMode.SmoothTransformation
+        )
+
+        # Update original pixmap with rotated version
+        self.original_pixmap = rotated_pixmap
+
+        # Scale according to configured zoom mode
+        left_width = self.left_panel.width()
+        left_height = self.left_panel.height()
+        available_width = left_width - 50
+        available_height = left_height - 50
+
+        scaled_pixmap = self._scale_image_to_mode(rotated_pixmap, available_width, available_height)
+        self.image_label.setPixmap(scaled_pixmap)
 
 
 class FileDetailsGrid(QWidget):
@@ -2216,7 +2484,9 @@ class FileDetailsGrid(QWidget):
         row_data = self.model.get_row_data(source_index.row())
 
         if row_data:
-            dialog = FileDetailsDialog(row_data, self, analysis_db=self.analysis_db)
+            dialog = FileDetailsDialog(
+                row_data, self, analysis_db=self.analysis_db, config_manager=self.config_manager
+            )
             dialog.re_analyze_requested.connect(lambda path: self.re_analyze_requested.emit([path]))
             dialog.exec()
 

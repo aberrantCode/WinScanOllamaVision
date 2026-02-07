@@ -221,7 +221,7 @@ class EnhancedSettingsWindow(QDialog):
         self.setMinimumHeight(600)
         self._init_ui()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event):  # noqa: N802
         """Clean up resources when window closes."""
         # Wait for optimization thread to finish
         if self.optimization_thread and self.optimization_thread.isRunning():
@@ -230,9 +230,9 @@ class EnhancedSettingsWindow(QDialog):
                 self.optimization_thread.terminate()
 
         # Close database connections
-        if hasattr(self, 'metadata_db') and self.metadata_db:
+        if hasattr(self, "metadata_db") and self.metadata_db:
             self.metadata_db.close()
-        if hasattr(self, 'analysis_db') and self.analysis_db:
+        if hasattr(self, "analysis_db") and self.analysis_db:
             self.analysis_db.close()
 
         event.accept()
@@ -1159,6 +1159,7 @@ class EnhancedSettingsWindow(QDialog):
         # Create tabs
         self.tabs.addTab(self._create_general_tab(), "General")
         self.tabs.addTab(self._create_llm_provider_tab(), "LLM Provider")
+        self.tabs.addTab(self._create_prompts_tab(), "Prompts")
         self.tabs.addTab(self._create_directories_tab(), "Directories")
         self.tabs.addTab(self._create_database_tab(), "Database")
         self.tabs.addTab(self._create_appearance_tab(), "Appearance")
@@ -1187,6 +1188,11 @@ class EnhancedSettingsWindow(QDialog):
         self.scan_folder_edit = QLineEdit(
             self.config_manager.get_setting("DocumentProcessing", "scan_folder")
         )
+        self.scan_folder_edit.setToolTip(
+            "Default folder location for scanning documents.\n"
+            "This is where the application will look for image files to analyze.\n"
+            "Note: Multiple source directories can be configured in the Directories tab."
+        )
         folder_layout.addWidget(self.scan_folder_edit)
 
         browse_button = QPushButton()
@@ -1203,41 +1209,16 @@ class EnhancedSettingsWindow(QDialog):
         scan_layout.addLayout(folder_layout, 0, 1)
         layout.addWidget(scan_group)
 
-        # Auto-Approval Group
-        approval_group = QGroupBox("Auto-Approval")
-        approval_layout = QGridLayout(approval_group)
-
-        self.auto_approval_checkbox = QCheckBox("Enable Automatic Approvals")
-        auto_approval_enabled = self.config_manager.get_setting(
-            "AutoApproval", "enable_automatic_approvals", "false"
-        )
-        self.auto_approval_checkbox.setChecked(auto_approval_enabled.lower() == "true")
-        self.auto_approval_checkbox.stateChanged.connect(self._on_auto_approval_toggled)
-        approval_layout.addWidget(self.auto_approval_checkbox, 0, 0, 1, 2)
-
-        self.approval_delay_label = QLabel("Approval Delay (seconds):")
-        approval_layout.addWidget(self.approval_delay_label, 1, 0)
-
-        self.approval_delay_spinbox = QSpinBox()
-        self.approval_delay_spinbox.setMinimum(3)
-        self.approval_delay_spinbox.setMaximum(60)
-        self.approval_delay_spinbox.setValue(
-            int(self.config_manager.get_setting("AutoApproval", "automatic_approval_delay", "5"))
-        )
-        approval_layout.addWidget(self.approval_delay_spinbox, 1, 1)
-
-        # Set initial visibility
-        is_checked = self.auto_approval_checkbox.isChecked()
-        self.approval_delay_label.setVisible(is_checked)
-        self.approval_delay_spinbox.setVisible(is_checked)
-
-        layout.addWidget(approval_group)
-
         # Audit Trail Group
         audit_group = QGroupBox("Audit Trail")
         audit_layout = QVBoxLayout(audit_group)
 
         self.audit_trail_checkbox = QCheckBox("Enable Audit Trail Logging")
+        self.audit_trail_checkbox.setToolTip(
+            "Records all user actions and decisions for compliance and review.\n"
+            "Logs include: file operations, metadata edits, bundle accept/reject decisions,\n"
+            "and document processing history. Useful for auditing and troubleshooting."
+        )
         audit_enabled = self.config_manager.get_setting("AuditTrail", "enabled", "false")
         self.audit_trail_checkbox.setChecked(audit_enabled.lower() == "true")
         audit_layout.addWidget(self.audit_trail_checkbox)
@@ -1290,7 +1271,15 @@ class EnhancedSettingsWindow(QDialog):
         self.provider_combo.addItem("Ollama (Local HTTP API)", "ollama")
         self.provider_combo.addItem("Claude CLI", "claude_cli")
         self.provider_combo.addItem("Gemini CLI", "gemini_cli")
+        self.provider_combo.setToolTip(
+            "Select which LLM provider to use for document analysis.\n\n"
+            "• Ollama: Local vision models (free, private, requires Ollama installed)\n"
+            "• Claude CLI: Anthropic's Claude via CLI (requires API key and claude command)\n"
+            "• Gemini CLI: Google's Gemini via CLI (requires API key and gemini command)\n\n"
+            "All providers support vision/multimodal models for analyzing document images."
+        )
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self._apply_combobox_chevron_fix(self.provider_combo)
         provider_layout.addWidget(self.provider_combo, 0, 1)
 
         # Set current provider
@@ -1321,13 +1310,280 @@ class EnhancedSettingsWindow(QDialog):
 
         layout.addWidget(self.provider_stack)
 
+        layout.addStretch()
+
+        # Update visibility based on active provider (must be after tab is fully built)
+        self._on_provider_changed()
+
+        return widget
+
+    def _create_ollama_settings(self) -> QWidget:
+        """Ollama-specific settings panel"""
+        widget = QGroupBox("Ollama Settings")
+        widget.setVisible(True)  # Ensure initially visible
+        layout = QGridLayout(widget)
+
+        layout.addWidget(QLabel("Model:"), 0, 0)
+        self.ollama_model_combo = QComboBox()
+        self.ollama_model_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.ollama_model_combo.setToolTip(
+            "Vision-capable model to use for document analysis.\n\n"
+            "Models marked with ✓ are already downloaded and ready to use.\n"
+            "Models without ✓ need to be downloaded first (use Download button or 'ollama pull' command).\n\n"
+            "Recommended models:\n"
+            "• qwen2.5-vl:latest - Best accuracy for document analysis\n"
+            "• llava:latest - Good all-around performance\n"
+            "• minicpm-v:latest - Fastest for quick processing"
+        )
+        self._apply_combobox_chevron_fix(self.ollama_model_combo)
+        layout.addWidget(self.ollama_model_combo, 0, 1)
+
+        # Model action buttons
+        model_buttons = QHBoxLayout()
+        refresh_ollama_btn = QPushButton("🔄 Refresh")
+        refresh_ollama_btn.clicked.connect(lambda: self._load_ollama_models(force_refresh=True))
+        refresh_ollama_btn.setObjectName("compactButton")
+        refresh_ollama_btn.setToolTip(
+            "Check download status of Ollama models (bypasses 24-hour cache)"
+        )
+        model_buttons.addWidget(refresh_ollama_btn)
+
+        download_btn = QPushButton("📥 Download")
+        download_btn.clicked.connect(self._download_ollama_model)
+        download_btn.setObjectName("compactButton")
+        download_btn.setToolTip("Download an Ollama model")
+        model_buttons.addWidget(download_btn)
+
+        layout.addLayout(model_buttons, 0, 2)
+
+        layout.addWidget(QLabel("Base URL:"), 1, 0)
+        self.ollama_url_edit = QLineEdit(
+            self.config_manager.get_setting("Ollama", "base_url", "http://localhost:11434")
+        )
+        self.ollama_url_edit.setToolTip(
+            "HTTP endpoint for the Ollama server.\n\n"
+            "Default: http://localhost:11434 (local Ollama instance)\n\n"
+            "Change this if:\n"
+            "• Ollama is running on a different port\n"
+            "• Using a remote Ollama server\n"
+            "• Using Ollama behind a proxy"
+        )
+        layout.addWidget(self.ollama_url_edit, 1, 1, 1, 2)
+
+        layout.addWidget(QLabel("Timeout (seconds):"), 2, 0)
+        self.ollama_timeout_spin = QSpinBox()
+        self.ollama_timeout_spin.setMinimum(10)
+        self.ollama_timeout_spin.setMaximum(600)
+        self.ollama_timeout_spin.setValue(
+            int(self.config_manager.get_setting("Ollama", "timeout", "300"))
+        )
+        self.ollama_timeout_spin.setToolTip(
+            "Maximum time to wait for Ollama to respond (in seconds).\n\n"
+            "Vision model processing can take time, especially for:\n"
+            "• Complex documents with lots of text\n"
+            "• Larger models (13B, 34B parameters)\n"
+            "• Systems with limited GPU/CPU resources\n\n"
+            "Default: 300 seconds (5 minutes)\n"
+            "Increase if you get timeout errors during analysis."
+        )
+        layout.addWidget(self.ollama_timeout_spin, 2, 1)
+
+        # Load Ollama models asynchronously after window is shown
+        # This prevents the blank window issue during initialization
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._load_ollama_models)
+
+        return widget
+
+    def _create_claude_cli_settings(self) -> QWidget:
+        """Claude CLI-specific settings panel"""
+        widget = QGroupBox("Claude CLI Settings")
+        layout = QGridLayout(widget)
+
+        layout.addWidget(QLabel("Model:"), 0, 0)
+        self.claude_model_combo = QComboBox()
+        self.claude_model_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.claude_model_combo.setToolTip(
+            "Claude vision-capable model to use for document analysis.\n\n"
+            "Model list is automatically fetched from the web (updated daily).\n"
+            "Click Refresh to get the latest available models.\n\n"
+            "Recommended models:\n"
+            "• claude-3-5-sonnet-20241022 - Best balance of speed and accuracy\n"
+            "• claude-3-opus-20240229 - Highest accuracy (slower, more expensive)\n"
+            "• claude-3-5-haiku-20241022 - Fastest and most cost-effective"
+        )
+        self._apply_combobox_chevron_fix(self.claude_model_combo)
+        layout.addWidget(self.claude_model_combo, 0, 1)
+
+        refresh_claude_btn = QPushButton("🔄 Refresh")
+        refresh_claude_btn.clicked.connect(lambda: self._load_claude_models(force_refresh=True))
+        refresh_claude_btn.setObjectName("compactButton")
+        refresh_claude_btn.setToolTip(
+            "Search web for latest Claude vision models (bypasses 24-hour cache)"
+        )
+        layout.addWidget(refresh_claude_btn, 0, 2)
+
+        # Load Claude models asynchronously
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._load_claude_models)
+
+        layout.addWidget(QLabel("Command Template:"), 1, 0, Qt.AlignmentFlag.AlignTop)
+        self.claude_command_edit = QPlainTextEdit()
+        self.claude_command_edit.setMaximumHeight(60)
+        self.claude_command_edit.setPlainText(
+            self.config_manager.get_setting("ClaudeCLI", "command_template", "")
+        )
+        self.claude_command_edit.setToolTip(
+            "Command template for invoking the Claude CLI.\n\n"
+            "Available variables:\n"
+            "• %MODEL% - Replaced with selected model name\n"
+            "• %IMAGE_PATHS% - Replaced with space-separated image file paths\n"
+            "• %PROMPT% - Replaced with the analysis prompt\n\n"
+            "Example:\n"
+            "claude --model %MODEL% -p %PROMPT% %IMAGE_PATHS%\n\n"
+            "The template defines how the application calls the claude command."
+        )
+        layout.addWidget(self.claude_command_edit, 1, 1)
+
+        template_help = QLabel("Variables: %MODEL%, %IMAGE_PATHS%, %PROMPT%")
+        layout.addWidget(template_help, 2, 1)
+
+        layout.addWidget(QLabel("Timeout (seconds):"), 3, 0)
+        self.claude_timeout_spin = QSpinBox()
+        self.claude_timeout_spin.setMinimum(10)
+        self.claude_timeout_spin.setMaximum(600)
+        self.claude_timeout_spin.setValue(
+            int(self.config_manager.get_setting("ClaudeCLI", "timeout", "300"))
+        )
+        self.claude_timeout_spin.setToolTip(
+            "Maximum time to wait for Claude CLI to respond (in seconds).\n\n"
+            "Factors affecting response time:\n"
+            "• Network latency to Anthropic's API\n"
+            "• Model processing time (Opus slower than Haiku)\n"
+            "• Document complexity and image size\n\n"
+            "Default: 300 seconds (5 minutes)\n"
+            "Increase if you get timeout errors during analysis."
+        )
+        layout.addWidget(self.claude_timeout_spin, 3, 1)
+
+        return widget
+
+    def _create_gemini_cli_settings(self) -> QWidget:
+        """Gemini CLI-specific settings panel"""
+        widget = QGroupBox("Gemini CLI Settings")
+        layout = QGridLayout(widget)
+
+        layout.addWidget(QLabel("Model:"), 0, 0)
+        self.gemini_model_combo = QComboBox()
+        self.gemini_model_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.gemini_model_combo.setToolTip(
+            "Gemini vision-capable model to use for document analysis.\n\n"
+            "Model list is automatically fetched from the web (updated daily).\n"
+            "Click Refresh to get the latest available models.\n\n"
+            "Recommended models:\n"
+            "• gemini-2.0-flash-exp - Latest experimental model (fastest)\n"
+            "• gemini-1.5-pro - Best accuracy and reasoning\n"
+            "• gemini-1.5-flash - Good balance of speed and accuracy"
+        )
+        self._apply_combobox_chevron_fix(self.gemini_model_combo)
+        layout.addWidget(self.gemini_model_combo, 0, 1)
+
+        refresh_gemini_btn = QPushButton("🔄 Refresh")
+        refresh_gemini_btn.clicked.connect(lambda: self._load_gemini_models(force_refresh=True))
+        refresh_gemini_btn.setObjectName("compactButton")
+        refresh_gemini_btn.setToolTip(
+            "Search web for latest Gemini vision models (bypasses 24-hour cache)"
+        )
+        layout.addWidget(refresh_gemini_btn, 0, 2)
+
+        # Load Gemini models asynchronously
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._load_gemini_models)
+
+        layout.addWidget(QLabel("Command Template:"), 1, 0, Qt.AlignmentFlag.AlignTop)
+        self.gemini_command_edit = QPlainTextEdit()
+        self.gemini_command_edit.setMaximumHeight(60)
+        self.gemini_command_edit.setPlainText(
+            self.config_manager.get_setting("GeminiCLI", "command_template", "")
+        )
+        self.gemini_command_edit.setToolTip(
+            "Command template for invoking the Gemini CLI.\n\n"
+            "Available variables:\n"
+            "• %MODEL% - Replaced with selected model name\n"
+            "• %IMAGE_PATHS% - Replaced with space-separated image file paths\n"
+            "• %PROMPT% - Replaced with the analysis prompt\n\n"
+            "Example:\n"
+            "gemini --model %MODEL% -p %PROMPT% %IMAGE_PATHS%\n\n"
+            "The template defines how the application calls the gemini command."
+        )
+        layout.addWidget(self.gemini_command_edit, 1, 1)
+
+        template_help = QLabel("Variables: %MODEL%, %IMAGE_PATHS%, %PROMPT%")
+        layout.addWidget(template_help, 2, 1)
+
+        layout.addWidget(QLabel("Timeout (seconds):"), 3, 0)
+        self.gemini_timeout_spin = QSpinBox()
+        self.gemini_timeout_spin.setMinimum(10)
+        self.gemini_timeout_spin.setMaximum(600)
+        self.gemini_timeout_spin.setValue(
+            int(self.config_manager.get_setting("GeminiCLI", "timeout", "300"))
+        )
+        self.gemini_timeout_spin.setToolTip(
+            "Maximum time to wait for Gemini CLI to respond (in seconds).\n\n"
+            "Factors affecting response time:\n"
+            "• Network latency to Google's API\n"
+            "• Model processing time (Pro slower than Flash)\n"
+            "• Document complexity and image size\n\n"
+            "Default: 300 seconds (5 minutes)\n"
+            "Increase if you get timeout errors during analysis."
+        )
+        layout.addWidget(self.gemini_timeout_spin, 3, 1)
+
+        return widget
+
+    def _create_prompts_tab(self) -> QWidget:
+        """Create the Prompts configuration tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
         # Prompts Group
         prompts_group = QGroupBox("Prompts Configuration")
         prompts_layout = QVBoxLayout(prompts_group)
 
         # Document Pages Prompt
-        prompts_layout.addWidget(QLabel("Document Validation Prompt:"))
+        doc_validation_label = QLabel("Document Validation Prompt:")
+        doc_validation_label.setToolTip(
+            "Prompt used to validate if multiple pages belong to the same document.\n\n"
+            "Purpose: When multiple pages are found, this prompt asks the LLM to\n"
+            "determine which pages belong together as a single document.\n\n"
+            "Implementation: Sent to the LLM with multiple page images.\n"
+            "The LLM returns JSON indicating which pages belong together.\n\n"
+            "Used by: Document bundling logic during analysis."
+        )
+        prompts_layout.addWidget(doc_validation_label)
         self.pages_prompt_edit = ExpandablePromptEdit()
+        self.pages_prompt_edit.setToolTip(
+            "This prompt analyzes multiple document page images to determine\n"
+            "if they belong to the same physical document.\n\n"
+            "The LLM uses visual cues like:\n"
+            "• Consistent formatting and layout\n"
+            "• Sequential page numbers\n"
+            "• Continuation of content\n"
+            "• Matching headers/footers\n\n"
+            "Response format must be JSON with 'all_belong', 'doc_page_count',\n"
+            "and 'do_not_belong' fields."
+        )
         pages_prompt_default = """You are an expert document analyst. Examine the provided images and determine which pages belong to the same continuous physical document.
 
 The first image should ALWAYS be considered as belonging to the document (it's the anchor page). Analyze each subsequent page to determine if it belongs with the first page or not.
@@ -1375,8 +1631,29 @@ If 5 pages provided and pages 3 and 5 don't belong:
         prompts_layout.addLayout(pages_buttons)
 
         # Document Metadata Prompt
-        prompts_layout.addWidget(QLabel("Metadata Extraction Prompt:"))
+        metadata_label = QLabel("Metadata Extraction Prompt:")
+        metadata_label.setToolTip(
+            "Prompt used to extract metadata from document images.\n\n"
+            "Purpose: Analyzes each document page to extract structured information\n"
+            "like company name, document type, date, page numbers, etc.\n\n"
+            "Implementation: Sent to the LLM with one or more page images.\n"
+            "The LLM returns JSON with all extracted metadata fields.\n\n"
+            "Used by: Analysis service for every document page analyzed."
+        )
+        prompts_layout.addWidget(metadata_label)
         self.metadata_prompt_edit = ExpandablePromptEdit()
+        self.metadata_prompt_edit.setToolTip(
+            "This prompt extracts comprehensive metadata from document images.\n\n"
+            "Extracted fields include:\n"
+            "• company - Organization name\n"
+            "• document_type - Invoice, Statement, Receipt, etc.\n"
+            "• document_date - Primary date in YYYY-MM-DD format\n"
+            "• tax_related - Boolean for tax-related documents\n"
+            "• page_number/total_pages - Page information\n"
+            "• rotation_needed - If image needs rotation\n"
+            "• confidence_score - LLM's confidence (0.0-1.0)\n\n"
+            "Response format must be valid JSON with all fields."
+        )
         metadata_prompt_default = """You are an expert at analyzing scanned documents and extracting comprehensive metadata.
 
 Analyze the provided image(s) and extract the following information:
@@ -1456,133 +1733,7 @@ Example response:
 
         layout.addStretch()
 
-        # Update visibility based on active provider (must be after tab is fully built)
-        self._on_provider_changed()
-
-        return widget
-
-    def _create_ollama_settings(self) -> QWidget:
-        """Ollama-specific settings panel"""
-        widget = QGroupBox("Ollama Settings")
-        widget.setVisible(True)  # Ensure initially visible
-        layout = QGridLayout(widget)
-
-        layout.addWidget(QLabel("Model:"), 0, 0)
-        self.ollama_model_combo = QComboBox()
-        self.ollama_model_combo.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        layout.addWidget(self.ollama_model_combo, 0, 1)
-
-        download_btn = QPushButton("Download Model")
-        download_btn.clicked.connect(self._download_ollama_model)
-        download_btn.setObjectName("compactButton")
-        layout.addWidget(download_btn, 0, 2)
-
-        layout.addWidget(QLabel("Base URL:"), 1, 0)
-        self.ollama_url_edit = QLineEdit(
-            self.config_manager.get_setting("Ollama", "base_url", "http://localhost:11434")
-        )
-        layout.addWidget(self.ollama_url_edit, 1, 1, 1, 2)
-
-        layout.addWidget(QLabel("Timeout (seconds):"), 2, 0)
-        self.ollama_timeout_spin = QSpinBox()
-        self.ollama_timeout_spin.setMinimum(10)
-        self.ollama_timeout_spin.setMaximum(600)
-        self.ollama_timeout_spin.setValue(
-            int(self.config_manager.get_setting("Ollama", "timeout", "300"))
-        )
-        layout.addWidget(self.ollama_timeout_spin, 2, 1)
-
-        # Load Ollama models asynchronously after window is shown
-        # This prevents the blank window issue during initialization
-        from PyQt6.QtCore import QTimer
-
-        QTimer.singleShot(0, self._load_ollama_models)
-
-        return widget
-
-    def _create_claude_cli_settings(self) -> QWidget:
-        """Claude CLI-specific settings panel"""
-        widget = QGroupBox("Claude CLI Settings")
-        layout = QGridLayout(widget)
-
-        layout.addWidget(QLabel("Model:"), 0, 0)
-        self.claude_model_combo = QComboBox()
-        claude_models = self.config_manager.get_setting("ClaudeCLI", "models", "").split(",")
-        for model in claude_models:
-            if model.strip():
-                self.claude_model_combo.addItem(model.strip())
-        # Set default model
-        default_model = self.config_manager.get_setting("ClaudeCLI", "default_model")
-        if default_model:
-            index = self.claude_model_combo.findText(default_model)
-            if index >= 0:
-                self.claude_model_combo.setCurrentIndex(index)
-        layout.addWidget(self.claude_model_combo, 0, 1)
-
-        layout.addWidget(QLabel("Command Template:"), 1, 0, Qt.AlignmentFlag.AlignTop)
-        self.claude_command_edit = QPlainTextEdit()
-        self.claude_command_edit.setMaximumHeight(60)
-        self.claude_command_edit.setPlainText(
-            self.config_manager.get_setting("ClaudeCLI", "command_template", "")
-        )
-        layout.addWidget(self.claude_command_edit, 1, 1)
-
-        template_help = QLabel("Variables: %MODEL%, %IMAGE_PATHS%, %PROMPT%")
-        layout.addWidget(template_help, 2, 1)
-
-        layout.addWidget(QLabel("Timeout (seconds):"), 3, 0)
-        self.claude_timeout_spin = QSpinBox()
-        self.claude_timeout_spin.setMinimum(10)
-        self.claude_timeout_spin.setMaximum(600)
-        self.claude_timeout_spin.setValue(
-            int(self.config_manager.get_setting("ClaudeCLI", "timeout", "300"))
-        )
-        layout.addWidget(self.claude_timeout_spin, 3, 1)
-
-        return widget
-
-    def _create_gemini_cli_settings(self) -> QWidget:
-        """Gemini CLI-specific settings panel"""
-        widget = QGroupBox("Gemini CLI Settings")
-        layout = QGridLayout(widget)
-
-        layout.addWidget(QLabel("Model:"), 0, 0)
-        self.gemini_model_combo = QComboBox()
-        gemini_models = self.config_manager.get_setting("GeminiCLI", "models", "").split(",")
-        for model in gemini_models:
-            if model.strip():
-                self.gemini_model_combo.addItem(model.strip())
-        # Set default model
-        default_model = self.config_manager.get_setting("GeminiCLI", "default_model")
-        if default_model:
-            index = self.gemini_model_combo.findText(default_model)
-            if index >= 0:
-                self.gemini_model_combo.setCurrentIndex(index)
-        layout.addWidget(self.gemini_model_combo, 0, 1)
-
-        layout.addWidget(QLabel("Command Template:"), 1, 0, Qt.AlignmentFlag.AlignTop)
-        self.gemini_command_edit = QPlainTextEdit()
-        self.gemini_command_edit.setMaximumHeight(60)
-        self.gemini_command_edit.setPlainText(
-            self.config_manager.get_setting("GeminiCLI", "command_template", "")
-        )
-        layout.addWidget(self.gemini_command_edit, 1, 1)
-
-        template_help = QLabel("Variables: %MODEL%, %IMAGE_PATHS%, %PROMPT%")
-        layout.addWidget(template_help, 2, 1)
-
-        layout.addWidget(QLabel("Timeout (seconds):"), 3, 0)
-        self.gemini_timeout_spin = QSpinBox()
-        self.gemini_timeout_spin.setMinimum(10)
-        self.gemini_timeout_spin.setMaximum(600)
-        self.gemini_timeout_spin.setValue(
-            int(self.config_manager.get_setting("GeminiCLI", "timeout", "300"))
-        )
-        layout.addWidget(self.gemini_timeout_spin, 3, 1)
-
-        return widget
+        return tab
 
     def _create_directories_tab(self) -> QWidget:
         """Tab 3: Multi-Directory Management"""
@@ -1599,6 +1750,14 @@ Example response:
         # Directory list
         self.directories_list = QListWidget()
         self.directories_list.setAlternatingRowColors(True)
+        self.directories_list.setToolTip(
+            "List of directories to monitor for document scanning.\n\n"
+            "The application will:\n"
+            "• Scan all listed directories recursively for image files (PNG, JPG, JPEG)\n"
+            "• Analyze new/changed files when 'Analyze Documents' is clicked\n"
+            "• Monitor these locations for document processing\n\n"
+            "Use Add/Remove buttons to manage the list."
+        )
         # Theme stylesheet handles all styling
 
         # Load existing directories
@@ -1613,11 +1772,22 @@ Example response:
 
         add_btn = QPushButton("Add Directory")
         add_btn.setObjectName("compactButton")
+        add_btn.setToolTip(
+            "Add a new directory to the scan list.\n\n"
+            "You can add multiple directories to monitor different locations\n"
+            "for scanned documents (e.g., multiple scan output folders,\n"
+            "network drives, or cloud sync folders)."
+        )
         add_btn.clicked.connect(self._add_directory)
         button_layout.addWidget(add_btn)
 
         remove_btn = QPushButton("Remove Selected")
         remove_btn.setObjectName("compactButton")
+        remove_btn.setToolTip(
+            "Remove the selected directory from the scan list.\n\n"
+            "This only removes the directory from monitoring - it does not\n"
+            "delete any files or affect previously analyzed documents."
+        )
         remove_btn.clicked.connect(self._remove_directory)
         button_layout.addWidget(remove_btn)
 
@@ -1626,6 +1796,14 @@ Example response:
 
         # Scan on startup checkbox
         self.scan_on_startup_checkbox = QCheckBox("Scan all directories on application startup")
+        self.scan_on_startup_checkbox.setToolTip(
+            "Automatically scan directories when the application starts.\n\n"
+            "When enabled: Application will check all monitored directories\n"
+            "for new/changed files on startup and show a summary.\n\n"
+            "When disabled: You must manually click 'Analyze Documents'\n"
+            "to scan directories.\n\n"
+            "Recommended: Enabled for frequent document scanning workflows."
+        )
         scan_on_startup = self.config_manager.get_setting(
             "SourceDirectories", "scan_on_startup", "true"
         )
@@ -1646,12 +1824,29 @@ Example response:
 
         stats_btn = QPushButton("View Statistics")
         stats_btn.setObjectName("compactButton")
+        stats_btn.setToolTip(
+            "Display current database statistics.\n\n"
+            "Shows:\n"
+            "• Total analyzed files and pages\n"
+            "• Number of bundle suggestions\n"
+            "• Cache hit rate and efficiency\n"
+            "• Database file size and location\n\n"
+            "Statistics are automatically refreshed when this tab is displayed."
+        )
         stats_btn.clicked.connect(self._show_database_statistics)
         stats_layout.addWidget(stats_btn)
 
         self.stats_text = QTextEdit()
         self.stats_text.setReadOnly(True)
         self.stats_text.setMaximumHeight(150)
+        self.stats_text.setToolTip(
+            "Database statistics display.\n\n"
+            "Real-time view of database contents including:\n"
+            "• Analysis results count\n"
+            "• Bundle suggestions count\n"
+            "• Cache performance metrics\n"
+            "• Storage usage information"
+        )
         # Theme stylesheet handles styling - no inline styles needed
         stats_layout.addWidget(self.stats_text)
 
@@ -1663,31 +1858,70 @@ Example response:
 
         backup_btn = QPushButton("Create Backup")
         backup_btn.setObjectName("compactButton")
-        backup_btn.setToolTip("Create a timestamped backup of the database")
+        backup_btn.setToolTip(
+            "Create a timestamped backup of the database.\n\n"
+            "Creates a backup copy of analysis.db and metadata.db in the\n"
+            "AppData directory with timestamp (e.g., analysis_backup_20260207_143052.db).\n\n"
+            "Use before performing maintenance operations or major updates.\n"
+            "Backups can be manually restored by renaming the backup file."
+        )
         backup_btn.clicked.connect(self._backup_database)
         maintenance_layout.addWidget(backup_btn, 0, 0)
 
         purge_cache_btn = QPushButton("Purge Cached Metadata")
         purge_cache_btn.setObjectName("compactButton")
-        purge_cache_btn.setToolTip("Remove all cached metadata (forces re-analysis)")
+        purge_cache_btn.setToolTip(
+            "Remove all cached metadata from the database.\n\n"
+            "Forces re-analysis of all files on next scan. Use when:\n"
+            "• Prompt templates have been significantly changed\n"
+            "• LLM provider or model has been updated\n"
+            "• Previous analyses appear incorrect or incomplete\n\n"
+            "Warning: Re-analysis may take time and consume LLM resources."
+        )
         purge_cache_btn.clicked.connect(lambda: self._purge_data("cache"))
         maintenance_layout.addWidget(purge_cache_btn, 1, 0)
 
         purge_analysis_btn = QPushButton("Purge Analysis Results")
         purge_analysis_btn.setObjectName("compactButton")
-        purge_analysis_btn.setToolTip("Remove all analysis results")
+        purge_analysis_btn.setToolTip(
+            "Remove all LLM analysis results from the database.\n\n"
+            "Deletes:\n"
+            "• All page-level analysis data\n"
+            "• Extracted metadata (company, document type, dates)\n"
+            "• Confidence scores and analysis timestamps\n\n"
+            "Use for a complete fresh start with existing files.\n"
+            "Does not delete bundle suggestions or configuration."
+        )
         purge_analysis_btn.clicked.connect(lambda: self._purge_data("analysis"))
         maintenance_layout.addWidget(purge_analysis_btn, 1, 1)
 
         purge_bundles_btn = QPushButton("Purge Bundle Suggestions")
         purge_bundles_btn.setObjectName("compactButton")
-        purge_bundles_btn.setToolTip("Remove all bundle suggestions")
+        purge_bundles_btn.setToolTip(
+            "Remove all bundle suggestions from the database.\n\n"
+            "Deletes generated bundle recommendations but keeps:\n"
+            "• Individual page analysis results\n"
+            "• Extracted metadata\n"
+            "• Cache data\n\n"
+            "Use when you want to regenerate bundles with different\n"
+            "bundling logic or after editing metadata."
+        )
         purge_bundles_btn.clicked.connect(lambda: self._purge_data("bundles"))
         maintenance_layout.addWidget(purge_bundles_btn, 2, 0)
 
         purge_all_btn = QPushButton("Purge All Data")
         purge_all_btn.setObjectName("dangerButton")
-        purge_all_btn.setToolTip("Remove all data from extended tables (keeps schema)")
+        purge_all_btn.setToolTip(
+            "⚠️ DANGER: Remove ALL data from the database.\n\n"
+            "Deletes:\n"
+            "• All analysis results\n"
+            "• All bundle suggestions\n"
+            "• All cached metadata\n"
+            "• Analysis run history\n\n"
+            "Database schema and structure are preserved.\n"
+            "This action cannot be undone - create a backup first!\n\n"
+            "Use only for complete database reset."
+        )
         purge_all_btn.clicked.connect(lambda: self._purge_data("all"))
         maintenance_layout.addWidget(purge_all_btn, 2, 1)
 
@@ -1712,6 +1946,17 @@ Example response:
         self.theme_combo = QComboBox()
         self.theme_combo.addItem("Light", "light")
         self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.setToolTip(
+            "Select the application's color theme.\n\n"
+            "Light Mode: Traditional light background with dark text\n"
+            "Dark Mode: Dark background with light text (reduces eye strain)\n\n"
+            "Theme affects all application windows including:\n"
+            "• Main window\n"
+            "• Settings dialogs\n"
+            "• Bundle workflow\n"
+            "• Analysis status displays\n\n"
+            "Note: Changes require application restart to take full effect."
+        )
 
         current_theme = self.config_manager.get_setting("Theme", "theme", "light")
         index = self.theme_combo.findData(current_theme)
@@ -1732,6 +1977,15 @@ Example response:
         zoom_layout.addWidget(QLabel("PNG Zoom Mode:"), 0, 0)
         self.png_zoom_combo = QComboBox()
         self.png_zoom_combo.addItems(["Fit to Width", "Fit to Height", "Fit to Window", "Custom %"])
+        self.png_zoom_combo.setToolTip(
+            "Default zoom mode for PNG image previews.\n\n"
+            "• Fit to Width: Scale image to viewer width (recommended for documents)\n"
+            "• Fit to Height: Scale image to viewer height\n"
+            "• Fit to Window: Scale to fit entire image in viewer\n"
+            "• Custom %: Use specific zoom percentage (set below)\n\n"
+            "Users can override this with zoom controls in the preview window.\n"
+            "Applies to scanned document images and page previews."
+        )
         png_zoom = self.config_manager.get_setting("Theme", "default_zoom_mode_png", "fit_to_width")
         self.png_zoom_combo.setCurrentText(png_zoom.replace("_", " ").title())
         zoom_layout.addWidget(self.png_zoom_combo, 0, 1)
@@ -1739,6 +1993,15 @@ Example response:
         zoom_layout.addWidget(QLabel("PDF Zoom Mode:"), 1, 0)
         self.pdf_zoom_combo = QComboBox()
         self.pdf_zoom_combo.addItems(["Fit to Width", "Fit to Height", "Fit to Window", "Custom %"])
+        self.pdf_zoom_combo.setToolTip(
+            "Default zoom mode for PDF document previews.\n\n"
+            "• Fit to Width: Scale page to viewer width (recommended for reading)\n"
+            "• Fit to Height: Scale page to viewer height\n"
+            "• Fit to Window: Scale to fit entire page in viewer\n"
+            "• Custom %: Use specific zoom percentage (set below)\n\n"
+            "Users can override this with zoom controls in the preview window.\n"
+            "Applies to generated PDF outputs and PDF previews."
+        )
         pdf_zoom = self.config_manager.get_setting("Theme", "default_zoom_mode_pdf", "fit_to_width")
         self.pdf_zoom_combo.setCurrentText(pdf_zoom.replace("_", " ").title())
         zoom_layout.addWidget(self.pdf_zoom_combo, 1, 1)
@@ -1752,6 +2015,15 @@ Example response:
             int(self.config_manager.get_setting("Theme", "default_zoom_percent_png", "100"))
         )
         self.png_zoom_percent.setSuffix("%")
+        self.png_zoom_percent.setToolTip(
+            "Custom zoom percentage for PNG images (25% - 400%).\n\n"
+            "Only used when PNG Zoom Mode is set to 'Custom %'.\n\n"
+            "Common values:\n"
+            "• 100% - Actual size (1:1 pixel mapping)\n"
+            "• 150% - Enlarged for easier reading\n"
+            "• 50% - Reduced to see more content\n\n"
+            "High-DPI displays may benefit from values above 100%."
+        )
         zoom_layout.addWidget(self.png_zoom_percent, 2, 1)
 
         zoom_layout.addWidget(QLabel("PDF Custom Zoom %:"), 3, 0)
@@ -1763,6 +2035,15 @@ Example response:
             int(self.config_manager.get_setting("Theme", "default_zoom_percent_pdf", "100"))
         )
         self.pdf_zoom_percent.setSuffix("%")
+        self.pdf_zoom_percent.setToolTip(
+            "Custom zoom percentage for PDF documents (25% - 400%).\n\n"
+            "Only used when PDF Zoom Mode is set to 'Custom %'.\n\n"
+            "Common values:\n"
+            "• 100% - Standard size (comfortable reading)\n"
+            "• 125% - Slightly enlarged text\n"
+            "• 75% - See more of the page\n\n"
+            "Adjust based on screen size and resolution."
+        )
         zoom_layout.addWidget(self.pdf_zoom_percent, 3, 1)
 
         layout.addWidget(zoom_group)
@@ -1772,11 +2053,35 @@ Example response:
         tray_layout = QVBoxLayout(tray_group)
 
         self.minimize_to_tray_checkbox = QCheckBox("Minimize to system tray")
+        self.minimize_to_tray_checkbox.setToolTip(
+            "Minimize application to system tray instead of taskbar.\n\n"
+            "When enabled:\n"
+            "• Clicking minimize sends app to system tray (near clock)\n"
+            "• Application remains running in background\n"
+            "• Click tray icon to restore window\n\n"
+            "When disabled:\n"
+            "• Minimize button works normally (taskbar)\n\n"
+            "Useful for keeping the app running during long analysis tasks\n"
+            "without cluttering the taskbar."
+        )
         minimize_tray = self.config_manager.get_setting("SystemTray", "minimize_to_tray", "false")
         self.minimize_to_tray_checkbox.setChecked(minimize_tray.lower() == "true")
         tray_layout.addWidget(self.minimize_to_tray_checkbox)
 
         self.close_to_tray_checkbox = QCheckBox("Close to system tray (don't exit)")
+        self.close_to_tray_checkbox.setToolTip(
+            "Keep application running when main window is closed.\n\n"
+            "When enabled:\n"
+            "• Clicking 'X' button sends app to system tray\n"
+            "• Application continues running in background\n"
+            "• Right-click tray icon → 'Quit' to fully exit\n\n"
+            "When disabled:\n"
+            "• Clicking 'X' button exits application normally\n\n"
+            "Useful for:\n"
+            "• Background document monitoring\n"
+            "• Quick access via tray icon\n"
+            "• Preventing accidental closure during long operations"
+        )
         close_tray = self.config_manager.get_setting("SystemTray", "close_to_tray", "false")
         self.close_to_tray_checkbox.setChecked(close_tray.lower() == "true")
         tray_layout.addWidget(self.close_to_tray_checkbox)
@@ -1789,7 +2094,7 @@ Example response:
     # Event Handlers
 
     def _on_provider_changed(self):
-        """Update visible provider settings panel"""
+        """Update visible provider settings panel and reload models"""
         provider = self.provider_combo.currentData()
 
         # Safety check - ensure widgets are created before switching
@@ -1799,16 +2104,19 @@ Example response:
         # Use QStackedWidget's setCurrentWidget for proper switching
         if provider == "ollama" and hasattr(self, "ollama_settings_widget"):
             self.provider_stack.setCurrentWidget(self.ollama_settings_widget)
+            # Reload Ollama models when switching to Ollama
+            if hasattr(self, "ollama_model_combo"):
+                self._load_ollama_models()
         elif provider == "claude_cli" and hasattr(self, "claude_settings_widget"):
             self.provider_stack.setCurrentWidget(self.claude_settings_widget)
+            # Reload Claude models when switching to Claude
+            if hasattr(self, "claude_model_combo"):
+                self._load_claude_models()
         elif provider == "gemini_cli" and hasattr(self, "gemini_settings_widget"):
             self.provider_stack.setCurrentWidget(self.gemini_settings_widget)
-
-    def _on_auto_approval_toggled(self, state):
-        """Show/hide approval delay controls"""
-        is_checked = state == Qt.CheckState.Checked.value
-        self.approval_delay_label.setVisible(is_checked)
-        self.approval_delay_spinbox.setVisible(is_checked)
+            # Reload Gemini models when switching to Gemini
+            if hasattr(self, "gemini_model_combo"):
+                self._load_gemini_models()
 
     def _browse_scan_folder(self):
         """Browse for scan folder"""
@@ -1819,28 +2127,480 @@ Example response:
         if directory:
             self.scan_folder_edit.setText(directory)
 
-    def _load_ollama_models(self):
-        """Load available Ollama models"""
+    def _load_ollama_models(self, force_refresh: bool = False):
+        """Load available Ollama vision models with download status and caching
+
+        Args:
+            force_refresh: If True, bypass cache and check download status fresh
+        """
+        import json
+        from datetime import datetime
+
         self.ollama_model_combo.clear()
-        try:
-            local_models = self.ollama_service.list_models()
-            vision_models = [
-                m.get("name") or m.get("model")
-                for m in local_models
-                if self.ollama_service.is_vision_model(m.get("name") or m.get("model", ""))
+
+        # Popular vision models available in Ollama
+        available_vision_models = [
+            "llava:latest",
+            "llava:7b",
+            "llava:13b",
+            "llava:34b",
+            "llava-llama3:latest",
+            "llava-phi3:latest",
+            "bakllava:latest",
+            "moondream:latest",
+            "qwen2-vl:latest",
+            "qwen2-vl:2b",
+            "qwen2-vl:7b",
+            "qwen2.5-vl:latest",
+            "minicpm-v:latest",
+            "minicpm-v:8b",
+            "cogvlm:latest",
+            "phi3-vision:latest",
+            "internvl:latest",
+        ]
+
+        downloaded_model_names = set()
+
+        # Check cache first (unless force refresh)
+        if not force_refresh:
+            cached_downloaded = self.config_manager.get_setting(
+                "ModelCache", "ollama_downloaded_cache"
+            )
+            cached_timestamp = self.config_manager.get_setting(
+                "ModelCache", "ollama_models_timestamp"
+            )
+
+            if cached_downloaded and cached_timestamp:
+                try:
+                    from datetime import timedelta
+
+                    last_updated = datetime.fromisoformat(cached_timestamp)
+                    now = datetime.now()
+
+                    if now - last_updated < timedelta(hours=24):
+                        # Use cached download status
+                        downloaded_model_names = set(json.loads(cached_downloaded))
+                        print(
+                            f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %H:%M')})"
+                        )
+                except (ValueError, json.JSONDecodeError):
+                    pass  # Cache invalid, will refresh
+
+        # Refresh download status if not loaded from cache
+        if not downloaded_model_names or force_refresh:
+            try:
+                local_models = self.ollama_service.list_models()
+                downloaded_model_names = {
+                    (m.get("name") or m.get("model")).split(":")[0] for m in local_models
+                }
+
+                # Cache the download status
+                timestamp = datetime.now().isoformat()
+                self.config_manager.set_setting(
+                    "ModelCache",
+                    "ollama_downloaded_cache",
+                    json.dumps(list(downloaded_model_names)),
+                )
+                self.config_manager.set_setting("ModelCache", "ollama_models_timestamp", timestamp)
+                print(f"Checked Ollama download status at {timestamp}")
+
+            except Exception as e:
+                show_warning(self, "Error", f"Failed to load Ollama models: {e}")
+                return
+
+        # Add models with download status
+        for model in available_vision_models:
+            model_base = model.split(":")[0]
+            is_downloaded = model_base in downloaded_model_names
+
+            display_text = f"{model} ✓ (Downloaded)" if is_downloaded else f"{model}"
+
+            self.ollama_model_combo.addItem(display_text, model)
+
+        # Set current model
+        current_model = self.config_manager.get_setting("Ollama", "model")
+        if current_model:
+            model_found = False
+
+            # Try exact match first
+            for i in range(self.ollama_model_combo.count()):
+                if self.ollama_model_combo.itemData(i) == current_model:
+                    self.ollama_model_combo.setCurrentIndex(i)
+                    model_found = True
+                    break
+
+            # Try partial match (base name) if exact match failed
+            if not model_found:
+                current_base = current_model.split(":")[0]
+                for i in range(self.ollama_model_combo.count()):
+                    if self.ollama_model_combo.itemData(i).startswith(current_base):
+                        self.ollama_model_combo.setCurrentIndex(i)
+                        model_found = True
+                        break
+
+            # If model not found in list, add it
+            if not model_found:
+                # Check if it's downloaded
+                model_base = current_model.split(":")[0]
+                is_downloaded = model_base in downloaded_model_names
+
+                if is_downloaded:
+                    display_text = f"{current_model} ✓ (Downloaded)"
+                else:
+                    display_text = f"{current_model}"
+
+                self.ollama_model_combo.addItem(display_text, current_model)
+                self.ollama_model_combo.setCurrentIndex(self.ollama_model_combo.count() - 1)
+
+    def _load_claude_models(self, force_refresh: bool = False):
+        """Load available Claude vision models with caching
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh from web
+        """
+        self.claude_model_combo.clear()
+
+        # Check cache first (unless force refresh)
+        if not force_refresh:
+            cached_models = self._get_cached_models("claude")
+            if cached_models:
+                claude_vision_models = cached_models
+            else:
+                # Cache miss or expired - fetch from web
+                claude_vision_models = self._fetch_claude_models_from_web()
+                self._cache_models("claude", claude_vision_models)
+        else:
+            # Force refresh - fetch from web and update cache
+            claude_vision_models = self._fetch_claude_models_from_web()
+            self._cache_models("claude", claude_vision_models)
+
+        # Populate dropdown
+        for model in claude_vision_models:
+            self.claude_model_combo.addItem(model)
+
+        # Set current model
+        current_model = self.config_manager.get_setting("ClaudeCLI", "default_model")
+        if current_model:
+            index = self.claude_model_combo.findText(current_model)
+            if index >= 0:
+                self.claude_model_combo.setCurrentIndex(index)
+            else:
+                # If saved model not in list, add it
+                self.claude_model_combo.addItem(current_model)
+                self.claude_model_combo.setCurrentIndex(self.claude_model_combo.count() - 1)
+
+    def _apply_combobox_chevron_fix(self, combobox: QComboBox):
+        """Apply custom paint event to draw dropdown chevron in dark mode
+
+        Args:
+            combobox: QComboBox widget to apply the fix to
+        """
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtGui import QColor, QPainter, QPen, QPolygon
+
+        # Determine theme from config
+        current_theme = self.config_manager.get_setting("Theme", "theme", "light")
+        is_dark = current_theme == "dark"
+
+        # Determine colors based on theme
+        if is_dark:
+            arrow_color = "#E0E0E0"  # Light arrow for dark mode
+            bg_color = "#2D2D2D"
+            text_color = "#E0E0E0"
+            border_color = "#4A4A4A"
+        else:
+            arrow_color = "#111827"  # Dark arrow for light mode
+            bg_color = "#FFFFFF"
+            text_color = "#111827"
+            border_color = "#E5E7EB"
+
+        # Apply stylesheet to hide default arrow and style the combobox
+        combobox.setStyleSheet(f"""
+            QComboBox {{
+                background: {bg_color};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                padding: 5px 30px 5px 10px;
+                min-height: 20px;
+            }}
+            QComboBox:focus {{
+                border: 1px solid #3B82F6;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 25px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border: none;
+                width: 12px;
+                height: 12px;
+                margin-right: 5px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {bg_color};
+                color: {text_color};
+                selection-background-color: #3B82F6;
+                border: 1px solid {border_color};
+            }}
+        """)
+
+        # Save original paint event
+        original_paint = combobox.paintEvent
+
+        def custom_paint(event):
+            """Custom paint event that draws the dropdown arrow"""
+            original_paint(event)
+            painter = QPainter(combobox)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            # Draw down arrow triangle on the right side
+            arrow_x = combobox.width() - 18
+            arrow_y = combobox.height() // 2
+
+            # Create triangle points
+            points = [
+                QPoint(arrow_x - 4, arrow_y - 2),  # Top left
+                QPoint(arrow_x + 4, arrow_y - 2),  # Top right
+                QPoint(arrow_x, arrow_y + 3),  # Bottom center
             ]
 
-            for model in vision_models:
-                self.ollama_model_combo.addItem(model)
+            polygon = QPolygon(points)
+            painter.setPen(QPen(QColor(arrow_color), 1))
+            painter.setBrush(QColor(arrow_color))
+            painter.drawPolygon(polygon)
+            painter.end()
 
-            # Set current model
-            current_model = self.config_manager.get_setting("Ollama", "model")
-            index = self.ollama_model_combo.findText(current_model)
+        # Replace paint event
+        combobox.paintEvent = custom_paint
+
+    def _get_cached_models(self, provider: str) -> list[str] | None:
+        """Get cached model list if still valid (< 24 hours old)
+
+        Args:
+            provider: 'claude', 'gemini', or 'ollama'
+
+        Returns:
+            List of model names if cache is valid, None otherwise
+        """
+        import json
+        from datetime import datetime, timedelta
+
+        # Get cached models and timestamp from config
+        cache_key = f"{provider}_models_cache"
+        timestamp_key = f"{provider}_models_timestamp"
+
+        cached_json = self.config_manager.get_setting("ModelCache", cache_key)
+        cached_timestamp = self.config_manager.get_setting("ModelCache", timestamp_key)
+
+        if not cached_json or not cached_timestamp:
+            return None
+
+        try:
+            # Parse timestamp
+            last_updated = datetime.fromisoformat(cached_timestamp)
+            now = datetime.now()
+
+            # Check if cache is still valid (< 24 hours old)
+            if now - last_updated < timedelta(hours=24):
+                # Cache is valid - parse and return models
+                models = json.loads(cached_json)
+                if isinstance(models, list) and len(models) > 0:
+                    print(
+                        f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %H:%M')})"
+                    )
+                    return models
+
+        except (ValueError, json.JSONDecodeError) as e:
+            print(f"Error parsing cached {provider} models: {e}")
+
+        return None
+
+    def _cache_models(self, provider: str, models: list[str]):
+        """Cache model list with current timestamp
+
+        Args:
+            provider: 'claude', 'gemini', or 'ollama'
+            models: List of model names to cache
+        """
+        import json
+        from datetime import datetime
+
+        cache_key = f"{provider}_models_cache"
+        timestamp_key = f"{provider}_models_timestamp"
+
+        # Store models as JSON array
+        models_json = json.dumps(models)
+        timestamp = datetime.now().isoformat()
+
+        self.config_manager.set_setting("ModelCache", cache_key, models_json)
+        self.config_manager.set_setting("ModelCache", timestamp_key, timestamp)
+
+        print(f"Cached {len(models)} {provider} models at {timestamp}")
+
+    def _fetch_claude_models_from_web(self) -> list[str]:
+        """Use Claude to search the web for latest vision-capable models"""
+        try:
+            import json
+            import subprocess
+
+            # Create prompt for Claude to search for latest models
+            prompt = """Search the web for the latest Anthropic Claude vision-capable models.
+Look for official Anthropic documentation or announcements about Claude models that support image input.
+
+Return ONLY a JSON array of model IDs (full model names with dates, like "claude-3-5-sonnet-20241022").
+Include only models that support vision/image inputs.
+Order from newest to oldest.
+
+Example format:
+["claude-3-5-sonnet-20241022", "claude-3-opus-20240229"]
+
+Return ONLY the JSON array, no other text."""
+
+            # Call Claude CLI to search
+            result = subprocess.run(
+                ["claude", "--model", "sonnet", "-p", prompt],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode == 0:
+                # Parse JSON response
+                response = result.stdout.strip()
+                # Extract JSON array from response (might have markdown code fences)
+                if "```json" in response:
+                    json_start = response.find("[")
+                    json_end = response.rfind("]") + 1
+                    if json_start >= 0 and json_end > json_start:
+                        response = response[json_start:json_end]
+                elif "```" in response:
+                    # Remove code fences
+                    response = response.replace("```json", "").replace("```", "").strip()
+
+                models = json.loads(response)
+                if isinstance(models, list) and len(models) > 0:
+                    return models
+
+        except (
+            subprocess.TimeoutExpired,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+            FileNotFoundError,
+        ) as e:
+            print(f"Note: Could not fetch Claude models from web: {e}")
+
+        # Fallback to curated list
+        return [
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+        ]
+
+    def _load_gemini_models(self, force_refresh: bool = False):
+        """Load available Gemini vision models with caching
+
+        Args:
+            force_refresh: If True, bypass cache and fetch fresh from web
+        """
+        self.gemini_model_combo.clear()
+
+        # Check cache first (unless force refresh)
+        if not force_refresh:
+            cached_models = self._get_cached_models("gemini")
+            if cached_models:
+                gemini_vision_models = cached_models
+            else:
+                # Cache miss or expired - fetch from web
+                gemini_vision_models = self._fetch_gemini_models_from_web()
+                self._cache_models("gemini", gemini_vision_models)
+        else:
+            # Force refresh - fetch from web and update cache
+            gemini_vision_models = self._fetch_gemini_models_from_web()
+            self._cache_models("gemini", gemini_vision_models)
+
+        # Populate dropdown
+        for model in gemini_vision_models:
+            self.gemini_model_combo.addItem(model)
+
+        # Set current model
+        current_model = self.config_manager.get_setting("GeminiCLI", "default_model")
+        if current_model:
+            index = self.gemini_model_combo.findText(current_model)
             if index >= 0:
-                self.ollama_model_combo.setCurrentIndex(index)
+                self.gemini_model_combo.setCurrentIndex(index)
+            else:
+                # If saved model not in list, add it
+                self.gemini_model_combo.addItem(current_model)
+                self.gemini_model_combo.setCurrentIndex(self.gemini_model_combo.count() - 1)
 
-        except Exception as e:
-            show_warning(self, "Error", f"Failed to load Ollama models: {e}")
+    def _fetch_gemini_models_from_web(self) -> list[str]:
+        """Use Claude to search the web for latest Gemini vision-capable models"""
+        try:
+            import json
+            import subprocess
+
+            # Create prompt for Claude to search for latest Gemini models
+            prompt = """Search the web for the latest Google Gemini vision-capable models.
+Look for official Google AI documentation or announcements about Gemini models that support image/vision inputs.
+
+Return ONLY a JSON array of model IDs (like "gemini-2.0-flash-exp", "gemini-1.5-pro").
+Include only models that support vision/image inputs (multimodal models).
+Order from newest to oldest.
+
+Example format:
+["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash"]
+
+Return ONLY the JSON array, no other text."""
+
+            # Call Claude CLI to search
+            result = subprocess.run(
+                ["claude", "--model", "sonnet", "-p", prompt],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode == 0:
+                # Parse JSON response
+                response = result.stdout.strip()
+                # Extract JSON array from response (might have markdown code fences)
+                if "```json" in response:
+                    json_start = response.find("[")
+                    json_end = response.rfind("]") + 1
+                    if json_start >= 0 and json_end > json_start:
+                        response = response[json_start:json_end]
+                elif "```" in response:
+                    # Remove code fences
+                    response = response.replace("```json", "").replace("```", "").strip()
+
+                models = json.loads(response)
+                if isinstance(models, list) and len(models) > 0:
+                    return models
+
+        except (
+            subprocess.TimeoutExpired,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+            FileNotFoundError,
+        ) as e:
+            print(f"Note: Could not fetch Gemini models from web: {e}")
+
+        # Fallback to curated list
+        return [
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-pro",
+            "gemini-1.5-pro-002",
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-002",
+            "gemini-1.5-flash-8b",
+        ]
 
     def _download_ollama_model(self):
         """Download an Ollama model"""
@@ -2087,14 +2847,6 @@ Example response:
                 "DocumentProcessing", "scan_folder", self.scan_folder_edit.text()
             )
             self.config_manager.set_setting(
-                "AutoApproval",
-                "enable_automatic_approvals",
-                "true" if self.auto_approval_checkbox.isChecked() else "false",
-            )
-            self.config_manager.set_setting(
-                "AutoApproval", "automatic_approval_delay", str(self.approval_delay_spinbox.value())
-            )
-            self.config_manager.set_setting(
                 "AuditTrail",
                 "enabled",
                 "true" if self.audit_trail_checkbox.isChecked() else "false",
@@ -2115,9 +2867,11 @@ Example response:
             self.config_manager.set_setting("LLMProvider", "active_provider", active_provider)
 
             if active_provider == "ollama":
-                self.config_manager.set_setting(
-                    "Ollama", "model", self.ollama_model_combo.currentText()
+                # Use currentData to get the actual model name (not the display text with download status)
+                model_name = (
+                    self.ollama_model_combo.currentData() or self.ollama_model_combo.currentText()
                 )
+                self.config_manager.set_setting("Ollama", "model", model_name)
                 self.config_manager.set_setting("Ollama", "base_url", self.ollama_url_edit.text())
                 self.config_manager.set_setting(
                     "Ollama", "timeout", str(self.ollama_timeout_spin.value())
