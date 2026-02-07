@@ -7,9 +7,10 @@ import html
 import os
 from typing import Any
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QCursor, QPixmap
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -43,6 +44,9 @@ class EnlargedPagesDialog(QDialog):
         self.file_paths = file_paths
         self.current_page_index = 0
         self.page_widgets: list[QWidget] = []  # Store references to page widgets for scrolling
+        self.zoom_level = 100  # Default zoom level (100%)
+        self.image_labels: list[QLabel] = []  # Store image labels for zoom updates
+        self.original_pixmaps: list[QPixmap] = []  # Store original pixmaps for re-scaling
         # Get analysis_db for metadata tooltips
         if analysis_db is None:
             from db.analysis_db import AnalysisDB
@@ -66,6 +70,85 @@ class EnlargedPagesDialog(QDialog):
         title_label.setStyleSheet("font-size: 14px;")
         header_layout.addWidget(title_label)
         header_layout.addStretch()
+
+        # Zoom controls
+        zoom_layout = QHBoxLayout()
+        zoom_layout.setSpacing(5)
+
+        zoom_label = QLabel("Zoom:")
+        zoom_label.setStyleSheet("font-size: 12px; color: #666; padding: 0 5px;")
+        zoom_layout.addWidget(zoom_label)
+
+        self.zoom_out_button = QPushButton("−")
+        self.zoom_out_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+            QPushButton:disabled {
+                background-color: #D1D5DB;
+            }
+        """)
+        self.zoom_out_button.setToolTip("Decrease zoom (−25%)")
+        self.zoom_out_button.clicked.connect(self._zoom_out)
+        zoom_layout.addWidget(self.zoom_out_button)
+
+        self.zoom_level_label = QLabel("100%")
+        self.zoom_level_label.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0 8px; min-width: 45px;")
+        self.zoom_level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zoom_layout.addWidget(self.zoom_level_label)
+
+        self.zoom_in_button = QPushButton("+")
+        self.zoom_in_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+            QPushButton:disabled {
+                background-color: #D1D5DB;
+            }
+        """)
+        self.zoom_in_button.setToolTip("Increase zoom (+25%)")
+        self.zoom_in_button.clicked.connect(self._zoom_in)
+        zoom_layout.addWidget(self.zoom_in_button)
+
+        self.zoom_reset_button = QPushButton("⟲")
+        self.zoom_reset_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+        """)
+        self.zoom_reset_button.setToolTip("Reset zoom to 100%")
+        self.zoom_reset_button.clicked.connect(self._zoom_reset)
+        zoom_layout.addWidget(self.zoom_reset_button)
+
+        header_layout.addLayout(zoom_layout)
+        header_layout.addSpacing(20)
 
         # Navigation buttons
         nav_layout = QHBoxLayout()
@@ -189,6 +272,10 @@ class EnlargedPagesDialog(QDialog):
         try:
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
+                # Store original pixmap for zoom operations
+                self.original_pixmaps.append(pixmap)
+                self.image_labels.append(image_label)
+
                 # Calculate target height for maximized window
                 # Leave room for header (~80px) + page label (~30px) + filename (~30px) + margins (~60px) = ~200px
                 # For a 1080p display (1920x1080), this gives ~880px for image
@@ -202,13 +289,15 @@ class EnlargedPagesDialog(QDialog):
                 else:
                     target_height = 800  # Fallback if screen info unavailable
 
-                # Scale to fit height, maintaining aspect ratio
+                # Scale to fit height, maintaining aspect ratio (with current zoom)
                 scaled_pixmap = pixmap.scaledToHeight(
-                    target_height, Qt.TransformationMode.SmoothTransformation
+                    int(target_height * self.zoom_level / 100), Qt.TransformationMode.SmoothTransformation
                 )
                 image_label.setPixmap(scaled_pixmap)
                 image_label.setFixedSize(scaled_pixmap.size())
             else:
+                self.original_pixmaps.append(QPixmap())  # Empty pixmap placeholder
+                self.image_labels.append(image_label)
                 image_label.setText("No Preview Available")
                 image_label.setMinimumSize(400, 500)
                 image_label.setStyleSheet("""
@@ -218,6 +307,8 @@ class EnlargedPagesDialog(QDialog):
                     font-size: 14px;
                 """)
         except Exception as e:
+            self.original_pixmaps.append(QPixmap())  # Empty pixmap placeholder
+            self.image_labels.append(image_label)
             image_label.setText(f"Error loading image:\n{e}")
             image_label.setMinimumSize(400, 500)
             image_label.setStyleSheet("color: red; font-size: 12px;")
@@ -259,6 +350,52 @@ class EnlargedPagesDialog(QDialog):
         self.prev_button.setEnabled(self.current_page_index > 0)
         self.next_button.setEnabled(self.current_page_index < len(self.file_paths) - 1)
         self.page_indicator.setText(f"Page {self.current_page_index + 1} of {len(self.file_paths)}")
+
+    def _zoom_in(self):
+        """Increase zoom level by 25%"""
+        if self.zoom_level < 200:  # Max 200%
+            self.zoom_level += 25
+            self._apply_zoom()
+
+    def _zoom_out(self):
+        """Decrease zoom level by 25%"""
+        if self.zoom_level > 25:  # Min 25%
+            self.zoom_level -= 25
+            self._apply_zoom()
+
+    def _zoom_reset(self):
+        """Reset zoom level to 100%"""
+        self.zoom_level = 100
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        """Apply current zoom level to all page images"""
+        from PyQt6.QtWidgets import QApplication
+
+        # Update zoom label
+        self.zoom_level_label.setText(f"{self.zoom_level}%")
+
+        # Update button states
+        self.zoom_out_button.setEnabled(self.zoom_level > 25)
+        self.zoom_in_button.setEnabled(self.zoom_level < 200)
+
+        # Calculate base target height
+        screen = QApplication.primaryScreen()
+        if screen:
+            screen_height = screen.availableGeometry().height()
+            base_target_height = int(screen_height * 0.75)
+        else:
+            base_target_height = 800
+
+        # Re-scale all images with new zoom level
+        for i, (pixmap, image_label) in enumerate(zip(self.original_pixmaps, self.image_labels)):
+            if not pixmap.isNull():
+                target_height = int(base_target_height * self.zoom_level / 100)
+                scaled_pixmap = pixmap.scaledToHeight(
+                    target_height, Qt.TransformationMode.SmoothTransformation
+                )
+                image_label.setPixmap(scaled_pixmap)
+                image_label.setFixedSize(scaled_pixmap.size())
 
     def _format_metadata_tooltip(self, file_path: str) -> str:
         """Format metadata from analysis database as a readable tooltip"""
@@ -374,17 +511,20 @@ class BundleSuggestionCard(QFrame):
         doc_date = self.bundle_data.get("document_date", "N/A")
         page_count = len(self.bundle_data.get("file_paths", []))
 
-        title_label = QLabel(f"<b>{html.escape(str(doc_type))}</b>")
-        title_label.setStyleSheet("font-size: 14px;")
-        metadata_layout.addWidget(title_label)
+        # Convert to title case for display
+        company_title = company.title() if company else "Unknown"
+        doc_type_title = doc_type.title() if doc_type else "Unknown"
 
-        company_label = QLabel(f"Company: {html.escape(str(company))}")
-        company_label.setStyleSheet("font-size: 11px; color: #666;")
-        metadata_layout.addWidget(company_label)
+        # Show projected filename: %organization% - %document_type% - %date%
+        projected_filename = f"{company_title} - {doc_type_title} - {doc_date}"
+        filename_label = QLabel(f"<b>{html.escape(projected_filename)}</b>")
+        filename_label.setStyleSheet("font-size: 14px;")
+        metadata_layout.addWidget(filename_label)
 
-        date_label = QLabel(f"Date: {html.escape(str(doc_date))} • {page_count} page(s)")
-        date_label.setStyleSheet("font-size: 11px; color: #666;")
-        metadata_layout.addWidget(date_label)
+        # Show page count below
+        page_count_label = QLabel(f"{page_count} page(s)")
+        page_count_label.setStyleSheet("font-size: 11px; color: #666;")
+        metadata_layout.addWidget(page_count_label)
 
         header_layout.addLayout(metadata_layout)
         header_layout.addStretch()
@@ -442,6 +582,16 @@ class BundleSuggestionCard(QFrame):
             }
         """)
         accept_button.clicked.connect(self._on_accept)
+        accept_button.setToolTip(
+            "Accept this bundle as-is without changes.\n\n"
+            "What happens:\n"
+            "• Bundle is marked as 'accepted' in the database\n"
+            "• All pages in this bundle are saved with their metadata\n"
+            "• Bundle is removed from the suggestion list\n"
+            "• Document metadata (company, type, date) is applied to all pages\n"
+            "• Bundle is ready for final PDF generation\n\n"
+            "Use this when the AI correctly identified and grouped the pages."
+        )
         button_layout.addWidget(accept_button)
 
         modify_button = QPushButton("✎ Modify")
@@ -459,6 +609,17 @@ class BundleSuggestionCard(QFrame):
             }
         """)
         modify_button.clicked.connect(self._on_modify)
+        modify_button.setToolTip(
+            "Review and edit this bundle before accepting.\n\n"
+            "What happens:\n"
+            "• Opens the Bundle Review Window with all pages\n"
+            "• You can add or remove pages from the bundle\n"
+            "• You can edit metadata (company, document type, date, etc.)\n"
+            "• You can re-analyze individual pages if needed\n"
+            "• Changes are saved when you click 'Save Bundle'\n"
+            "• You can also reject the bundle from the review window\n\n"
+            "Use this to fix incorrect groupings or update metadata."
+        )
         button_layout.addWidget(modify_button)
 
         reject_button = QPushButton("✗ Reject")
@@ -476,6 +637,16 @@ class BundleSuggestionCard(QFrame):
             }
         """)
         reject_button.clicked.connect(self._on_reject)
+        reject_button.setToolTip(
+            "Reject this bundle suggestion.\n\n"
+            "What happens:\n"
+            "• Bundle is marked as 'rejected' in the database\n"
+            "• Bundle is removed from the suggestion list\n"
+            "• All pages in this bundle remain available for processing\n"
+            "• Pages can be included in other bundles or reviewed manually\n"
+            "• No metadata changes are saved\n\n"
+            "Use this when the AI incorrectly grouped unrelated pages together."
+        )
         button_layout.addWidget(reject_button)
 
         button_layout.addStretch()
@@ -622,21 +793,23 @@ class BundleSuggestionsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.bundle_cards = []
+        self.loading_dot_count = 0
+        self.loading_timer = None
         self._init_ui()
 
     def _init_ui(self):
         """Initialize the view UI"""
         layout = QVBoxLayout(self)
 
-        # Header
-        header_layout = QHBoxLayout()
-
-        title_label = QLabel("<h2>Document Bundle Suggestions</h2>")
-        header_layout.addWidget(title_label)
-
-        header_layout.addStretch()
+        # Bundle count label
+        self.bundle_count_label = QLabel("Loading...")
+        self.bundle_count_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #666; margin: 0 0 15px 0;")
+        layout.addWidget(self.bundle_count_label)
 
         # Action buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()  # Push buttons to the right
+
         accept_all_btn = QPushButton("Accept All High Confidence")
         accept_all_btn.setStyleSheet("""
             QPushButton {
@@ -652,7 +825,16 @@ class BundleSuggestionsView(QWidget):
             }
         """)
         accept_all_btn.clicked.connect(self.accept_all_high.emit)
-        header_layout.addWidget(accept_all_btn)
+        accept_all_btn.setToolTip(
+            "Automatically accept all bundles with HIGH CONFIDENCE (≥80%).\n\n"
+            "What happens:\n"
+            "• High confidence bundles are marked as 'accepted' in the database\n"
+            "• Bundle metadata is saved for all included pages\n"
+            "• These bundles are removed from the suggestion list\n"
+            "• Remaining lower-confidence bundles stay for review\n\n"
+            "Use this to quickly process bundles the AI is very confident about."
+        )
+        button_layout.addWidget(accept_all_btn)
 
         skip_btn = QPushButton("Review Manually")
         skip_btn.setStyleSheet("""
@@ -669,17 +851,60 @@ class BundleSuggestionsView(QWidget):
             }
         """)
         skip_btn.clicked.connect(self.skip_to_manual.emit)
-        header_layout.addWidget(skip_btn)
+        skip_btn.setToolTip(
+            "Skip AI bundle suggestions and review pages manually.\n\n"
+            "What happens:\n"
+            "• All suggested bundles are ignored (not saved)\n"
+            "• You proceed to the manual page-by-page review workflow\n"
+            "• You can build bundles yourself by selecting pages\n"
+            "• Pages from rejected suggestions remain available\n\n"
+            "Use this when you prefer to organize documents yourself."
+        )
+        button_layout.addWidget(skip_btn)
 
-        layout.addLayout(header_layout)
+        layout.addLayout(button_layout)
+
+        # Regenerate checkbox
+        self.regenerate_checkbox = QCheckBox("Regenerate suggestions after accepting each bundle")
+        self.regenerate_checkbox.setChecked(True)  # Checked by default
+        self.regenerate_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #374151;
+                font-size: 11pt;
+                font-weight: 500;
+                margin: 8px 0;
+                padding: 4px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 2px solid #D1D5DB;
+                border-radius: 4px;
+                background-color: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #3B82F6;
+                border-color: #3B82F6;
+                image: url(data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='white'><path fill-rule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clip-rule='evenodd'/></svg>);
+            }
+            QCheckBox::indicator:hover {
+                border-color: #9CA3AF;
+            }
+        """)
+        self.regenerate_checkbox.setToolTip(
+            "When checked, bundle suggestions will be automatically regenerated\n"
+            "for remaining pages after you accept each bundle.\n\n"
+            "When unchecked, you can accept multiple bundles without regenerating\n"
+            "suggestions until you're done reviewing all current suggestions."
+        )
+        layout.addWidget(self.regenerate_checkbox)
 
         # Info text
         info_label = QLabel(
-            "The AI has analyzed your scanned pages and suggests the following document groupings. "
-            "Review each suggestion and choose to accept, modify, or reject."
+            "To create a document you need to select at least one page or a bundle of pages."
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #666; margin: 10px 0; font-size: 11px;")
+        info_label.setStyleSheet("color: #666; margin: 10px 0 15px 0; font-size: 11px;")
         layout.addWidget(info_label)
 
         # Scroll area for cards
@@ -696,18 +921,107 @@ class BundleSuggestionsView(QWidget):
         scroll_area.setWidget(self.cards_container)
         layout.addWidget(scroll_area)
 
+        # Create loading widget (hidden initially)
+        self._create_loading_widget()
+
+    def _create_loading_widget(self):
+        """Create a loading widget with animated spinner and descriptive text"""
+        self.loading_widget = QWidget()
+        loading_layout = QVBoxLayout(self.loading_widget)
+        loading_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_layout.setSpacing(20)
+
+        # Spinner label (animated dots)
+        self.loading_spinner = QLabel("⏳")
+        self.loading_spinner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_spinner.setStyleSheet("""
+            QLabel {
+                font-size: 48px;
+                color: #3B82F6;
+            }
+        """)
+        loading_layout.addWidget(self.loading_spinner)
+
+        # Loading text with animated dots
+        self.loading_text = QLabel("Analyzing documents and generating bundle suggestions")
+        self.loading_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_text.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #1F2937;
+            }
+        """)
+        loading_layout.addWidget(self.loading_text)
+
+        # Subtitle
+        loading_subtitle = QLabel("This may take a moment...")
+        loading_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_subtitle.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                color: #6B7280;
+            }
+        """)
+        loading_layout.addWidget(loading_subtitle)
+
+        # Add to cards layout at index 0
+        self.cards_layout.insertWidget(0, self.loading_widget)
+        self.loading_widget.hide()
+
+    def show_loading(self):
+        """Show loading state with animated spinner"""
+        # Update count label
+        self.bundle_count_label.setText("Loading...")
+
+        # Hide all cards
+        for card in self.bundle_cards:
+            card.hide()
+
+        # Show loading widget
+        self.loading_widget.show()
+
+        # Start animation timer
+        if self.loading_timer is None:
+            self.loading_timer = QTimer(self)
+            self.loading_timer.timeout.connect(self._update_loading_animation)
+        self.loading_timer.start(500)  # Update every 500ms
+
+    def hide_loading(self):
+        """Hide loading state"""
+        # Stop animation timer
+        if self.loading_timer is not None:
+            self.loading_timer.stop()
+
+        # Hide loading widget
+        self.loading_widget.hide()
+
+        # Show all cards
+        for card in self.bundle_cards:
+            card.show()
+
+    def _update_loading_animation(self):
+        """Update loading text animation (cycling dots)"""
+        self.loading_dot_count = (self.loading_dot_count + 1) % 4
+        dots = "." * self.loading_dot_count
+        self.loading_text.setText(f"Analyzing documents and generating bundle suggestions{dots}")
+
     def set_bundles(self, bundles: list[dict[str, Any]]):
         """Display bundle suggestions"""
+        # Hide loading state
+        self.hide_loading()
+
         # Clear existing cards
         for card in self.bundle_cards:
             card.deleteLater()
         self.bundle_cards.clear()
 
-        # Remove stretch before adding new cards
+        # Remove all widgets except loading widget
         while self.cards_layout.count() > 0:
             item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget and widget != self.loading_widget:
+                widget.deleteLater()
 
         # Add new cards
         for bundle in bundles:
@@ -721,6 +1035,14 @@ class BundleSuggestionsView(QWidget):
         # Add stretch at the end
         self.cards_layout.addStretch()
 
+        # Update bundle count label
+        bundle_count = len(self.bundle_cards)
+        total_pages = sum(
+            len(card.bundle_data.get("file_paths", []))
+            for card in self.bundle_cards
+        )
+        self.bundle_count_label.setText(f"{bundle_count} Bundles containing {total_pages} pages")
+
     def get_bundle_count(self) -> int:
         """Get number of bundle cards displayed"""
         return len(self.bundle_cards)
@@ -732,3 +1054,7 @@ class BundleSuggestionsView(QWidget):
             for card in self.bundle_cards
             if card.bundle_data.get("confidence_score", 0.0) >= 0.8
         ]
+
+    def should_regenerate_on_accept(self) -> bool:
+        """Check if suggestions should be regenerated after accepting a bundle"""
+        return self.regenerate_checkbox.isChecked()

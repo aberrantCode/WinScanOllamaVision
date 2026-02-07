@@ -76,8 +76,8 @@ class BundlingService:
                 bundle["confidence_score"] = confidence
                 scored_bundles.append(bundle)
 
-        # Sort by confidence (highest first)
-        scored_bundles.sort(key=lambda x: x["confidence_score"], reverse=True)
+        # Sort by completeness first, then confidence
+        scored_bundles = self._sort_bundles_by_completeness(scored_bundles)
 
         # Save bundles to database
         for bundle in scored_bundles:
@@ -109,6 +109,12 @@ class BundlingService:
         for analysis in analyses:
             # Only consider files with explicit page numbers
             if not analysis.get("page_number"):
+                continue
+
+            # Exclude single-page documents (e.g., "1 of 1")
+            # These should never be bundled with other pages
+            total_pages = analysis.get("total_pages")
+            if total_pages == 1:
                 continue
 
             key = (
@@ -157,6 +163,12 @@ class BundlingService:
         groups = defaultdict(list)
 
         for analysis in analyses:
+            # Exclude single-page documents (e.g., "1 of 1")
+            # These should never be bundled with other pages
+            total_pages = analysis.get("total_pages")
+            if total_pages == 1:
+                continue
+
             # Create key from metadata
             key = (
                 analysis.get("company", "").lower() if analysis.get("company") else "",
@@ -307,6 +319,157 @@ class BundlingService:
             List of high-confidence bundles
         """
         return self.analysis_db.get_bundle_suggestions(min_confidence=min_confidence)
+
+    def _is_bundle_complete(self, bundle: dict[str, Any]) -> bool:
+        """
+        Check if a bundle has all its pages.
+
+        A bundle is complete if:
+        - It's a single-page document (page 1 of 1)
+        - OR it has all pages from 1 to total_pages
+
+        Args:
+            bundle: Bundle dictionary with analyses
+
+        Returns:
+            True if bundle is complete, False if incomplete
+        """
+        analyses = bundle.get("analyses", [])
+        if not analyses:
+            return False
+
+        # Get page numbers from analyses
+        page_numbers = []
+        total_pages = None
+
+        for analysis in analyses:
+            page_num = analysis.get("page_number")
+            total = analysis.get("total_pages")
+
+            if page_num is not None:
+                page_numbers.append(page_num)
+
+            if total is not None:
+                total_pages = total
+
+        if not page_numbers or total_pages is None:
+            return False
+
+        # Single-page document ("1 of 1")
+        if total_pages == 1 and 1 in page_numbers:
+            return True
+
+        # Multi-page document - check if we have all pages
+        expected_pages = set(range(1, total_pages + 1))
+        actual_pages = set(page_numbers)
+
+        return expected_pages == actual_pages
+
+    def _sort_bundles_by_completeness(self, bundles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Sort bundles: complete bundles first (by confidence),
+        then incomplete bundles (by confidence).
+
+        Args:
+            bundles: List of bundle dicts with confidence_score
+
+        Returns:
+            Sorted list of bundles
+        """
+        complete_bundles = []
+        incomplete_bundles = []
+
+        for bundle in bundles:
+            if self._is_bundle_complete(bundle):
+                complete_bundles.append(bundle)
+            else:
+                incomplete_bundles.append(bundle)
+
+        # Sort each group by confidence (descending)
+        complete_bundles.sort(key=lambda b: b.get("confidence_score", 0.0), reverse=True)
+        incomplete_bundles.sort(key=lambda b: b.get("confidence_score", 0.0), reverse=True)
+
+        # Complete bundles first, incomplete last
+        return complete_bundles + incomplete_bundles
+
+    def convert_bundle_to_pdf(
+        self,
+        file_paths: list[str],
+        output_path: str,
+        metadata: dict[str, Any] | None = None,
+        rotation_angle: int = 0,
+    ) -> str:
+        """
+        Convert bundle of images to PDF.
+
+        Args:
+            file_paths: List of image file paths in order
+            output_path: Output PDF file path
+            metadata: Document metadata dict (optional)
+            rotation_angle: Rotation to apply to all pages (0, 90, 180, 270)
+
+        Returns:
+            Path to created PDF file
+
+        Raises:
+            Exception: If PDF conversion fails
+        """
+        from PIL import Image
+
+        images = []
+        for file_path in file_paths:
+            try:
+                img = Image.open(file_path)
+
+                # Apply rotation if needed
+                if rotation_angle != 0:
+                    img = img.rotate(-rotation_angle, expand=True)
+
+                # Convert to RGB if needed (PDF requirement)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                images.append(img)
+            except Exception as e:
+                raise Exception(f"Failed to load image {file_path}: {str(e)}")
+
+        # Save as PDF
+        if images:
+            try:
+                images[0].save(
+                    output_path,
+                    "PDF",
+                    save_all=True,
+                    append_images=images[1:],
+                    resolution=100.0,
+                    quality=95,
+                )
+            except Exception as e:
+                raise Exception(f"Failed to save PDF: {str(e)}")
+        else:
+            raise Exception("No images to convert")
+
+        return output_path
+
+    def update_bundle_metadata(self, bundle_id: int, metadata: dict[str, Any]) -> None:
+        """
+        Update bundle metadata in database.
+
+        Args:
+            bundle_id: Bundle ID
+            metadata: Updated metadata dictionary
+        """
+        # Get current bundle
+        bundle = self.get_bundle_by_id(bundle_id)
+        if not bundle:
+            return
+
+        # Update bundle_metadata field with new metadata
+        updated_metadata = bundle.get("bundle_metadata", {})
+        updated_metadata.update(metadata)
+
+        # Save to database (this will require adding method to analysis_db)
+        self.analysis_db.update_bundle_metadata(bundle_id, updated_metadata)
 
 
 # Example usage

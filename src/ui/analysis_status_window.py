@@ -314,9 +314,9 @@ class AnalysisStatusWindow(QDialog):
             "Percentage of files analyzed by the LLM to extract metadata"
         )
 
-        self.documents_card = create_metric_card(self.theme_colors, "📦 Documents", "0 (0p)")
+        self.documents_card = create_metric_card(self.theme_colors, "📦 Bundled Pages", "0")
         self.documents_card.setToolTip(
-            "Number of multi-page documents created from bundled pages (total pages in parentheses)"
+            "Total number of pages that have been bundled into accepted/completed documents"
         )
 
         self.metadata_quality_card = create_metric_card(
@@ -612,9 +612,12 @@ class AnalysisStatusWindow(QDialog):
                             if file.lower().endswith((".png", ".jpg", ".jpeg")):
                                 files_detected += 1
 
-        # Files analyzed (all files with analysis results, including cached)
-        cursor.execute("SELECT COUNT(*) FROM analysis_results")
+        # Files analyzed (distinct file paths with analysis results, including cached)
+        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM analysis_results")
         files_analyzed = cursor.fetchone()[0]
+
+        # Cap files_analyzed at files_detected to prevent >100% (handles deleted/moved files)
+        files_analyzed = min(files_analyzed, files_detected)
 
         # High confidence (>= 80%)
         cursor.execute(
@@ -625,12 +628,12 @@ class AnalysisStatusWindow(QDialog):
         )
         high_confidence = cursor.fetchone()[0]
 
-        # Pages bundled (count distinct file paths in bundles)
+        # Pages bundled (count distinct file paths in finalized bundles only)
         cursor.execute(
             """
             SELECT COUNT(DISTINCT json_each.value)
             FROM document_bundles, json_each(document_bundles.file_paths)
-            WHERE status IN ('suggested', 'accepted', 'completed')
+            WHERE status IN ('accepted', 'completed')
         """
         )
         pages_bundled_result = cursor.fetchone()
@@ -649,19 +652,25 @@ class AnalysisStatusWindow(QDialog):
         cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 1")
         cached_count = cursor.fetchone()[0]
 
-        # Missing metadata percentage (files missing company, document type, or date)
+        # Missing metadata percentage - only count files where ALL analyses are missing metadata
+        # For multi-page documents, if ANY page has complete metadata, don't count as missing
         cursor.execute(
             """
-            SELECT COUNT(*)
-            FROM analysis_results
-            WHERE (company IS NULL OR company = '' OR company = 'N/A')
-               OR (document_type IS NULL OR document_type = '' OR document_type = 'N/A')
-               OR (document_date IS NULL OR document_date = '' OR document_date = 'N/A')
+            SELECT COUNT(DISTINCT file_path)
+            FROM analysis_results ar1
+            WHERE NOT EXISTS (
+                SELECT 1 FROM analysis_results ar2
+                WHERE ar2.file_path = ar1.file_path
+                AND ar2.company IS NOT NULL AND ar2.company != '' AND ar2.company != 'N/A'
+                AND ar2.document_type IS NOT NULL AND ar2.document_type != '' AND ar2.document_type != 'N/A'
+                AND ar2.document_date IS NOT NULL AND ar2.document_date != '' AND ar2.document_date != 'N/A'
+            )
         """
         )
         missing_metadata_count = cursor.fetchone()[0]
+        # Calculate percentage against analyzed files, not detected files
         missing_metadata_pct = (
-            (missing_metadata_count / files_detected * 100) if files_detected > 0 else 0
+            (missing_metadata_count / files_analyzed * 100) if files_analyzed > 0 else 0
         )
 
         # Processing speed (last 100 analyses, non-cached)
@@ -723,7 +732,7 @@ class AnalysisStatusWindow(QDialog):
         # Pending action items
         pending_bundles = len(self.analysis_db.get_bundle_suggestions(status_filter="suggested"))
         failed_files = error_count
-        unbundled_files = files_detected - pages_bundled
+        unbundled_files = files_analyzed - pages_bundled  # Only count analyzed files
 
         # Bundle acceptance rate
         cursor.execute(
@@ -769,15 +778,31 @@ class AnalysisStatusWindow(QDialog):
         archived_pages_result = cursor.fetchone()[0]
         total_archived_pages = archived_pages_result if archived_pages_result else 0
 
-        # Average processing time (includes all non-cached files, even failed or 0ms)
+        # Average processing time (prefer non-cached, but include cached if no fresh analyses)
+        # First try non-cached files
         cursor.execute(
             """
-            SELECT AVG(COALESCE(processing_time_ms, 0))
+            SELECT AVG(processing_time_ms)
             FROM analysis_results
             WHERE is_cached = 0
+              AND processing_time_ms IS NOT NULL
+              AND processing_time_ms > 0
         """
         )
         avg_processing_result = cursor.fetchone()[0]
+
+        # If no non-cached files with processing times, try ALL files (including cached)
+        if not avg_processing_result or avg_processing_result == 0:
+            cursor.execute(
+                """
+                SELECT AVG(processing_time_ms)
+                FROM analysis_results
+                WHERE processing_time_ms IS NOT NULL
+                  AND processing_time_ms > 0
+            """
+            )
+            avg_processing_result = cursor.fetchone()[0]
+
         avg_processing_time_ms = avg_processing_result if avg_processing_result else 0
 
         # Tax related count and percentage
@@ -833,9 +858,9 @@ class AnalysisStatusWindow(QDialog):
             f"{stats['files_analyzed']:,} of {stats['files_detected']:,} files analyzed"
         )
 
-        # Documents (with page count)
-        self.documents_card.findChild(QLabel, "📦_documents_value").setText(
-            f"{stats['documents_archived']} ({stats['total_archived_pages']}p)"
+        # Bundled Pages
+        self.documents_card.findChild(QLabel, "📦_bundled_pages_value").setText(
+            str(stats['total_archived_pages'])
         )
 
         # Missing Metadata Percentage

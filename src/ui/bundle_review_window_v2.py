@@ -55,12 +55,20 @@ class UnassignedPagesDialog(QDialog):
 
     pages_selected = pyqtSignal(list)
 
-    def __init__(self, parent=None):
+    def __init__(self, bundle_id=None, analysis_db=None, prototype_mode=True, parent=None):
         super().__init__(parent)
+        self.bundle_id = bundle_id
+        self.analysis_db = analysis_db
+        self.prototype_mode = prototype_mode
         self.selected_pages = []
         self.page_checkboxes = []
         self._init_ui()
-        self._create_mock_pages()
+
+        # Load pages based on mode
+        if prototype_mode:
+            self._create_mock_pages()
+        else:
+            self._load_unassigned_pages()
 
     def _init_ui(self):
         """Initialize dialog UI with light theme."""
@@ -168,6 +176,106 @@ class UnassignedPagesDialog(QDialog):
 
             self.grid_layout.addWidget(thumb_container, row, col)
 
+    def _load_unassigned_pages(self):
+        """Load real unassigned pages from database."""
+        import json
+        import os
+
+        if not self.analysis_db:
+            QMessageBox.warning(
+                self, "Error", "Database not available. Cannot load unassigned pages."
+            )
+            self.reject()
+            return
+
+        # Get all analyzed pages
+        all_pages = self.analysis_db.get_analyzed_pages()
+
+        # Get all bundles to find which pages are assigned
+        all_bundles = self.analysis_db.get_bundle_suggestions()
+
+        # Collect assigned file paths
+        assigned_paths = set()
+        for bundle in all_bundles:
+            if bundle["status"] in ["suggested", "accepted", "modified"]:
+                # Parse file_paths from JSON if needed
+                file_paths = bundle.get("file_paths", [])
+                if isinstance(file_paths, str):
+                    file_paths = json.loads(file_paths)
+                assigned_paths.update(file_paths)
+
+        # Filter to unassigned pages
+        unassigned_pages = [
+            page for page in all_pages if page["file_path"] not in assigned_paths
+        ]
+
+        if not unassigned_pages:
+            # Show message and close
+            QMessageBox.information(
+                self, "No Unassigned Pages", "All analyzed pages are already assigned to bundles."
+            )
+            self.reject()
+            return
+
+        # Create thumbnails in 4-column grid
+        for idx, page in enumerate(unassigned_pages):
+            row = idx // 4
+            col = idx % 4
+
+            # Create thumbnail container
+            thumb_container = QWidget()
+            thumb_container.setStyleSheet("background: white;")
+            thumb_layout = QVBoxLayout(thumb_container)
+            thumb_layout.setContentsMargins(5, 5, 5, 5)
+            thumb_layout.setSpacing(5)
+
+            # Checkbox
+            checkbox = QCheckBox()
+            checkbox.setProperty("file_path", page["file_path"])
+            checkbox.stateChanged.connect(self._on_selection_changed)
+            self.page_checkboxes.append(checkbox)
+            thumb_layout.addWidget(checkbox, alignment=Qt.AlignmentFlag.AlignCenter)
+
+            # Thumbnail (real image)
+            file_path = page["file_path"]
+            if os.path.exists(file_path):
+                full_pixmap = QPixmap(file_path)
+                if not full_pixmap.isNull():
+                    pixmap = full_pixmap.scaled(
+                        80, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    )
+                else:
+                    # Placeholder for invalid image
+                    pixmap = QPixmap(80, 100)
+                    pixmap.fill(QColor(240, 240, 240))
+                    painter = QPainter(pixmap)
+                    painter.setPen(QColor(150, 150, 150))
+                    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
+                    painter.end()
+            else:
+                # Placeholder for missing file
+                pixmap = QPixmap(80, 100)
+                pixmap.fill(QColor(240, 240, 240))
+                painter = QPainter(pixmap)
+                painter.setPen(QColor(150, 150, 150))
+                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Missing")
+                painter.end()
+
+            thumb_label = QLabel()
+            thumb_label.setPixmap(pixmap)
+            thumb_label.setStyleSheet(f"border: 1px solid {Colors.GRAY_300}; background: white;")
+            thumb_layout.addWidget(thumb_label)
+
+            # Info label
+            company = page.get("company", "Unknown")
+            doc_type = page.get("document_type", "Unknown")
+            info_label = QLabel(f"{company}\n{doc_type}")
+            info_label.setStyleSheet(f"font-size: 10px; color: {Colors.GRAY_600};")
+            info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            thumb_layout.addWidget(info_label)
+
+            self.grid_layout.addWidget(thumb_container, row, col)
+
     def _on_selection_changed(self):
         """Update button text when selection changes."""
         selected_count = sum(1 for cb in self.page_checkboxes if cb.isChecked())
@@ -199,12 +307,37 @@ class BundleReviewWindow(QDialog):
     bundle_confirmed = pyqtSignal(dict)
     bundle_rejected = pyqtSignal(dict)
 
-    def __init__(self, bundle_data=None, prototype_mode=True, parent=None):
+    def __init__(
+        self,
+        bundle_data=None,
+        prototype_mode=True,
+        analysis_db=None,
+        metadata_db=None,
+        config_manager=None,
+        parent=None,
+    ):
         super().__init__(parent)
+
+        # Services
+        self.analysis_db = analysis_db
+        self.metadata_db = metadata_db
+        self.config_manager = config_manager
 
         # State
         self.prototype_mode = prototype_mode
-        self.bundle_data = bundle_data or self._create_mock_bundle()
+
+        # Load bundle data
+        if bundle_data:
+            self.bundle_data = bundle_data
+        elif prototype_mode:
+            self.bundle_data = self._create_mock_bundle()
+        else:
+            # Production mode requires database
+            if not analysis_db:
+                raise ValueError("analysis_db required when prototype_mode=False")
+            # Will be loaded via _load_bundle_from_database if bundle_id provided
+            self.bundle_data = None
+
         self.current_page_index = 0
         self.zoom_level = 100
         self.rotation_angle = 0
@@ -220,15 +353,22 @@ class BundleReviewWindow(QDialog):
         # Metadata inputs (for editing)
         self.metadata_inputs = {}
 
+        # Edit mode tracking
+        self.edit_mode = False
+        self.original_metadata = {}
+
         # Accordion sections
         self.accordion_sections = []
+
+        # Track first show for default zoom
+        self._first_show = True
 
         self._init_ui()
         self._load_bundle()
 
     def _init_ui(self):
         """Initialize UI with three-panel layout."""
-        self.setWindowTitle("Review Bundle")
+        self.setWindowTitle("Modify Bundle")
         self.setMinimumSize(1400, 900)
         self.resize(1400, 900)
 
@@ -255,10 +395,10 @@ class BundleReviewWindow(QDialog):
         """)
 
         # Left panel - Thumbnails (300px)
-        left_panel = self._create_thumbnail_panel()
-        left_panel.setMinimumWidth(250)
-        left_panel.setMaximumWidth(400)
-        splitter.addWidget(left_panel)
+        self.thumbnail_panel = self._create_thumbnail_panel()
+        self.thumbnail_panel.setMinimumWidth(250)
+        self.thumbnail_panel.setMaximumWidth(400)
+        splitter.addWidget(self.thumbnail_panel)
 
         # Center panel - Large preview (flexible)
         center_panel = self._create_large_preview()
@@ -276,8 +416,8 @@ class BundleReviewWindow(QDialog):
         main_layout.addWidget(splitter)
 
         # Bottom action bar (horizontal)
-        action_bar = self._create_action_bar()
-        main_layout.addWidget(action_bar)
+        self.action_bar = self._create_action_bar()
+        main_layout.addWidget(self.action_bar)
 
     def _create_header_bar(self) -> QWidget:
         """Create header bar."""
@@ -393,7 +533,10 @@ class BundleReviewWindow(QDialog):
         self.layout_selector.currentTextChanged.connect(self._on_layout_changed)
         layout.addWidget(self.layout_selector)
 
-        # Scroll area
+        # No additional widgets between layout selector and thumbnail scroll area
+        # The center panel handles the large preview - nothing should be here
+
+        # Scroll area for thumbnails
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -403,6 +546,7 @@ class BundleReviewWindow(QDialog):
         self.thumbnail_container.setStyleSheet("background: white;")
         self.thumbnail_layout = QGridLayout(self.thumbnail_container)
         self.thumbnail_layout.setSpacing(8)
+        self.thumbnail_layout.setContentsMargins(0, 0, 0, 0)  # Remove any default margins
         scroll.setWidget(self.thumbnail_container)
 
         layout.addWidget(scroll)
@@ -675,6 +819,17 @@ class BundleReviewWindow(QDialog):
         content_frame.setVisible(initially_expanded)
 
         def toggle():
+            # Prevent toggling when in edit mode
+            if self.edit_mode:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self,
+                    "Unsaved Changes",
+                    "Please save or cancel your metadata changes before switching pages.",
+                    QMessageBox.StandardButton.Ok
+                )
+                return
+
             is_visible = content_frame.isVisible()
 
             # Collapse others
@@ -692,6 +847,9 @@ class BundleReviewWindow(QDialog):
             content_frame.setVisible(not is_visible)
             toggle_indicator.setText("▶" if is_visible else "▼")
 
+        # Store header reference for disabling later
+        section.accordion_header = header
+
         header.mousePressEvent = lambda e: toggle()
         section_layout.addWidget(header)
         section_layout.addWidget(content_frame)
@@ -700,25 +858,38 @@ class BundleReviewWindow(QDialog):
 
         return section
 
-    def _get_mock_distinct_values(self, field_name):
-        """Get mock distinct values for prototype."""
+    def _get_distinct_values(self, field_name: str) -> list[str]:
+        """Get distinct values for dropdown suggestions."""
+        # In prototype mode, use mocks
+        if self.prototype_mode:
+            if field_name == "document_type":
+                return [
+                    "Invoice",
+                    "Receipt",
+                    "Statement",
+                    "Contract",
+                    "Purchase Order",
+                    "Bill of Lading",
+                ]
+            elif field_name == "company":
+                return [
+                    "Acme Corporation",
+                    "TechCorp Industries",
+                    "Global Shipping Co",
+                    "ABC Manufacturing",
+                    "XYZ Logistics",
+                ]
+            return []
+
+        # Production mode: query database
+        if not self.metadata_db:
+            return []
+
         if field_name == "document_type":
-            return [
-                "Invoice",
-                "Receipt",
-                "Statement",
-                "Contract",
-                "Purchase Order",
-                "Bill of Lading",
-            ]
+            return self.metadata_db.get_unique_titles(use_cache=True)
         elif field_name == "company":
-            return [
-                "Acme Corporation",
-                "TechCorp Industries",
-                "Global Shipping Co",
-                "ABC Manufacturing",
-                "XYZ Logistics",
-            ]
+            return self.metadata_db.get_unique_companies(use_cache=True)
+
         return []
 
     def _create_metadata_content(self):
@@ -873,8 +1044,8 @@ class BundleReviewWindow(QDialog):
             self.metadata_inputs[field_name] = input_widget
 
         # Get mock distinct values
-        distinct_document_types = self._get_mock_distinct_values("document_type")
-        distinct_companies = self._get_mock_distinct_values("company")
+        distinct_document_types = self._get_distinct_values("document_type")
+        distinct_companies = self._get_distinct_values("company")
 
         # Add fields in correct order (matching file_details_grid.py)
         add_editable_row(
@@ -914,10 +1085,17 @@ class BundleReviewWindow(QDialog):
         )
 
         # Confidence score (as percentage)
-        confidence = analysis.get("confidence_score", "")
-        confidence_display = (
-            f"{int(confidence * 100)}" if isinstance(confidence, float) else str(confidence)
-        )
+        confidence = analysis.get("confidence_score", 0.0)
+        # Handle both decimal (0.95) and percentage (95) formats
+        if isinstance(confidence, (int, float)):
+            if confidence <= 1.0:
+                # Decimal format (0.95) - convert to percentage
+                confidence_display = f"{confidence * 100:.2f}"
+            else:
+                # Already in percentage format (95.0)
+                confidence_display = f"{confidence:.2f}"
+        else:
+            confidence_display = "0.00"
         add_editable_row(
             "Confidence Score", "confidence_score", confidence_display, "0-100 percentage"
         )
@@ -927,10 +1105,198 @@ class BundleReviewWindow(QDialog):
             "Tax Related", "tax_related", analysis.get("tax_related", False), widget_type="checkbox"
         )
 
+        # Add Save/Cancel buttons (initially hidden)
+        layout.addSpacing(15)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self.metadata_save_btn = QPushButton("Save Changes")
+        self.metadata_save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #047857;
+            }
+        """)
+        self.metadata_save_btn.clicked.connect(self._on_save_metadata_changes)
+        self.metadata_save_btn.setVisible(False)
+        button_layout.addWidget(self.metadata_save_btn)
+
+        self.metadata_cancel_btn = QPushButton("Cancel")
+        self.metadata_cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+        """)
+        self.metadata_cancel_btn.clicked.connect(self._on_cancel_metadata_changes)
+        self.metadata_cancel_btn.setVisible(False)
+        button_layout.addWidget(self.metadata_cancel_btn)
+
+        layout.addLayout(button_layout)
+
+        # Connect all metadata inputs to enter edit mode on change
+        for field_name, input_widget in self.metadata_inputs.items():
+            if isinstance(input_widget, QCheckBox):
+                input_widget.stateChanged.connect(lambda: self._enter_edit_mode())
+            elif isinstance(input_widget, QComboBox):
+                input_widget.currentTextChanged.connect(lambda: self._enter_edit_mode())
+            elif isinstance(input_widget, QLineEdit):
+                input_widget.textChanged.connect(lambda: self._enter_edit_mode())
+
         return widget
+
+    def _enter_edit_mode(self):
+        """Enter edit mode when metadata is changed."""
+        if self.edit_mode:
+            return  # Already in edit mode
+
+        # Store original metadata values
+        self.original_metadata = {}
+        for field_name, input_widget in self.metadata_inputs.items():
+            if isinstance(input_widget, QCheckBox):
+                self.original_metadata[field_name] = input_widget.isChecked()
+            elif isinstance(input_widget, QComboBox):
+                self.original_metadata[field_name] = input_widget.currentText()
+            elif isinstance(input_widget, QLineEdit):
+                self.original_metadata[field_name] = input_widget.text()
+
+        self.edit_mode = True
+
+        # Disable thumbnail panel
+        self.thumbnail_panel.setEnabled(False)
+        self.thumbnail_panel.setStyleSheet(
+            "QWidget { background: #F3F4F6; border-right: 1px solid #E5E7EB; }"
+        )
+
+        # Disable action bar
+        self.action_bar.setEnabled(False)
+        self.action_bar.setStyleSheet(
+            "QWidget { background: #F3F4F6; border-top: 2px solid #E5E7EB; }"
+        )
+
+        # Disable accordion headers (prevent page switching)
+        for section in self.accordion_sections:
+            if hasattr(section, "accordion_header"):
+                header = section.accordion_header
+                header.setEnabled(False)
+                header.setCursor(Qt.CursorShape.ForbiddenCursor)
+                # Update header style to show disabled state
+                header.setStyleSheet("""
+                    QFrame {
+                        background-color: #F3F4F6;
+                        border: 1px solid #E5E7EB;
+                        border-top-left-radius: 8px;
+                        border-top-right-radius: 8px;
+                        padding: 10px 12px;
+                        opacity: 0.6;
+                    }
+                """)
+
+        # Show Save/Cancel buttons
+        if hasattr(self, "metadata_save_btn"):
+            self.metadata_save_btn.setVisible(True)
+        if hasattr(self, "metadata_cancel_btn"):
+            self.metadata_cancel_btn.setVisible(True)
+
+    def _on_save_metadata_changes(self):
+        """Save metadata changes and exit edit mode."""
+        # Changes are already in the input widgets, just exit edit mode
+        self._exit_edit_mode()
+
+        # Optionally show a confirmation
+        from PyQt6.QtWidgets import QMessageBox
+
+        QMessageBox.information(
+            self, "Changes Saved", "Metadata changes saved for this page.\n\n"
+            "Click 'Save Bundle' at the bottom to persist all changes to the database."
+        )
+
+    def _on_cancel_metadata_changes(self):
+        """Cancel metadata changes and revert to original values."""
+        # Revert all fields to original values
+        for field_name, original_value in self.original_metadata.items():
+            if field_name in self.metadata_inputs:
+                input_widget = self.metadata_inputs[field_name]
+
+                # Temporarily disconnect signals to avoid triggering edit mode again
+                if isinstance(input_widget, QCheckBox):
+                    input_widget.blockSignals(True)
+                    input_widget.setChecked(original_value)
+                    input_widget.blockSignals(False)
+                elif isinstance(input_widget, QComboBox):
+                    input_widget.blockSignals(True)
+                    input_widget.setCurrentText(original_value)
+                    input_widget.blockSignals(False)
+                elif isinstance(input_widget, QLineEdit):
+                    input_widget.blockSignals(True)
+                    input_widget.setText(original_value)
+                    input_widget.blockSignals(False)
+
+        self._exit_edit_mode()
+
+    def _exit_edit_mode(self):
+        """Exit edit mode and re-enable panels."""
+        self.edit_mode = False
+        self.original_metadata = {}
+
+        # Re-enable thumbnail panel
+        self.thumbnail_panel.setEnabled(True)
+        self.thumbnail_panel.setStyleSheet(
+            f"QWidget {{ background: white; border-right: 1px solid {Colors.GRAY_200}; }}"
+        )
+
+        # Re-enable action bar
+        self.action_bar.setEnabled(True)
+        self.action_bar.setStyleSheet(
+            f"QWidget {{ background: {Colors.GRAY_50}; border-top: 2px solid {Colors.GRAY_300}; }}"
+        )
+
+        # Re-enable accordion headers
+        for section in self.accordion_sections:
+            if hasattr(section, "accordion_header"):
+                header = section.accordion_header
+                header.setEnabled(True)
+                header.setCursor(Qt.CursorShape.PointingHandCursor)
+                # Restore original header style
+                header.setStyleSheet("""
+                    QFrame {
+                        background-color: #FFFFFF;
+                        border: 1px solid #E5E7EB;
+                        border-top-left-radius: 8px;
+                        border-top-right-radius: 8px;
+                        padding: 10px 12px;
+                    }
+                    QFrame:hover {
+                        background-color: #F9FAFB;
+                    }
+                """)
+
+        # Hide Save/Cancel buttons
+        if hasattr(self, "metadata_save_btn"):
+            self.metadata_save_btn.setVisible(False)
+        if hasattr(self, "metadata_cancel_btn"):
+            self.metadata_cancel_btn.setVisible(False)
 
     def _create_file_info_content(self):
         """Create file information content (matching file_details_grid.py)."""
+        import os
+        from datetime import datetime
+
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -948,9 +1314,31 @@ class BundleReviewWindow(QDialog):
             file_path = self.bundle_data["file_paths"][self.current_page_index]
             filename = Path(file_path).name
             full_path = str(file_path)
+
+            # Get real file stats
+            if not self.prototype_mode and os.path.exists(file_path):
+                file_size = os.path.getsize(file_path)
+                file_size_str = self._format_file_size(file_size)
+
+                modified_time = os.path.getmtime(file_path)
+                modified_str = datetime.fromtimestamp(modified_time).strftime("%Y-%m-%d %H:%M:%S")
+
+                # Get file hash from analysis
+                if self.analysis_db:
+                    analysis = self.analysis_db.get_analysis(file_path)
+                    file_hash = analysis.get("file_hash", "N/A") if analysis else "N/A"
+                else:
+                    file_hash = "N/A"
+            else:
+                file_size_str = "N/A (mock)" if self.prototype_mode else "File not found"
+                modified_str = "N/A (mock)" if self.prototype_mode else "N/A"
+                file_hash = "N/A (mock)" if self.prototype_mode else "N/A"
         else:
             filename = "N/A"
             full_path = "N/A"
+            file_size_str = "N/A"
+            modified_str = "N/A"
+            file_hash = "N/A"
 
         def add_row(label, value):
             row = QWidget()
@@ -977,11 +1365,21 @@ class BundleReviewWindow(QDialog):
 
         add_row("Filename", filename)
         add_row("Full Path", full_path)
-        add_row("File Size", "N/A (mock)")  # Would use _format_size in real implementation
-        add_row("Modified", "N/A (mock)")  # Would use _format_dt in real implementation
-        add_row("File Hash", "N/A (mock)")  # Would be actual hash in real implementation
+        add_row("File Size", file_size_str)
+        add_row("Modified", modified_str)
+        # Truncate hash for display
+        hash_display = file_hash[:16] + "..." if len(file_hash) > 16 and file_hash != "N/A" else file_hash
+        add_row("File Hash", hash_display)
 
         return widget
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format."""
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} TB"
 
     def _create_analysis_content(self):
         """Create analysis information content (matching file_details_grid.py)."""
@@ -1027,11 +1425,42 @@ class BundleReviewWindow(QDialog):
         # Match file_details_grid.py fields
         status = "Confirmed" if self.current_page_index in self.confirmed_pages else "Pending"
         add_row("Status", status)
-        add_row("Analyzed", "N/A (mock)")  # Would show timestamp in real implementation
-        add_row("Processing Time", "N/A (mock)")  # Would show duration in real implementation
-        add_row("Provider", analysis.get("provider", "Ollama (mock)"))
-        add_row("Model", analysis.get("model_used", "qwen2.5-vl (mock)"))
-        add_row("Cached", "No" if self.current_page_index == 0 else "Yes")
+
+        # Get timestamps from analysis
+        if not self.prototype_mode and analysis:
+            from datetime import datetime
+
+            analyzed_timestamp = analysis.get("analyzed_at", "N/A")
+            if analyzed_timestamp and analyzed_timestamp != "N/A":
+                try:
+                    analyzed_str = datetime.fromisoformat(analyzed_timestamp).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                except Exception:
+                    analyzed_str = str(analyzed_timestamp)
+            else:
+                analyzed_str = "N/A"
+
+            processing_time = analysis.get("processing_time_ms", 0)
+            processing_str = f"{processing_time}ms" if processing_time else "N/A"
+
+            provider = analysis.get("provider_name") or analysis.get("provider", "Unknown")
+            model = analysis.get("model_used", "Unknown")
+
+            # Check if cached (no processing time or very fast)
+            is_cached = "Yes" if processing_time == 0 or processing_time < 10 else "No"
+        else:
+            analyzed_str = "N/A (mock)"
+            processing_str = "N/A (mock)"
+            provider = analysis.get("provider", "Ollama (mock)")
+            model = analysis.get("model_used", "qwen2.5-vl (mock)")
+            is_cached = "No" if self.current_page_index == 0 else "Yes"
+
+        add_row("Analyzed", analyzed_str)
+        add_row("Processing Time", processing_str)
+        add_row("Provider", provider)
+        add_row("Model", model)
+        add_row("Cached", is_cached)
 
         return widget
 
@@ -1039,11 +1468,6 @@ class BundleReviewWindow(QDialog):
         """Create horizontal action bar at bottom."""
         bar = QWidget()
         bar.setStyleSheet(f"background: {Colors.GRAY_50}; border-top: 2px solid {Colors.GRAY_300};")
-
-        # Buttons are 40px min-height + 12px padding (top/bottom) = need at least 64px
-        # Add 15px padding top and bottom = 64 + 30 = 94px total
-        bar.setMinimumHeight(94)
-        bar.setMaximumHeight(94)
 
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(15, 15, 15, 15)  # Equal padding all around
@@ -1119,6 +1543,69 @@ class BundleReviewWindow(QDialog):
             ],
         }
 
+    def _load_bundle_from_database(self, bundle_id: int) -> dict:
+        """Load bundle data from database."""
+        import json
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
+        # Get bundle metadata
+        bundle = self.analysis_db.get_bundle_by_id(bundle_id)
+        if not bundle:
+            raise ValueError(f"Bundle {bundle_id} not found in database")
+
+        # Parse file_paths from JSON string
+        file_paths_str = bundle.get("file_paths", "[]")
+        if isinstance(file_paths_str, str):
+            file_paths = json.loads(file_paths_str)
+        else:
+            file_paths = file_paths_str
+
+        logger.info(f"Loading bundle {bundle_id} with {len(file_paths)} files")
+
+        # Load analyses for each page
+        analyses = []
+        missing_files = []
+
+        for file_path in file_paths:
+            analysis = self.analysis_db.get_analysis(file_path)
+            if analysis:
+                analyses.append(analysis)
+            else:
+                # Create placeholder if analysis missing
+                logger.warning(f"No analysis found for {file_path}")
+                analyses.append({
+                    "file_path": file_path,
+                    "company": bundle.get("company"),
+                    "document_type": bundle.get("document_type"),
+                    "page_number": None,
+                    "total_pages": None,
+                    "confidence_score": 0.0,
+                    "error": "Analysis not found",
+                })
+
+            # Check if file exists
+            import os
+            if not os.path.exists(file_path):
+                missing_files.append(file_path)
+
+        if missing_files:
+            logger.warning(
+                f"Bundle {bundle_id} has {len(missing_files)} missing files: {missing_files[:3]}"
+            )
+
+        return {
+            "bundle_id": bundle["id"],
+            "file_paths": file_paths,
+            "company": bundle.get("company"),
+            "document_type": bundle.get("document_type"),
+            "document_date": bundle.get("document_date"),
+            "confidence_score": bundle.get("confidence_score", 0.0),
+            "total_pages": len(file_paths),
+            "analyses": analyses,
+        }
+
     def _load_bundle(self):
         """Load bundle data."""
         self._populate_thumbnails()
@@ -1158,20 +1645,53 @@ class BundleReviewWindow(QDialog):
 
     def _create_thumbnail(self, file_path: str, index: int) -> ClickableLabel:
         """Create thumbnail."""
-        pixmap = QPixmap(80, 100)
-        base_color = QColor(220 + (index * 10) % 30, 230, 245)
-        pixmap.fill(base_color)
+        import os
 
-        painter = QPainter(pixmap)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, f"Page\n{index + 1}")
+        # Load real image or create placeholder
+        if self.prototype_mode:
+            # Mock thumbnail
+            pixmap = QPixmap(80, 100)
+            base_color = QColor(220 + (index * 10) % 30, 230, 245)
+            pixmap.fill(base_color)
+            painter = QPainter(pixmap)
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, f"Page\n{index + 1}")
+            painter.end()
+        elif os.path.exists(file_path):
+            # Load and scale real image
+            full_pixmap = QPixmap(file_path)
+            if not full_pixmap.isNull():
+                pixmap = full_pixmap.scaled(
+                    80,
+                    100,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            else:
+                # Invalid image
+                pixmap = QPixmap(80, 100)
+                pixmap.fill(QColor(240, 240, 240))
+                painter = QPainter(pixmap)
+                painter.setPen(QColor(150, 150, 150))
+                painter.setFont(QFont("Arial", 10))
+                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
+                painter.end()
+        else:
+            # File not found
+            pixmap = QPixmap(80, 100)
+            pixmap.fill(QColor(240, 240, 240))
+            painter = QPainter(pixmap)
+            painter.setPen(QColor(150, 150, 150))
+            painter.setFont(QFont("Arial", 10))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Missing")
+            painter.end()
 
-        # Add checkmark if confirmed
+        # Add checkmark overlay if confirmed
         if index in self.confirmed_pages:
+            painter = QPainter(pixmap)
             painter.setPen(QColor(Colors.SUCCESS))
             painter.setFont(QFont("Arial", 14, QFont.Weight.Bold))
             painter.drawText(5, 20, "✓")
-
-        painter.end()
+            painter.end()
 
         thumbnail = ClickableLabel()
         thumbnail.setPixmap(pixmap)
@@ -1200,11 +1720,18 @@ class BundleReviewWindow(QDialog):
         # Tooltip
         if index < len(self.bundle_data.get("analyses", [])):
             analysis = self.bundle_data["analyses"][index]
+            # Format confidence score correctly
+            conf = analysis.get('confidence_score', 0)
+            if isinstance(conf, (int, float)):
+                conf_pct = int(conf * 100) if conf <= 1.0 else int(conf)
+            else:
+                conf_pct = 0
+
             tooltip = f"""
                 <b>File:</b> {html.escape(Path(file_path).name)}<br>
                 <b>Page:</b> {html.escape(str(analysis.get('page_number', '?')))} of {html.escape(str(analysis.get('total_pages', '?')))}<br>
                 <b>Type:</b> {html.escape(str(analysis.get('document_type', 'Unknown')))}<br>
-                <b>Confidence:</b> {int(analysis.get('confidence_score', 0) * 100)}%
+                <b>Confidence:</b> {conf_pct}%
             """
             thumbnail.setToolTip(tooltip)
 
@@ -1225,35 +1752,66 @@ class BundleReviewWindow(QDialog):
 
     def _update_large_preview(self):
         """Update preview with transforms and checkmark overlay."""
+        import os
+
         if not self.bundle_data.get("file_paths"):
             return
 
-        # Create base pixmap
-        base_pixmap = QPixmap(600, 800)
-        color_idx = self.current_page_index
-        base_color = QColor(220 + (color_idx * 10) % 30, 230, 245)
-        base_pixmap.fill(base_color)
+        file_path = self.bundle_data["file_paths"][self.current_page_index]
 
-        painter = QPainter(base_pixmap)
-        painter.drawText(
-            base_pixmap.rect(),
-            Qt.AlignmentFlag.AlignCenter,
-            f"Page {self.current_page_index + 1}\n\n(Mock Preview)",
-        )
+        # Load real image or create placeholder
+        if self.prototype_mode:
+            # Mock pixmap for prototype
+            base_pixmap = QPixmap(600, 800)
+            color_idx = self.current_page_index
+            base_color = QColor(220 + (color_idx * 10) % 30, 230, 245)
+            base_pixmap.fill(base_color)
+
+            painter = QPainter(base_pixmap)
+            painter.drawText(
+                base_pixmap.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                f"Page {self.current_page_index + 1}\n\n(Mock Preview)",
+            )
+            painter.end()
+        elif os.path.exists(file_path):
+            # Load real image
+            base_pixmap = QPixmap(file_path)
+            if base_pixmap.isNull():
+                # Invalid image file
+                base_pixmap = self._create_placeholder_pixmap(
+                    f"Cannot load image:\n{os.path.basename(file_path)}"
+                )
+        else:
+            # File not found
+            base_pixmap = self._create_placeholder_pixmap(
+                f"File not found:\n{os.path.basename(file_path)}"
+            )
 
         # Add checkmark overlay if confirmed
         if self.current_page_index in self.confirmed_pages:
+            painter = QPainter(base_pixmap)
             painter.setPen(QColor(Colors.SUCCESS))
             painter.setFont(QFont("Arial", 48, QFont.Weight.Bold))
             painter.drawText(20, 60, "✓")
-
-        painter.end()
+            painter.end()
 
         # Apply transforms
         transformed = self._apply_transform(base_pixmap)
 
         self.large_preview.setPixmap(transformed)
         self._update_cursor()
+
+    def _create_placeholder_pixmap(self, text: str) -> QPixmap:
+        """Create placeholder pixmap with error text."""
+        pixmap = QPixmap(600, 800)
+        pixmap.fill(QColor(240, 240, 240))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor(100, 100, 100))
+        painter.setFont(QFont("Arial", 14))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        return pixmap
 
     def _apply_transform(self, pixmap: QPixmap) -> QPixmap:
         """Apply zoom, rotation, pan."""
@@ -1375,19 +1933,113 @@ class BundleReviewWindow(QDialog):
         self._update_large_preview()
 
     def _on_fit_width(self):
-        """Fit to width."""
-        # Simplified for mock - set to reasonable zoom
-        self.zoom_spinner.setValue(100)
+        """Fit to width of preview area."""
+        if not self.bundle_data.get("file_paths"):
+            return
+
+        file_path = self.bundle_data["file_paths"][self.current_page_index]
+
+        # Get original image size
+        import os
+        if not self.prototype_mode and os.path.exists(file_path):
+            pixmap = QPixmap(file_path)
+        else:
+            pixmap = QPixmap(600, 800)  # Mock size
+
+        if pixmap.isNull():
+            return
+
+        # Apply rotation to get actual display dimensions
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Get preview area width (subtract some margin)
+        preview_width = self.large_preview.width() - 20
+
+        # Calculate zoom to fit width
+        zoom_percent = int((preview_width / pixmap.width()) * 100)
+        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
+
+        self.zoom_spinner.setValue(zoom_percent)
 
     def _on_fit_height(self):
-        """Fit to height."""
-        # Simplified for mock - set to reasonable zoom
-        self.zoom_spinner.setValue(75)
+        """Fit to height of preview area."""
+        if not self.bundle_data.get("file_paths"):
+            return
+
+        file_path = self.bundle_data["file_paths"][self.current_page_index]
+
+        # Get original image size
+        import os
+        if not self.prototype_mode and os.path.exists(file_path):
+            pixmap = QPixmap(file_path)
+        else:
+            pixmap = QPixmap(600, 800)  # Mock size
+
+        if pixmap.isNull():
+            return
+
+        # Apply rotation to get actual display dimensions
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Get preview area height (subtract some margin)
+        preview_height = self.large_preview.height() - 20
+
+        # Calculate zoom to fit height
+        zoom_percent = int((preview_height / pixmap.height()) * 100)
+        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
+
+        self.zoom_spinner.setValue(zoom_percent)
 
     def _on_fit_window(self):
-        """Fit to window."""
-        # Simplified for mock - set to fit both
-        self.zoom_spinner.setValue(85)
+        """Fit to window (both width and height)."""
+        if not self.bundle_data.get("file_paths"):
+            return
+
+        file_path = self.bundle_data["file_paths"][self.current_page_index]
+
+        # Get original image size
+        import os
+        if not self.prototype_mode and os.path.exists(file_path):
+            pixmap = QPixmap(file_path)
+        else:
+            pixmap = QPixmap(600, 800)  # Mock size
+
+        if pixmap.isNull():
+            return
+
+        # Apply rotation to get actual display dimensions
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Get preview area dimensions (subtract margins)
+        preview_width = self.large_preview.width() - 20
+        preview_height = self.large_preview.height() - 20
+
+        # Calculate zoom to fit both dimensions (use smaller ratio)
+        width_ratio = preview_width / pixmap.width()
+        height_ratio = preview_height / pixmap.height()
+        zoom_ratio = min(width_ratio, height_ratio)
+        zoom_percent = int(zoom_ratio * 100)
+        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
+
+        self.zoom_spinner.setValue(zoom_percent)
+
+    def showEvent(self, event):
+        """Handle window show event - set default zoom to fit width on first show."""
+        super().showEvent(event)
+        if self._first_show:
+            self._first_show = False
+            # Use QTimer to ensure window geometry is finalized
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, self._on_fit_width)
 
     def mousePressEvent(self, event):
         """Start pan."""
@@ -1447,7 +2099,12 @@ class BundleReviewWindow(QDialog):
 
     def _on_add_pages(self):
         """Show add pages dialog."""
-        dialog = UnassignedPagesDialog(self)
+        dialog = UnassignedPagesDialog(
+            bundle_id=self.bundle_data.get("bundle_id"),
+            analysis_db=self.analysis_db,
+            prototype_mode=self.prototype_mode,
+            parent=self,
+        )
         dialog.pages_selected.connect(self._on_pages_added)
         dialog.exec()
 
@@ -1500,35 +2157,147 @@ class BundleReviewWindow(QDialog):
                 QMessageBox.information(self, "Page Saved", f"Page saved to:\n{file_path}")
 
     def _on_reanalyze_page(self):
-        """Re-analyze."""
-        QMessageBox.information(
-            self, "Prototype Mode", "Re-analysis will be available when connected to backend."
+        """Re-analyze current page using LLM provider."""
+        from pathlib import Path
+
+        if self.current_page_index >= len(self.bundle_data.get("file_paths", [])):
+            return
+
+        file_path = self.bundle_data["file_paths"][self.current_page_index]
+
+        # In prototype mode, just show info
+        if self.prototype_mode:
+            QMessageBox.information(
+                self, "Prototype Mode", "Re-analysis will be available when connected to backend."
+            )
+            return
+
+        # Confirm action
+        reply = QMessageBox.question(
+            self,
+            "Re-Analyze Page",
+            f"Re-analyze this page using the current LLM provider?\n\n"
+            f"File: {Path(file_path).name}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Show progress dialog
+        progress = QMessageBox(self)
+        progress.setWindowTitle("Re-Analyzing")
+        progress.setText("Analyzing page, please wait...")
+        progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        progress.setModal(True)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            # Get provider from config
+            from llm_providers.provider_factory import ProviderFactory
+            from services.analysis_service import AnalysisService
+
+            provider = ProviderFactory.create_from_config_manager(self.config_manager)
+
+            # Get prompt
+            prompt = self.config_manager.get_setting(
+                "Prompts", "document_metadata", AnalysisService.DEFAULT_ANALYSIS_PROMPT
+            )
+
+            # Analyze
+            result = provider.analyze_images([file_path], prompt, model=None)
+
+            if result["success"]:
+                # Save to database
+                file_hash = self.metadata_db.compute_file_hash(file_path)
+                self.analysis_db.save_analysis(
+                    file_path=file_path,
+                    file_hash=file_hash,
+                    provider_name=result["provider_name"],
+                    model_name=result["model_used"],
+                    analysis_data=result["metadata"],
+                    raw_response=result["response"],
+                    processing_time_ms=result["processing_time_ms"],
+                )
+
+                # Update bundle_data immutably
+                new_analyses = list(self.bundle_data["analyses"])
+                new_analyses[self.current_page_index] = {
+                    **result["metadata"],
+                    "file_path": file_path,
+                    "provider_name": result["provider_name"],
+                    "model_used": result["model_used"],
+                    "processing_time_ms": result["processing_time_ms"],
+                    "analyzed_at": result.get("analyzed_at"),
+                }
+
+                self.bundle_data = {
+                    **self.bundle_data,
+                    "analyses": new_analyses,
+                }
+
+                # Refresh UI
+                self._refresh_accordion_content()
+
+                progress.close()
+                QMessageBox.information(
+                    self, "Success", f"Page re-analyzed successfully using {result['model_used']}"
+                )
+            else:
+                progress.close()
+                QMessageBox.warning(
+                    self,
+                    "Analysis Failed",
+                    f"Failed to re-analyze page:\n{result.get('error', 'Unknown error')}",
+                )
+
+        except Exception as e:
+            progress.close()
+
+            # Log error
+            from services.logging_service import get_logger
+
+            logger = get_logger()
+            logger.error(f"Re-analysis failed for {file_path}", exc_info=True)
+
+            # Save error to database
+            self.analysis_db.save_analysis_error(
+                file_path=file_path, error_message=str(e), error_type="re_analysis_failure"
+            )
+
+            QMessageBox.critical(
+                self, "Error", f"Error during re-analysis:\n{str(e)}\n\nError has been logged."
+            )
+
     def _on_save_bundle(self):
-        """Save bundle."""
-        # Save metadata edits (immutable pattern)
+        """Save bundle changes to database."""
+        # Collect metadata edits from current page
         if self.current_page_index < len(self.bundle_data.get("analyses", [])):
-            # Collect all edits
             edits = {}
             for field_name, input_widget in self.metadata_inputs.items():
-                # Get value based on widget type
                 if isinstance(input_widget, QCheckBox):
                     value = input_widget.isChecked()
                 elif isinstance(input_widget, QComboBox):
                     value = input_widget.currentText()
-                else:  # QLineEdit or other text widgets
+                else:
                     value = input_widget.text()
                 edits[field_name] = value
 
-            # Create new analyses list with updated analysis (immutable)
+            # Update all analyses with bundle-level fields (immutable pattern)
+            bundle_level_fields = ["company", "document_type", "document_date"]
             new_analyses = []
             for i, analysis in enumerate(self.bundle_data["analyses"]):
+                new_analysis = {**analysis}
                 if i == self.current_page_index:
-                    # Create new analysis dict with updates
-                    new_analyses.append({**analysis, **edits})
+                    # Apply all edits to current page
+                    new_analysis.update(edits)
                 else:
-                    new_analyses.append(analysis)
+                    # Apply only bundle-level edits to other pages
+                    for field in bundle_level_fields:
+                        if field in edits:
+                            new_analysis[field] = edits[field]
+                new_analyses.append(new_analysis)
 
             # Update bundle_data immutably
             self.bundle_data = {
@@ -1536,10 +2305,64 @@ class BundleReviewWindow(QDialog):
                 "analyses": new_analyses,
             }
 
+        # Get final file paths (excluding removed)
         remaining_paths = [
             fp for i, fp in enumerate(self.bundle_data["file_paths"]) if i not in self.removed_pages
         ]
 
+        if not remaining_paths:
+            QMessageBox.warning(
+                self,
+                "No Pages",
+                "Cannot save bundle with no pages. Please add pages or cancel.",
+            )
+            return
+
+        # Save to database (only in production mode)
+        if not self.prototype_mode:
+            try:
+                # Update each page's metadata in database
+                for i, file_path in enumerate(self.bundle_data["file_paths"]):
+                    if i in self.removed_pages:
+                        continue
+
+                    analysis = self.bundle_data["analyses"][i]
+                    metadata_updates = {
+                        "company": analysis.get("company"),
+                        "document_type": analysis.get("document_type"),
+                        "document_date": analysis.get("document_date"),
+                        "page_number": analysis.get("page_number"),
+                        "total_pages": len(remaining_paths),
+                        "confidence_score": analysis.get("confidence_score"),
+                        "tax_related": analysis.get("tax_related"),
+                        "rotation_needed": analysis.get("rotation_needed"),
+                    }
+
+                    self.analysis_db.update_analysis_metadata(file_path, metadata_updates)
+
+                # Update bundle status in database
+                bundle_id = self.bundle_data["bundle_id"]
+
+                # If file paths changed, update bundle
+                if len(remaining_paths) != len(self.bundle_data["file_paths"]):
+                    from services.bundling_service import BundlingService
+
+                    bundling_service = BundlingService(self.analysis_db)
+                    bundling_service.modify_bundle(bundle_id, remaining_paths)
+                else:
+                    # Just mark as accepted
+                    from services.bundling_service import BundlingService
+
+                    bundling_service = BundlingService(self.analysis_db)
+                    bundling_service.accept_bundle(bundle_id)
+
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Save Failed", f"Failed to save bundle changes:\n{str(e)}"
+                )
+                return
+
+        # Emit success signal
         result = {
             "bundle_id": self.bundle_data["bundle_id"],
             "file_paths": remaining_paths,
@@ -1547,6 +2370,7 @@ class BundleReviewWindow(QDialog):
                 "removed_pages": list(self.removed_pages),
                 "confirmed_pages": list(self.confirmed_pages),
             },
+            "status": "accepted",
         }
 
         self.bundle_confirmed.emit(result)

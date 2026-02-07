@@ -98,21 +98,16 @@ def get_primary_button_style():
             background-color: {Colors.PRIMARY};
             color: {Colors.WHITE};
             border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
+            border-radius: 4px;
+            padding: 8px 16px;
             font-size: 11pt;
             font-weight: 600;
-            min-height: 40px;
         }}
         QPushButton:hover {{
             background-color: {Colors.PRIMARY_HOVER};
-            padding-top: 10px;
-            padding-bottom: 14px;
         }}
         QPushButton:pressed {{
             background-color: {Colors.PRIMARY_HOVER};
-            padding-top: 13px;
-            padding-bottom: 11px;
         }}
         QPushButton:disabled {{
             background-color: {Colors.GRAY_300};
@@ -128,21 +123,16 @@ def get_success_button_style():
             background-color: {Colors.SUCCESS};
             color: {Colors.WHITE};
             border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
+            border-radius: 4px;
+            padding: 8px 16px;
             font-size: 11pt;
             font-weight: 600;
-            min-height: 40px;
         }}
         QPushButton:hover {{
             background-color: {Colors.SUCCESS_HOVER};
-            padding-top: 10px;
-            padding-bottom: 14px;
         }}
         QPushButton:pressed {{
             background-color: {Colors.SUCCESS_HOVER};
-            padding-top: 13px;
-            padding-bottom: 11px;
         }}
         QPushButton:disabled {{
             background-color: {Colors.GRAY_300};
@@ -158,21 +148,16 @@ def get_danger_button_style():
             background-color: {Colors.DANGER};
             color: {Colors.WHITE};
             border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
+            border-radius: 4px;
+            padding: 8px 16px;
             font-size: 11pt;
             font-weight: 600;
-            min-height: 40px;
         }}
         QPushButton:hover {{
             background-color: {Colors.DANGER_HOVER};
-            padding-top: 10px;
-            padding-bottom: 14px;
         }}
         QPushButton:pressed {{
             background-color: {Colors.DANGER_HOVER};
-            padding-top: 13px;
-            padding-bottom: 11px;
         }}
         QPushButton:disabled {{
             background-color: {Colors.GRAY_300};
@@ -188,23 +173,18 @@ def get_secondary_button_style():
             background-color: {Colors.WHITE};
             color: {Colors.GRAY_700};
             border: 2px solid {Colors.GRAY_300};
-            border-radius: 8px;
-            padding: 12px 24px;
+            border-radius: 4px;
+            padding: 8px 16px;
             font-size: 11pt;
             font-weight: 600;
-            min-height: 40px;
         }}
         QPushButton:hover {{
             background-color: {Colors.GRAY_50};
             border-color: {Colors.GRAY_400};
-            padding-top: 10px;
-            padding-bottom: 14px;
         }}
         QPushButton:pressed {{
             background-color: {Colors.GRAY_100};
             border-color: {Colors.GRAY_500};
-            padding-top: 13px;
-            padding-bottom: 11px;
         }}
         QPushButton:disabled {{
             background-color: {Colors.GRAY_100};

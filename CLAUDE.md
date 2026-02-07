@@ -41,6 +41,57 @@ Maintain session state in `_project_specs/session/`:
 
 See `.claude/skills/session-management/SKILL.md` for details.
 
+## Development Rigor (MANDATORY)
+
+### Before Making ANY Code Change
+
+1. **Search exhaustively** - Don't assume you found all references
+   ```bash
+   # Search for the component/variable in multiple ways
+   Grep "component_name" -i
+   Grep "ComponentName"  # Try different casings
+   Grep "def.*component" -i
+   Grep "component.*=" -i
+   ```
+
+2. **Read before writing** - Always read existing implementations
+   - Read the full method before modifying it
+   - Read related methods that might interact with it
+   - Read the class documentation/docstrings
+
+3. **Understand the full picture** - Map out dependencies
+   - Where is this created?
+   - Where is this updated?
+   - What calls this method?
+   - What does this method call?
+
+4. **Verify your solution** - Think through edge cases
+   - Will this work when the theme changes?
+   - Will this work when the window is resized?
+   - Will this work when data is refreshed?
+   - Could anything override this change?
+
+### When User Reports Issue Not Fixed
+
+**STOP and search more thoroughly:**
+1. Search for the component name in ALL forms (camelCase, snake_case, with/without prefixes)
+2. Read the ENTIRE file, don't just jump to specific methods
+3. Search for common override patterns: `_update_`, `_refresh_`, `_apply_`, `set_`
+4. Look for signal connections that might trigger resets
+5. Check parent classes for inherited behavior
+
+**If issue persists after 2 attempts:**
+- Explicitly state what you searched for
+- List ALL locations you found
+- Ask user if they know of other locations you might have missed
+
+### Quality Standards
+
+- **First attempt should be correct** - Take time to search thoroughly upfront
+- **Never make assumptions** - Verify by searching the codebase
+- **Explicit is better than implicit** - State what you found and what you're changing
+- **One fix, all locations** - Update everything consistently
+
 ## File Organization (CRITICAL)
 
 **NEVER place new files in the repository root unless absolutely necessary.**
@@ -378,6 +429,67 @@ stats = service.scan_all_directories(
 - Analysis operations provide progress callbacks for UI updates
 - Abort checking enables graceful cancellation
 
+## UI Development Methodology (CRITICAL)
+
+When making ANY UI change, follow this mandatory checklist:
+
+### 1. Find ALL Locations Where Component Is Modified
+Before changing ANY UI element, search for:
+- **Creation methods**: `_create_*()` where the component is initially created
+- **Update methods**: `_update_*()`, `_refresh_*()`, `_apply_*()` that may override your changes
+- **Theme methods**: `_apply_dark_theme()`, `_apply_light_theme()`, `_update_all_component_styles()`
+- **Event handlers**: Methods that recreate or reset the component
+
+**Example searches:**
+```python
+# If modifying output_filename_input:
+Grep "output_filename" -i          # Find all references
+Grep "def _update" -i               # Find update methods
+Grep "def _apply.*theme" -i         # Find theme methods
+Grep "setStyleSheet.*output" -i     # Find where styles are set
+```
+
+### 2. Verify Changes in ALL Locations
+**NEVER change just one location.** If a component has:
+- Initial creation in `_create_foo()`
+- Theme updates in `_update_all_component_styles()`
+- Both MUST be updated identically
+
+**Checklist:**
+- [ ] Changed initial creation method
+- [ ] Changed ALL theme/update methods that touch the same component
+- [ ] Verified no other methods override the changes
+- [ ] Checked for any signal handlers that recreate the component
+
+### 3. Search for Override Patterns
+Common patterns that override UI changes:
+- `widget.setStyleSheet()` - Overrides previous stylesheet
+- `widget.setMinimumHeight()` - Can be reset elsewhere
+- `layout.setContentsMargins()` - Can be reset in update methods
+- `widget.parent().setStyleSheet()` - Parent styles affect children
+
+**Always search for these patterns** affecting your component.
+
+### 4. Test Your Understanding
+Before implementing, answer:
+1. Where is this component created?
+2. What methods update/refresh it?
+3. Are there theme switching methods that affect it?
+4. Could anything recreate or override this component?
+
+**If you can't answer all 4, search more thoroughly.**
+
+### 5. Document What You Find
+When you find multiple locations, **explicitly state them** in your response:
+```
+I found this component is modified in 3 places:
+1. _create_foo() at line 500 - initial creation
+2. _update_all_component_styles() at line 3200 - theme updates
+3. _refresh_display() at line 1800 - refreshes on data change
+
+I will update ALL THREE locations.
+```
+
 ## Common Pitfalls
 
 1. **Don't import from root-level compatibility shims in new code** - Use package imports (`from config.config_manager import ConfigManager`)
@@ -389,3 +501,7 @@ stats = service.scan_all_directories(
 4. **Don't assume JSON responses are clean** - Always use the robust parsing from `ollama_service.py` patterns
 
 5. **Remember file placement rules** - Tests go in `/tests`, not root. Source code goes in `/src`, not root.
+
+6. **NEVER make UI changes in only one location** - Always search for and update ALL locations where the component is created, styled, or modified (especially theme update methods)
+
+7. **Always search for override patterns** - Methods like `_update_all_component_styles()`, `_apply_theme()`, `_refresh_*()` commonly override initial settings

@@ -113,3 +113,55 @@ class BundleRepository:
             (status, user_action, bundle_id),
         )
         self.conn.commit()
+
+    def update_metadata(
+        self,
+        bundle_id: int,
+        company: str | None = None,
+        document_type: str | None = None,
+        document_date: str | None = None,
+        bundle_name: str | None = None,
+    ) -> None:
+        """
+        Update bundle metadata fields.
+
+        Args:
+            bundle_id: Bundle ID
+            company: Updated company name
+            document_type: Updated document type
+            document_date: Updated document date
+            bundle_name: Updated bundle name
+        """
+        updates = []
+        params = []
+
+        if company is not None:
+            updates.append("company = ?")
+            params.append(company)
+
+        if document_type is not None:
+            updates.append("document_type = ?")
+            params.append(document_type)
+
+        if document_date is not None:
+            updates.append("document_date = ?")
+            params.append(document_date)
+
+        if bundle_name is not None:
+            updates.append("bundle_name = ?")
+            params.append(bundle_name)
+
+        if not updates:
+            return
+
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(bundle_id)
+
+        query = f"""
+            UPDATE document_bundles
+            SET {", ".join(updates)}
+            WHERE id = ?
+        """
+
+        self.conn.execute(query, tuple(params))
+        self.conn.commit()

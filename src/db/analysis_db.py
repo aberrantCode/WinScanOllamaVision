@@ -144,6 +144,16 @@ class AnalysisDB:
         """Update bundle status after user action."""
         self._bundles.update_status(bundle_id, status, user_action)
 
+    def update_bundle_metadata(self, bundle_id: int, metadata: dict[str, Any]) -> None:
+        """Update bundle metadata fields."""
+        self._bundles.update_metadata(
+            bundle_id,
+            company=metadata.get("company"),
+            document_type=metadata.get("document_type"),
+            document_date=metadata.get("document_date"),
+            bundle_name=metadata.get("bundle_name"),
+        )
+
     # ==================== Rotation Methods ====================
 
     def save_rotation_preference(

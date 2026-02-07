@@ -1715,32 +1715,11 @@ class ConvertImagesWindow(QMainWindow):
 
         # ===== STEP HEADER =====
         step_header_layout = QHBoxLayout()
-        self.step_title_label = QLabel("Document Stitching")
+        self.step_title_label = QLabel("Create Documents from Pages")
         self.step_title_label.setStyleSheet("font-size: 18pt; font-weight: bold; color: #2563EB;")
         step_header_layout.addWidget(self.step_title_label)
 
         step_header_layout.addSpacing(15)
-
-        # Auto-approval toggle button (play/pause icon)
-        self.auto_approval_toggle = QPushButton()
-        self._update_auto_approval_toggle_icon()  # Set initial icon based on current setting
-        self.auto_approval_toggle.setStyleSheet(
-            "QPushButton { "
-            "background-color: transparent; "
-            "border: none; "
-            "padding: 5px; "
-            "font-size: 14pt; "
-            "}"
-            "QPushButton:hover { "
-            "background-color: #f0f0f0; "
-            "border-radius: 3px; "
-            "}"
-        )
-        self.auto_approval_toggle.setFixedSize(32, 32)
-        self.auto_approval_toggle.clicked.connect(self._on_toggle_auto_approval)
-        step_header_layout.addWidget(self.auto_approval_toggle)
-
-        step_header_layout.addSpacing(10)
 
         # Header back button (icon only, subtle)
         self.header_back_button = QPushButton()
@@ -1767,7 +1746,7 @@ class ConvertImagesWindow(QMainWindow):
 
         step_header_layout.addStretch(1)
 
-        self.step_indicator_label = QLabel("Step 1 of 5")
+        self.step_indicator_label = QLabel("Loading...")
         self.step_indicator_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #666;")
         step_header_layout.addWidget(self.step_indicator_label)
 
@@ -5592,7 +5571,7 @@ Files being sent to Ollama:
         QTimer.singleShot(500, self._load_and_show_bundle_suggestions)
 
     def _load_and_show_bundle_suggestions(self):
-        """Generate and display bundle suggestions (Step 0)"""
+        """Generate and display bundle suggestions using guided workflow"""
         try:
             # Generate bundle suggestions using BundlingService
             print(
@@ -5601,23 +5580,38 @@ Files being sent to Ollama:
             bundles = self.bundling_service.generate_bundle_recommendations(self.all_files)
 
             if bundles and len(bundles) > 0:
-                # Show bundle suggestions view
-                if (
-                    not hasattr(self, "bundle_suggestions_view")
-                    or self.bundle_suggestions_view is None
-                ):
-                    print("[Bundle Suggestions] ERROR: bundle_suggestions_view not initialized!")
-                    self._setup_step1_ui()
-                    self._show_manual_view()
-                    self._load_next_page_for_stitching()
-                    return
-
-                print(f"[Bundle Suggestions] Showing bundle view with {len(bundles)} suggestions")
-                self._show_bundle_view()
-                self.bundle_suggestions_view.set_bundles(bundles)
-                self.status_label.setText(
-                    f"Found {len(bundles)} bundle suggestion(s). Review and accept/modify/reject each."
+                print(
+                    f"[Bundle Suggestions] Launching guided workflow with {len(bundles)} suggestions"
                 )
+
+                # Convert bundles to guided workflow format
+                workflow_bundles = self._prepare_bundles_for_workflow(bundles)
+
+                # Show GuidedBundleWorkflow instead of BundleSuggestionsView
+                from ui.guided_bundle_workflow import GuidedBundleWorkflow
+
+                self.bundle_workflow = GuidedBundleWorkflow(
+                    bundles=workflow_bundles,
+                    start_index=0,
+                    prototype_mode=False,
+                    analysis_db=self.analysis_db,
+                    metadata_db=self.metadata_db,
+                    config_manager=self.config_manager,
+                    parent=self,
+                )
+
+                # Connect signals
+                self.bundle_workflow.bundle_accepted.connect(self._on_bundle_accepted_from_workflow)
+                self.bundle_workflow.bundle_rejected.connect(self._on_bundle_rejected_from_workflow)
+                self.bundle_workflow.workflow_completed.connect(self._on_workflow_completed)
+
+                # Hide current window, show workflow
+                self.hide()
+                self.bundle_workflow.exec()
+
+                # After workflow completes, close this window and return to main
+                self.close()
+
             else:
                 # No bundles found, skip to manual workflow
                 print("[Bundle Suggestions] No bundles generated, skipping to manual workflow")
@@ -5639,6 +5633,76 @@ Files being sent to Ollama:
             )
             self._on_skip_to_manual_workflow()
 
+    def _prepare_bundles_for_workflow(self, bundles):
+        """Convert bundle suggestions to guided workflow format."""
+        workflow_bundles = []
+        for bundle in bundles:
+            # Get analyses for each file in bundle
+            analyses = bundle.get("analyses", [])
+
+            # Format analyses for workflow
+            formatted_analyses = []
+            for analysis in analyses:
+                formatted_analyses.append(
+                    {
+                        "document_type": analysis.get("document_type"),
+                        "company": analysis.get("company"),
+                        "document_date": analysis.get("document_date"),
+                        "page_number": analysis.get("page_number"),
+                        "total_pages": analysis.get("total_pages"),
+                        "rotation_needed": analysis.get("rotation_needed", "none"),
+                        "confidence_score": analysis.get("confidence_score", 0.0),
+                        "tax_related": analysis.get("tax_related", False),
+                        "analysis_id": analysis.get("id"),
+                        "provider": analysis.get("provider_name", "Ollama"),
+                        "model": analysis.get("model_name", "qwen2.5-vl"),
+                        "processing_time": f"{analysis.get('processing_time_ms', 0)}ms",
+                        "analysis_date": analysis.get("created_at", ""),
+                    }
+                )
+
+            workflow_bundles.append(
+                {
+                    "bundle_id": bundle.get("id", f"bundle_{len(workflow_bundles)}"),
+                    "company": bundle.get("company", ""),
+                    "document_type": bundle.get("document_type", ""),
+                    "document_date": bundle.get("document_date", ""),
+                    "confidence_score": bundle.get("confidence_score", 0.0),
+                    "file_paths": bundle.get("file_paths", []),
+                    "analyses": formatted_analyses,
+                }
+            )
+
+        return workflow_bundles
+
+    def _on_bundle_accepted_from_workflow(self, bundle):
+        """Handle bundle acceptance from guided workflow."""
+        print(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
+        # The workflow already handled PDF conversion and database updates
+        # Just track it in completed groups
+        file_paths = bundle.get("file_paths", [])
+        if file_paths:
+            self.completed_groups.append(file_paths)
+            group_key = f"group_{len(self.completed_groups)}"
+            self.extracted_metadata[group_key] = {
+                "company": bundle.get("company"),
+                "title": bundle.get("document_type"),
+                "date": bundle.get("document_date"),
+            }
+
+    def _on_bundle_rejected_from_workflow(self, bundle):
+        """Handle bundle rejection from guided workflow."""
+        bundle_id = bundle.get("bundle_id")
+        if bundle_id:
+            # Already marked as rejected in database by workflow
+            print(f"Bundle rejected from workflow: {bundle_id}")
+
+    def _on_workflow_completed(self, stats):
+        """Handle workflow completion."""
+        # Workflow already showed completion summary, just close this window
+        # Note: Don't close here - will be closed after exec() returns
+        pass
+
     # ===== PHASE 7: Bundle Suggestion Handlers =====
 
     def _on_bundle_accepted(self, bundle_data):
@@ -5648,6 +5712,12 @@ Files being sent to Ollama:
         )
         file_paths = bundle_data.get("file_paths", [])
         if file_paths:
+            # Save acceptance to database
+            bundle_id = bundle_data.get("id")
+            if bundle_id:
+                self.bundling_service.accept_bundle(bundle_id)
+
+            # Add to completed groups
             self.completed_groups.append(file_paths)
             group_key = f"group_{len(self.completed_groups)}"
             self.extracted_metadata[group_key] = {
@@ -5655,91 +5725,155 @@ Files being sent to Ollama:
                 "title": bundle_data.get("document_type"),
                 "date": bundle_data.get("document_date"),
             }
-            show_information(
-                self,
-                "Bundle Accepted",
-                f"Accepted {len(file_paths)} page(s) for '{bundle_data.get('document_type')}'.\n\n"
-                "Regenerating suggestions for remaining pages...",
+
+            # Check if regeneration is enabled
+            should_regenerate = (
+                hasattr(self, "bundle_suggestions_view")
+                and self.bundle_suggestions_view is not None
+                and self.bundle_suggestions_view.should_regenerate_on_accept()
             )
 
-            # Regenerate bundle suggestions for remaining pages
-            bundled_files = set()
-            for group in self.completed_groups:
-                bundled_files.update(group)
-            remaining_files = [f for f in self.all_files if f not in bundled_files]
+            if should_regenerate:
+                show_information(
+                    self,
+                    "Bundle Accepted",
+                    f"Accepted {len(file_paths)} page(s) for '{bundle_data.get('document_type')}'.\n\n"
+                    "Regenerating suggestions for remaining pages...",
+                )
 
-            if remaining_files:
-                # Regenerate suggestions for remaining files
-                bundles = self.bundling_service.generate_bundle_recommendations(remaining_files)
-                if bundles and len(bundles) > 0:
-                    if (
-                        hasattr(self, "bundle_suggestions_view")
-                        and self.bundle_suggestions_view is not None
-                    ):
+                # Show loading state while regenerating
+                self.bundle_suggestions_view.show_loading()
+                self.step_indicator_label.setText("Loading...")
+
+                # Regenerate bundle suggestions for remaining pages
+                bundled_files = set()
+                for group in self.completed_groups:
+                    bundled_files.update(group)
+                remaining_files = [f for f in self.all_files if f not in bundled_files]
+
+                if remaining_files:
+                    # Regenerate suggestions for remaining files
+                    bundles = self.bundling_service.generate_bundle_recommendations(remaining_files)
+                    if bundles and len(bundles) > 0:
                         self.bundle_suggestions_view.set_bundles(bundles)
+
                         self.status_label.setText(
                             f"Updated: {len(bundles)} suggestion(s) for {len(remaining_files)} remaining page(s)."
                         )
+                    else:
+                        # No more bundles, ask if user wants to process manually
+                        self._check_remaining_pages_after_bundles()
                 else:
-                    # No more bundles, ask if user wants to process manually
+                    # All files bundled
                     self._check_remaining_pages_after_bundles()
             else:
-                # All files bundled
-                self._check_remaining_pages_after_bundles()
+                # Regeneration disabled - just remove the accepted bundle card
+                bundle_id = bundle_data.get("id")
+                if bundle_id:
+                    self._remove_bundle_card(bundle_id)
+
+                # Update the count label in the bundle view
+                bundle_count = self.bundle_suggestions_view.get_bundle_count()
+                if bundle_count > 0:
+                    total_pages = sum(
+                        len(card.bundle_data.get("file_paths", []))
+                        for card in self.bundle_suggestions_view.bundle_cards
+                    )
+                    self.bundle_suggestions_view.bundle_count_label.setText(
+                        f"{bundle_count} Bundles containing {total_pages} pages"
+                    )
+                    self.status_label.setText(
+                        f"Bundle accepted. {bundle_count} suggestion(s) remaining."
+                    )
+                else:
+                    # No more bundles
+                    self._check_remaining_pages_after_bundles()
 
     def _on_bundle_modified(self, bundle_data):
-        """Handle bundle modification - load into manual stitching workflow"""
+        """Handle bundle modification - launch bundle review window"""
         print(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
-        file_paths = bundle_data.get("file_paths", [])
-        if not file_paths:
+
+        bundle_id = bundle_data.get("id")
+        if not bundle_id:
+            show_warning(self, "Error", "Bundle ID not found. Cannot open review window.")
             return
 
-        # Store the suggested metadata for this bundle
-        self.extracted_metadata["suggestion"] = {
-            "company": bundle_data.get("company"),
-            "title": bundle_data.get("document_type"),
-            "date": bundle_data.get("document_date"),
-        }
+        # Import bundle review window
+        from ui.bundle_review_window_v2 import BundleReviewWindow
 
-        # Pre-populate current_group with the bundle pages
-        self.current_group = list(file_paths)
-
-        # Show notification
-        show_information(
-            self,
-            "Modify Bundle",
-            f"Loading {len(file_paths)} page(s) into manual stitching view.\n\n"
-            "You can add/remove pages, then approve the bundle when ready.",
+        # Create review window with database connections
+        review_window = BundleReviewWindow(
+            bundle_data=bundle_data,
+            prototype_mode=False,  # PRODUCTION MODE
+            analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
+            config_manager=self.config_manager,
+            parent=self,
         )
 
-        # Ensure step 1 UI is initialized (if coming from bundle view)
-        if not hasattr(self, "page_states"):
-            self._setup_step1_ui()
+        # Connect signals
+        review_window.bundle_confirmed.connect(self._on_bundle_review_confirmed)
+        review_window.bundle_rejected.connect(self._on_bundle_review_rejected)
 
-        # Transition to manual stitching view
-        self._show_manual_view()
+        # Show as modal dialog
+        review_window.exec()
 
-        # Add thumbnails for pre-loaded bundle pages
-        for file_path in file_paths:
-            self._add_thumbnail(file_path, "included")
-            self.page_states[file_path] = "included"
+    def _on_bundle_review_confirmed(self, result_data):
+        """Handle bundle review confirmation."""
+        bundle_id = result_data.get("bundle_id")
+        file_paths = result_data.get("file_paths", [])
 
-        # Update metadata display with bundle info
-        if hasattr(self, "metadata_display") and file_paths:
-            self.metadata_display.set_bundle_files(self.current_group)
-            self.metadata_display.set_current_file(file_paths[0])
+        print(f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages")
 
-        # Load first page in the bundle for preview
-        if file_paths:
-            self.current_page_path = file_paths[0]
-            self._display_page_in_large_preview(file_paths[0])
+        # Remove this bundle from display
+        self._remove_bundle_card(bundle_id)
 
-        # Set file index to start after these files
-        self.current_file_index = 0  # Reset to allow adding more pages
+        # Refresh bundle suggestions
+        remaining_bundles = self.analysis_db.get_bundle_suggestions(status_filter="suggested")
 
-        self.status_label.setText(
-            f"Modifying bundle with {len(file_paths)} page(s). Add/remove pages as needed, then approve."
-        )
+        if remaining_bundles:
+            self.bundle_suggestions_view.set_bundles(remaining_bundles)
+            self.status_label.setText(
+                f"Bundle saved. {len(remaining_bundles)} suggestion(s) remaining."
+            )
+        else:
+            # No more bundles, check for remaining pages
+            self._check_remaining_pages_after_bundles()
+
+    def _on_bundle_review_rejected(self, bundle_data):
+        """Handle bundle review rejection."""
+        bundle_id = bundle_data.get("bundle_id")
+
+        print(f"[Bundle Review] Rejected bundle {bundle_id}")
+
+        # Mark bundle as rejected in database
+        from services.bundling_service import BundlingService
+
+        bundling_service = BundlingService(self.analysis_db)
+        bundling_service.reject_bundle(bundle_id)
+
+        # Remove from display
+        self._remove_bundle_card(bundle_id)
+
+        # Refresh
+        remaining_bundles = self.analysis_db.get_bundle_suggestions(status_filter="suggested")
+
+        if remaining_bundles:
+            self.bundle_suggestions_view.set_bundles(remaining_bundles)
+            self.status_label.setText(
+                f"Bundle rejected. {len(remaining_bundles)} suggestion(s) remaining."
+            )
+        else:
+            self._check_remaining_pages_after_bundles()
+
+    def _remove_bundle_card(self, bundle_id):
+        """Remove a specific bundle card from the view."""
+        # Find and remove the card matching this bundle_id
+        for card in self.bundle_suggestions_view.bundle_cards[:]:
+            if card.bundle_data.get("id") == bundle_id:
+                card.deleteLater()
+                self.bundle_suggestions_view.bundle_cards.remove(card)
+                break
 
     def _on_bundle_rejected(self, bundle_data):
         """Handle bundle rejection - pages remain in pool for manual processing"""
@@ -5908,8 +6042,10 @@ Files being sent to Ollama:
 
         # Update step indicator
         self.current_step = WorkflowStep.BUNDLE_SUGGESTIONS
-        self.step_title_label.setText("AI Bundle Suggestions")
-        self.step_indicator_label.setText("Step 0 of 5")
+        self.step_title_label.setText("Create Documents from Pages")
+
+        # Initial placeholder text (will be updated after bundles are set)
+        self.step_indicator_label.setText("Loading...")
 
     def _show_manual_view(self):
         """Show three-column manual stitching view and hide bundle suggestions"""
@@ -6167,11 +6303,267 @@ class StartupWindow(QWidget):
         convert_pdfs_window.exec()
 
     def show_processing_window(self):
-        if not self.processing_window or not self.processing_window.isVisible():
-            self.processing_window = ConvertImagesWindow()
-            self.processing_window.processing_finished.connect(self.on_processing_finished)
+        """Launch guided bundle workflow directly (bypasses old ConvertImagesWindow)."""
+        # Hide startup window
         self.hide()
-        self.processing_window.show()
+
+        # Run analysis and launch workflow directly
+        self._run_analysis_and_launch_workflow()
+
+    def _run_analysis_and_launch_workflow(self):
+        """Launch workflow immediately with cached results, analyze new files in workflow."""
+        from PyQt6.QtWidgets import QMessageBox
+        from services.bundling_service import BundlingService
+        from db.analysis_db import AnalysisDB
+        from db.metadata_db import MetadataDB
+        from config.config_manager import ConfigManager
+
+        # Initialize services
+        config_manager = ConfigManager()
+        analysis_db = AnalysisDB()
+        metadata_db = MetadataDB()
+        bundling_service = BundlingService(analysis_db)
+
+        try:
+            # Get CACHED analyzed files immediately (no waiting!)
+            analyses = analysis_db.get_analyzed_pages()
+            all_files = [a["file_path"] for a in analyses]
+
+            # Generate bundles from cached data
+            bundles = []
+            if all_files:
+                bundles = bundling_service.generate_bundle_recommendations(all_files)
+
+            # Show appropriate message based on what we found
+            if not bundles:
+                response = QMessageBox.question(
+                    self,
+                    "No Cached Bundles",
+                    "No cached analysis found. Would you like to:\n\n"
+                    "• Run analysis first (may take a while)\n"
+                    "• Skip and analyze manually later\n\n"
+                    "Choose 'Yes' to run analysis now.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+
+                if response == QMessageBox.StandardButton.Yes:
+                    # User wants to analyze first
+                    self._run_full_analysis_then_launch()
+                    return
+                else:
+                    # User wants to skip
+                    self.show()
+                    return
+
+            # Launch guided workflow IMMEDIATELY with cached bundles
+            from ui.guided_bundle_workflow import GuidedBundleWorkflow
+
+            # Prepare bundles for workflow
+            workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
+
+            # Create and show workflow
+            workflow = GuidedBundleWorkflow(
+                bundles=workflow_bundles,
+                start_index=0,
+                prototype_mode=False,
+                analysis_db=analysis_db,
+                metadata_db=metadata_db,
+                config_manager=config_manager,
+                parent=None,  # No parent - standalone
+            )
+
+            # Connect completion signal
+            workflow.workflow_completed.connect(
+                lambda stats: self._on_standalone_workflow_completed(stats)
+            )
+
+            # Show workflow IMMEDIATELY - user can start reviewing right away!
+            result = workflow.exec()
+
+            # Show startup window again
+            self.show()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Workflow Failed", f"Failed to launch workflow:\n\n{str(e)}")
+            self.show()
+
+        finally:
+            # Clean up
+            analysis_db.close()
+            metadata_db.close()
+
+    def _run_full_analysis_then_launch(self):
+        """Run full analysis with progress dialog, then launch workflow."""
+        from PyQt6.QtWidgets import QProgressDialog, QMessageBox
+        from PyQt6.QtCore import QApplication
+        from services.analysis_service import AnalysisService
+        from services.bundling_service import BundlingService
+        from db.analysis_db import AnalysisDB
+        from db.metadata_db import MetadataDB
+        from config.config_manager import ConfigManager
+
+        # Initialize services
+        config_manager = ConfigManager()
+        analysis_db = AnalysisDB()
+        metadata_db = MetadataDB()
+        analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
+        bundling_service = BundlingService(analysis_db)
+
+        # Show progress dialog during analysis
+        progress = QProgressDialog("Analyzing documents...", "Cancel", 0, 100, self)
+        progress.setWindowTitle("Document Analysis")
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        # Progress callback
+        def update_progress(status_text, current, total):
+            if progress.wasCanceled():
+                return
+            percent = int((current / total) * 100) if total > 0 else 0
+            progress.setValue(percent)
+            progress.setLabelText(f"{status_text}\n\n{current} of {total} files")
+            QApplication.processEvents()
+
+        # Abort check
+        def check_abort():
+            return progress.wasCanceled()
+
+        try:
+            # Run analysis
+            progress.setLabelText("Scanning directories for images...")
+            QApplication.processEvents()
+
+            stats = analysis_service.scan_all_directories(
+                progress_callback=update_progress, incremental=True, abort_check=check_abort
+            )
+
+            if progress.wasCanceled():
+                progress.close()
+                self.show()
+                return
+
+            # Get all analyzed files
+            progress.setLabelText("Generating bundle suggestions...")
+            progress.setValue(90)
+            QApplication.processEvents()
+
+            analyses = analysis_db.get_analyzed_pages()
+            all_files = [a["file_path"] for a in analyses]
+
+            if not all_files:
+                progress.close()
+                QMessageBox.information(
+                    self,
+                    "No Files Found",
+                    "No analyzed images found. Please check your source directories.",
+                )
+                self.show()
+                return
+
+            # Generate bundles
+            bundles = bundling_service.generate_bundle_recommendations(all_files)
+
+            progress.setValue(100)
+            progress.close()
+
+            if not bundles:
+                QMessageBox.information(
+                    self,
+                    "No Bundles Found",
+                    "No bundle suggestions could be generated from the analyzed files.",
+                )
+                self.show()
+                return
+
+            # Launch guided workflow
+            from ui.guided_bundle_workflow import GuidedBundleWorkflow
+
+            # Prepare bundles for workflow
+            workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
+
+            # Create and show workflow
+            workflow = GuidedBundleWorkflow(
+                bundles=workflow_bundles,
+                start_index=0,
+                prototype_mode=False,
+                analysis_db=analysis_db,
+                metadata_db=metadata_db,
+                config_manager=config_manager,
+                parent=None,
+            )
+
+            # Connect completion signal
+            workflow.workflow_completed.connect(
+                lambda stats: self._on_standalone_workflow_completed(stats)
+            )
+
+            # Show workflow
+            result = workflow.exec()
+
+            # Show startup window again
+            self.show()
+
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(
+                self, "Analysis Failed", f"Failed to analyze documents:\n\n{str(e)}"
+            )
+            self.show()
+
+        finally:
+            # Clean up
+            analysis_db.close()
+            metadata_db.close()
+
+    def _prepare_workflow_bundles(self, bundles, analysis_db):
+        """Prepare bundles for guided workflow."""
+        workflow_bundles = []
+        for bundle in bundles:
+            analyses = bundle.get("analyses", [])
+
+            formatted_analyses = []
+            for analysis in analyses:
+                formatted_analyses.append(
+                    {
+                        "document_type": analysis.get("document_type"),
+                        "company": analysis.get("company"),
+                        "document_date": analysis.get("document_date"),
+                        "page_number": analysis.get("page_number"),
+                        "total_pages": analysis.get("total_pages"),
+                        "rotation_needed": analysis.get("rotation_needed", "none"),
+                        "confidence_score": analysis.get("confidence_score", 0.0),
+                        "tax_related": analysis.get("tax_related", False),
+                    }
+                )
+
+            workflow_bundles.append(
+                {
+                    "bundle_id": bundle.get("id"),
+                    "company": bundle.get("company", ""),
+                    "document_type": bundle.get("document_type", ""),
+                    "document_date": bundle.get("document_date", ""),
+                    "confidence_score": bundle.get("confidence_score", 0.0),
+                    "file_paths": bundle.get("file_paths", []),
+                    "analyses": formatted_analyses,
+                }
+            )
+
+        return workflow_bundles
+
+    def _on_standalone_workflow_completed(self, stats):
+        """Handle workflow completion from standalone mode."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        QMessageBox.information(
+            self,
+            "Processing Complete",
+            f"Document processing completed!\n\n"
+            f"Accepted: {stats.get('accepted', 0)}\n"
+            f"Rejected: {stats.get('rejected', 0)}\n"
+            f"Skipped: {stats.get('skipped', 0)}",
+        )
 
     def show_settings_window(self):
         settings_window = EnhancedSettingsWindow(self)
