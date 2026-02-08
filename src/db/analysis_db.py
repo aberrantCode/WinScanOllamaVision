@@ -172,7 +172,8 @@ class AnalysisDB:
 
     def get_rotation_preference(self, file_path: str) -> dict[str, Any] | None:
         """Get rotation preference for a file."""
-        assert self.connection.connection is not None
+        if self.connection.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
         cursor.execute("SELECT * FROM rotation_preferences WHERE file_path = ?", (file_path,))
         row = cursor.fetchone()
@@ -218,7 +219,8 @@ class AnalysisDB:
 
     def get_extended_statistics(self) -> dict[str, Any]:
         """Get extended analysis statistics."""
-        assert self.connection.connection is not None
+        if self.connection.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
 
         # Total analyzed pages
@@ -275,7 +277,8 @@ class AnalysisDB:
 
     def get_analysis_statistics(self) -> dict[str, Any]:
         """Get comprehensive analysis statistics."""
-        assert self.connection.connection is not None
+        if self.connection.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
 
         # Total analyses
@@ -302,7 +305,8 @@ class AnalysisDB:
 
     def get_document_type_breakdown(self) -> dict[str, int]:
         """Get count of documents by type."""
-        assert self.connection.connection is not None
+        if self.connection.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT document_type, COUNT(*) as count

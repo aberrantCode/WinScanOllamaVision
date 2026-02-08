@@ -23,7 +23,8 @@ def create_all_tables(conn: DatabaseConnection) -> None:
 
 def _create_metadata_tables(conn: DatabaseConnection) -> None:
     """Create metadata-related tables."""
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
     # Schema version tracking
@@ -102,7 +103,8 @@ def _create_metadata_tables(conn: DatabaseConnection) -> None:
 
 def _create_analysis_tables(conn: DatabaseConnection) -> None:
     """Create analysis-related tables."""
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
     # Analysis results - comprehensive page-level metadata
@@ -280,7 +282,8 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
 
 def _create_indices(conn: DatabaseConnection) -> None:
     """Create database indices for performance."""
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
     # Metadata indices
@@ -355,7 +358,8 @@ def _create_indices(conn: DatabaseConnection) -> None:
 
 def _run_migrations(conn: DatabaseConnection) -> None:
     """Run database migrations to latest version."""
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
     # Check current version
@@ -478,7 +482,8 @@ def get_schema_version(conn: DatabaseConnection) -> int:
     Returns:
         Schema version number
     """
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
     cursor.execute("SELECT MAX(version) FROM schema_version")
     result = cursor.fetchone()

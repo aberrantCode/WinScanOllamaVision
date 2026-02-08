@@ -55,7 +55,8 @@ class DatabaseConnection:
         Returns:
             Cursor with results
         """
-        assert self.connection is not None
+        if self.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         return cursor
@@ -68,7 +69,8 @@ class DatabaseConnection:
             query: SQL query string
             params_list: List of parameter tuples
         """
-        assert self.connection is not None
+        if self.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.cursor()
         cursor.executemany(query, params_list)
 
