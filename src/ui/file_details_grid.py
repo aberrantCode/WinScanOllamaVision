@@ -1037,19 +1037,47 @@ class FileDetailsDialog(QDialog):
         add_row("File Hash", self.file_data.get("file_hash", "N/A"))
         return widget
 
+    # Strict whitelist of column names allowed in dynamic SQL queries.
+    # These must match actual columns in the analysis_results table schema.
+    ALLOWED_QUERY_COLUMNS = frozenset(
+        {
+            "file_path",
+            "document_type",
+            "company",
+            "document_date",
+            "page_number",
+            "total_pages",
+            "confidence_score",
+            "provider_name",
+            "model_name",
+        }
+    )
+
     def _get_distinct_values(self, field_name):
-        """Get distinct values for a field from database."""
+        """Get distinct values for a field from database.
+
+        Args:
+            field_name: Column name to query. Must be in ALLOWED_QUERY_COLUMNS.
+
+        Returns:
+            List of distinct non-empty values for the field.
+
+        Raises:
+            ValueError: If field_name is not in the allowed whitelist.
+        """
         if not self.analysis_db:
             return []
 
-        # Whitelist of allowed field names to prevent SQL injection
-        allowed_fields = {"document_type", "company", "document_date", "page_number", "total_pages"}
-        if field_name not in allowed_fields:
+        # Validate against strict whitelist to prevent SQL injection
+        if field_name not in self.ALLOWED_QUERY_COLUMNS:
+            from services.logging_service import get_logger
+
+            get_logger().warning(f"Rejected disallowed column name in query: {field_name!r}")
             return []
 
         try:
-            # Safe to use in query now that field_name is whitelisted
-            query = f"SELECT DISTINCT {field_name} FROM analyses WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
+            # Safe to interpolate now that field_name is validated against whitelist
+            query = f"SELECT DISTINCT {field_name} FROM analysis_results WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
             result = self.analysis_db.connection.execute(query).fetchall()
             return [row[0] for row in result if row[0]]
         except Exception as e:

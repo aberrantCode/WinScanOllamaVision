@@ -26,7 +26,7 @@ class CommandBuilder:
             prompt: Prompt text
 
         Returns:
-            Command string (for subprocess with shell=True)
+            Command string (to be parsed via shlex.split for safe subprocess execution)
         """
         # Check if template is valid
         if not template:
@@ -46,8 +46,6 @@ class CommandBuilder:
         prompt_escaped = prompt.replace('"', '\\"')
         command_str = command_str.replace(CommandBuilder.VAR_PROMPT, f'"{prompt_escaped}"')
 
-        # Split into command parts for subprocess
-        # Use shell=True on Windows, so return as single string
         return command_str
 
     @staticmethod

@@ -188,10 +188,11 @@ class TestClaudeCliProvider:
 
         # Assert
         assert result is True
-        # Should call 'claude --version'
+        # Should call ['claude', '--version'] as argument list (no shell=True)
         mock_run.assert_called_once()
         call_args = mock_run.call_args
-        assert "claude --version" in str(call_args)
+        assert call_args[0][0] == ["claude", "--version"]
+        assert call_args[1]["shell"] is False
 
     @patch("llm_providers.claude_cli_provider.subprocess.run")
     def test_test_connection_returns_true_on_success(self, mock_run, provider):

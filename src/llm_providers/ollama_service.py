@@ -15,14 +15,10 @@ class OllamaService:
             base_url: Ollama server URL
             timeout: Request timeout in seconds (default: 300 seconds / 5 minutes)
         """
-        # The SDK uses OLLAMA_HOST environment variable or default localhost:11434
-        # We can set the host if needed
-        if base_url != "http://localhost:11434":
-            os.environ["OLLAMA_HOST"] = base_url
         self.base_url = base_url
         self.timeout = timeout
 
-        # Create client with timeout configuration
+        # Create client with explicit host parameter - no global env mutation needed
         self.client = ollama.Client(host=base_url, timeout=httpx.Timeout(timeout))
 
     def list_models(self) -> list[dict[str, Any]]:
