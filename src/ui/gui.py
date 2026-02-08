@@ -5799,7 +5799,7 @@ Files being sent to Ollama:
             return
 
         # Import bundle review window
-        from ui.bundle_review_window_v2 import BundleReviewWindow
+        from ui.verify_documents_window import BundleReviewWindow
 
         # Create review window with database connections
         review_window = BundleReviewWindow(
@@ -6313,10 +6313,11 @@ class StartupWindow(QWidget):
     def _run_analysis_and_launch_workflow(self):
         """Launch workflow immediately with cached results, analyze new files in workflow."""
         from PyQt6.QtWidgets import QMessageBox
-        from services.bundling_service import BundlingService
+
+        from config.config_manager import ConfigManager
         from db.analysis_db import AnalysisDB
         from db.metadata_db import MetadataDB
-        from config.config_manager import ConfigManager
+        from services.bundling_service import BundlingService
 
         # Initialize services
         config_manager = ConfigManager()
@@ -6379,7 +6380,7 @@ class StartupWindow(QWidget):
             )
 
             # Show workflow IMMEDIATELY - user can start reviewing right away!
-            result = workflow.exec()
+            workflow.exec()
 
             # Show startup window again
             self.show()
@@ -6395,13 +6396,14 @@ class StartupWindow(QWidget):
 
     def _run_full_analysis_then_launch(self):
         """Run full analysis with progress dialog, then launch workflow."""
-        from PyQt6.QtWidgets import QProgressDialog, QMessageBox
         from PyQt6.QtCore import QApplication
-        from services.analysis_service import AnalysisService
-        from services.bundling_service import BundlingService
+        from PyQt6.QtWidgets import QMessageBox, QProgressDialog
+
+        from config.config_manager import ConfigManager
         from db.analysis_db import AnalysisDB
         from db.metadata_db import MetadataDB
-        from config.config_manager import ConfigManager
+        from services.analysis_service import AnalysisService
+        from services.bundling_service import BundlingService
 
         # Initialize services
         config_manager = ConfigManager()
@@ -6435,7 +6437,7 @@ class StartupWindow(QWidget):
             progress.setLabelText("Scanning directories for images...")
             QApplication.processEvents()
 
-            stats = analysis_service.scan_all_directories(
+            analysis_service.scan_all_directories(
                 progress_callback=update_progress, incremental=True, abort_check=check_abort
             )
 
@@ -6500,7 +6502,7 @@ class StartupWindow(QWidget):
             )
 
             # Show workflow
-            result = workflow.exec()
+            workflow.exec()
 
             # Show startup window again
             self.show()

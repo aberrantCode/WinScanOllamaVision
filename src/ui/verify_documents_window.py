@@ -21,6 +21,7 @@ from pathlib import Path
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap, QTransform
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -48,6 +49,79 @@ from ui.styles import (
     get_secondary_button_style,
     get_success_button_style,
 )
+
+
+class PannableImageLabel(QLabel):
+    """QLabel with click & drag panning support for zoomed images."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_panning = False
+        self.pan_start_pos = QPoint()
+        self.pan_offset = QPoint(0, 0)
+        self.zoom_level = 100
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def set_zoom_level(self, zoom: int):
+        """Update zoom level to control cursor and panning behavior."""
+        self.zoom_level = zoom
+        self._update_cursor()
+
+    def reset_pan(self):
+        """Reset pan offset to center."""
+        self.pan_offset = QPoint(0, 0)
+
+    def get_pan_offset(self) -> QPoint:
+        """Get current pan offset."""
+        return QPoint(self.pan_offset)
+
+    def set_pan_offset(self, offset: QPoint):
+        """Set pan offset."""
+        self.pan_offset = offset
+
+    def mousePressEvent(self, event):  # noqa: N802
+        """Start panning on left click when zoomed."""
+        if self.zoom_level > 100 and event.button() == Qt.MouseButton.LeftButton:
+            self.is_panning = True
+            self.pan_start_pos = event.pos()
+            self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        """Update pan offset while dragging."""
+        if self.is_panning:
+            delta = event.pos() - self.pan_start_pos
+            self.pan_offset += delta
+            self.pan_start_pos = event.pos()
+            # Notify parent to update the image display
+            if self.parent():
+                parent = self.parent()
+                while parent:
+                    if hasattr(parent, "_update_large_preview"):
+                        parent._update_large_preview()
+                        break
+                    parent = parent.parent()
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        """End panning."""
+        if self.is_panning and event.button() == Qt.MouseButton.LeftButton:
+            self.is_panning = False
+            self._update_cursor()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def _update_cursor(self):
+        """Update cursor based on zoom level."""
+        if self.zoom_level > 100:
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
 
 class UnassignedPagesDialog(QDialog):
@@ -205,9 +279,7 @@ class UnassignedPagesDialog(QDialog):
                 assigned_paths.update(file_paths)
 
         # Filter to unassigned pages
-        unassigned_pages = [
-            page for page in all_pages if page["file_path"] not in assigned_paths
-        ]
+        unassigned_pages = [page for page in all_pages if page["file_path"] not in assigned_paths]
 
         if not unassigned_pages:
             # Show message and close
@@ -242,7 +314,10 @@ class UnassignedPagesDialog(QDialog):
                 full_pixmap = QPixmap(file_path)
                 if not full_pixmap.isNull():
                     pixmap = full_pixmap.scaled(
-                        80, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                        80,
+                        100,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
                     )
                 else:
                     # Placeholder for invalid image
@@ -341,10 +416,7 @@ class BundleReviewWindow(QDialog):
         self.current_page_index = 0
         self.zoom_level = 100
         self.rotation_angle = 0
-        self.pan_offset = QPoint(0, 0)
         self.layout_mode = "flow"
-        self.is_panning = False
-        self.pan_start_pos = QPoint(0, 0)
 
         # Tracking
         self.confirmed_pages = set()
@@ -576,9 +648,9 @@ class BundleReviewWindow(QDialog):
         image_layout.setContentsMargins(0, 0, 0, 0)
         image_layout.setSpacing(0)
 
-        # Preview label
-        self.large_preview = QLabel()
-        self.large_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Preview label with panning support
+        self.large_preview = PannableImageLabel()
+        self.large_preview.set_zoom_level(self.zoom_level)  # Initialize zoom level
         self.large_preview.setStyleSheet(
             f"background: white; border: 2px solid {Colors.GRAY_200}; border-radius: 4px;"
         )
@@ -822,11 +894,12 @@ class BundleReviewWindow(QDialog):
             # Prevent toggling when in edit mode
             if self.edit_mode:
                 from PyQt6.QtWidgets import QMessageBox
+
                 QMessageBox.information(
                     self,
                     "Unsaved Changes",
                     "Please save or cancel your metadata changes before switching pages.",
-                    QMessageBox.StandardButton.Ok
+                    QMessageBox.StandardButton.Ok,
                 )
                 return
 
@@ -1087,7 +1160,7 @@ class BundleReviewWindow(QDialog):
         # Confidence score (as percentage)
         confidence = analysis.get("confidence_score", 0.0)
         # Handle both decimal (0.95) and percentage (95) formats
-        if isinstance(confidence, (int, float)):
+        if isinstance(confidence, int | float):
             if confidence <= 1.0:
                 # Decimal format (0.95) - convert to percentage
                 confidence_display = f"{confidence * 100:.2f}"
@@ -1150,7 +1223,7 @@ class BundleReviewWindow(QDialog):
         layout.addLayout(button_layout)
 
         # Connect all metadata inputs to enter edit mode on change
-        for field_name, input_widget in self.metadata_inputs.items():
+        for _field_name, input_widget in self.metadata_inputs.items():
             if isinstance(input_widget, QCheckBox):
                 input_widget.stateChanged.connect(lambda: self._enter_edit_mode())
             elif isinstance(input_widget, QComboBox):
@@ -1215,16 +1288,78 @@ class BundleReviewWindow(QDialog):
 
     def _on_save_metadata_changes(self):
         """Save metadata changes and exit edit mode."""
-        # Changes are already in the input widgets, just exit edit mode
+        # Check if bundle-level fields (company, document_type, document_date) changed
+        bundle_level_fields = ["company", "document_type", "document_date"]
+        changed_bundle_fields = {}
+
+        for field_name in bundle_level_fields:
+            if field_name in self.metadata_inputs and field_name in self.original_metadata:
+                input_widget = self.metadata_inputs[field_name]
+                original_value = self.original_metadata[field_name]
+
+                # Get current value based on widget type
+                if isinstance(input_widget, QCheckBox):
+                    current_value = input_widget.isChecked()
+                elif isinstance(input_widget, QComboBox):
+                    current_value = input_widget.currentText()
+                elif isinstance(input_widget, QLineEdit):
+                    current_value = input_widget.text()
+                else:
+                    current_value = original_value
+
+                # Check if changed
+                if current_value != original_value:
+                    changed_bundle_fields[field_name] = current_value
+
+        # If bundle-level fields changed, prompt user to apply to all pages
+        apply_to_all = False
+        if changed_bundle_fields:
+            changed_field_names = ", ".join(changed_bundle_fields.keys())
+            reply = QMessageBox.question(
+                self,
+                "Apply Changes to All Pages?",
+                f"The following fields have changed: {changed_field_names}\n\n"
+                f"Would you like to apply these changes to all pages in this bundle?\n\n"
+                f"Note: Other field changes will only apply to the current page.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            apply_to_all = reply == QMessageBox.StandardButton.Yes
+
+        # Apply changes to all pages if user confirmed
+        if apply_to_all and changed_bundle_fields:
+            # Update bundle-level data
+            for field_name, new_value in changed_bundle_fields.items():
+                self.bundle_data[field_name] = new_value
+
+            # Update all analyses in the bundle (immutable pattern)
+            new_analyses = []
+            for analysis in self.bundle_data.get("analyses", []):
+                new_analysis = dict(analysis)  # Create a copy
+                for field_name, new_value in changed_bundle_fields.items():
+                    new_analysis[field_name] = new_value
+                new_analyses.append(new_analysis)
+
+            self.bundle_data["analyses"] = new_analyses
+
+            # Show confirmation
+            QMessageBox.information(
+                self,
+                "Changes Applied",
+                f"The fields ({', '.join(changed_bundle_fields.keys())}) have been applied to all pages.\n\n"
+                f"Click 'Save Bundle' at the bottom to persist all changes to the database.",
+            )
+        else:
+            # Just save to current page (changes are already in the input widgets)
+            QMessageBox.information(
+                self,
+                "Changes Saved",
+                "Metadata changes saved for this page.\n\n"
+                "Click 'Save Bundle' at the bottom to persist all changes to the database.",
+            )
+
+        # Exit edit mode
         self._exit_edit_mode()
-
-        # Optionally show a confirmation
-        from PyQt6.QtWidgets import QMessageBox
-
-        QMessageBox.information(
-            self, "Changes Saved", "Metadata changes saved for this page.\n\n"
-            "Click 'Save Bundle' at the bottom to persist all changes to the database."
-        )
 
     def _on_cancel_metadata_changes(self):
         """Cancel metadata changes and revert to original values."""
@@ -1368,7 +1503,9 @@ class BundleReviewWindow(QDialog):
         add_row("File Size", file_size_str)
         add_row("Modified", modified_str)
         # Truncate hash for display
-        hash_display = file_hash[:16] + "..." if len(file_hash) > 16 and file_hash != "N/A" else file_hash
+        hash_display = (
+            file_hash[:16] + "..." if len(file_hash) > 16 and file_hash != "N/A" else file_hash
+        )
         add_row("File Hash", hash_display)
 
         return widget
@@ -1546,6 +1683,7 @@ class BundleReviewWindow(QDialog):
     def _load_bundle_from_database(self, bundle_id: int) -> dict:
         """Load bundle data from database."""
         import json
+
         from services.logging_service import get_logger
 
         logger = get_logger()
@@ -1575,18 +1713,21 @@ class BundleReviewWindow(QDialog):
             else:
                 # Create placeholder if analysis missing
                 logger.warning(f"No analysis found for {file_path}")
-                analyses.append({
-                    "file_path": file_path,
-                    "company": bundle.get("company"),
-                    "document_type": bundle.get("document_type"),
-                    "page_number": None,
-                    "total_pages": None,
-                    "confidence_score": 0.0,
-                    "error": "Analysis not found",
-                })
+                analyses.append(
+                    {
+                        "file_path": file_path,
+                        "company": bundle.get("company"),
+                        "document_type": bundle.get("document_type"),
+                        "page_number": None,
+                        "total_pages": None,
+                        "confidence_score": 0.0,
+                        "error": "Analysis not found",
+                    }
+                )
 
             # Check if file exists
             import os
+
             if not os.path.exists(file_path):
                 missing_files.append(file_path)
 
@@ -1721,8 +1862,8 @@ class BundleReviewWindow(QDialog):
         if index < len(self.bundle_data.get("analyses", [])):
             analysis = self.bundle_data["analyses"][index]
             # Format confidence score correctly
-            conf = analysis.get('confidence_score', 0)
-            if isinstance(conf, (int, float)):
+            conf = analysis.get("confidence_score", 0)
+            if isinstance(conf, int | float):
                 conf_pct = int(conf * 100) if conf <= 1.0 else int(conf)
             else:
                 conf_pct = 0
@@ -1744,7 +1885,7 @@ class BundleReviewWindow(QDialog):
 
         self.current_page_index = index
         self.rotation_angle = 0
-        self.pan_offset = QPoint(0, 0)
+        self.large_preview.reset_pan()
 
         self._update_large_preview()
         self._refresh_accordion_content()
@@ -1800,7 +1941,6 @@ class BundleReviewWindow(QDialog):
         transformed = self._apply_transform(base_pixmap)
 
         self.large_preview.setPixmap(transformed)
-        self._update_cursor()
 
     def _create_placeholder_pixmap(self, text: str) -> QPixmap:
         """Create placeholder pixmap with error text."""
@@ -1834,11 +1974,12 @@ class BundleReviewWindow(QDialog):
             )
 
         # Pan
-        if self.zoom_level > 100 and not self.pan_offset.isNull():
+        pan_offset = self.large_preview.get_pan_offset()
+        if self.zoom_level > 100 and not pan_offset.isNull():
             canvas = QPixmap(pixmap.size())
             canvas.fill(Qt.GlobalColor.white)
             painter = QPainter(canvas)
-            painter.drawPixmap(self.pan_offset, pixmap)
+            painter.drawPixmap(pan_offset, pixmap)
             painter.end()
             pixmap = canvas
 
@@ -1884,13 +2025,6 @@ class BundleReviewWindow(QDialog):
                             content_frame.layout().replaceWidget(old_widget, new_widget)
                             old_widget.deleteLater()
 
-    def _update_cursor(self):
-        """Update cursor."""
-        if self.zoom_level > 100:
-            self.large_preview.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-        else:
-            self.large_preview.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
-
     # Event handlers
     def _on_thumbnail_clicked(self, index: int):
         """Handle thumbnail click."""
@@ -1920,6 +2054,7 @@ class BundleReviewWindow(QDialog):
     def _on_zoom_percent_changed(self, value: int):
         """Handle zoom change."""
         self.zoom_level = value
+        self.large_preview.set_zoom_level(value)
         self._update_large_preview()
 
     def _on_rotate_ccw(self):
@@ -1941,6 +2076,7 @@ class BundleReviewWindow(QDialog):
 
         # Get original image size
         import os
+
         if not self.prototype_mode and os.path.exists(file_path):
             pixmap = QPixmap(file_path)
         else:
@@ -1973,6 +2109,7 @@ class BundleReviewWindow(QDialog):
 
         # Get original image size
         import os
+
         if not self.prototype_mode and os.path.exists(file_path):
             pixmap = QPixmap(file_path)
         else:
@@ -2005,6 +2142,7 @@ class BundleReviewWindow(QDialog):
 
         # Get original image size
         import os
+
         if not self.prototype_mode and os.path.exists(file_path):
             pixmap = QPixmap(file_path)
         else:
@@ -2032,36 +2170,15 @@ class BundleReviewWindow(QDialog):
 
         self.zoom_spinner.setValue(zoom_percent)
 
-    def showEvent(self, event):
+    def showEvent(self, event):  # noqa: N802
         """Handle window show event - set default zoom to fit width on first show."""
         super().showEvent(event)
         if self._first_show:
             self._first_show = False
             # Use QTimer to ensure window geometry is finalized
             from PyQt6.QtCore import QTimer
+
             QTimer.singleShot(100, self._on_fit_width)
-
-    def mousePressEvent(self, event):
-        """Start pan."""
-        if self.zoom_level > 100 and event.button() == Qt.MouseButton.LeftButton:
-            if self.large_preview.underMouse():
-                self.is_panning = True
-                self.pan_start_pos = event.pos()
-                self.large_preview.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
-
-    def mouseMoveEvent(self, event):
-        """Update pan."""
-        if self.is_panning:
-            delta = event.pos() - self.pan_start_pos
-            self.pan_offset += delta
-            self.pan_start_pos = event.pos()
-            self._update_large_preview()
-
-    def mouseReleaseEvent(self, event):
-        """End pan."""
-        if self.is_panning:
-            self.is_panning = False
-            self._update_cursor()
 
     def _on_confirm_page(self):
         """Confirm page."""

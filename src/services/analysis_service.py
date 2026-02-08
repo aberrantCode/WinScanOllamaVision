@@ -360,6 +360,57 @@ class AnalysisService:
                 results.append(analysis)
         return results
 
+    def re_analyze_file(
+        self, file_path: str, progress_callback: Callable[[str], None] | None = None
+    ) -> dict[str, Any]:
+        """
+        Re-analyze a file, resetting its status before analysis.
+
+        This is the centralized method for re-analysis that both UI components should use.
+        It ensures consistent behavior by:
+        1. Resetting the file's status to "Pending"
+        2. Clearing any error messages
+        3. Forcing a fresh analysis (bypassing cache)
+        4. Emitting progress updates (if callback provided)
+
+        Args:
+            file_path: Path to the file to re-analyze
+            progress_callback: Optional callback(status_text) for progress updates
+
+        Returns:
+            Dictionary with analysis result (same format as _analyze_single_page)
+        """
+        filename = os.path.basename(file_path)
+
+        try:
+            # Emit progress: Resetting status
+            if progress_callback:
+                progress_callback(f"Resetting status for {filename}...")
+
+            # Reset status to pending before re-analysis
+            self.analysis_db.update_analysis_status(file_path, "Pending")
+            self._log(f"[RE-ANALYSIS] Reset status to Pending for: {filename}")
+        except Exception as e:
+            self._log(f"[RE-ANALYSIS WARNING] Could not reset status: {e}")
+            # Continue anyway - status reset is not critical
+
+        # Emit progress: Starting analysis
+        if progress_callback:
+            progress_callback(f"Analyzing {filename} with LLM...")
+
+        # Perform fresh analysis (incremental=False forces re-analysis)
+        self._log(f"[RE-ANALYSIS] Starting fresh analysis for: {filename}")
+        result = self._analyze_single_page(file_path, incremental=False)
+
+        # Emit progress: Completed
+        if progress_callback:
+            if result.get("success"):
+                progress_callback(f"Analysis complete for {filename}")
+            else:
+                progress_callback(f"Analysis failed for {filename}")
+
+        return result
+
 
 # Example usage
 if __name__ == "__main__":

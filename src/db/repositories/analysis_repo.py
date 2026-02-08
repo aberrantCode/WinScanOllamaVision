@@ -86,6 +86,15 @@ class AnalysisRepository:
             file_path: Path to file
             metadata: Dictionary with updated metadata fields
         """
+        # Debug logging for rotation persistence tracking
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+        logger.debug(
+            f"[DB UPDATE] update_metadata called for {file_path} - "
+            f"rotation_needed in metadata dict: '{metadata.get('rotation_needed')}'"
+        )
+
         # Build UPDATE query dynamically for provided fields
         update_fields = []
         values = []
@@ -102,9 +111,14 @@ class AnalysisRepository:
         }
 
         for meta_key, db_column in field_mapping.items():
-            if meta_key in metadata and metadata[meta_key]:
+            if meta_key in metadata:
+                # Update field even if value is empty/None (allows clearing fields)
                 update_fields.append(f"{db_column} = ?")
                 values.append(metadata[meta_key])
+                if meta_key == "rotation_needed":
+                    logger.debug(
+                        f"[DB UPDATE] Adding rotation_needed to update: '{metadata[meta_key]}'"
+                    )
 
         if update_fields:
             # Update extracted_metadata JSON field as well
@@ -123,6 +137,7 @@ class AnalysisRepository:
 
             self.conn.execute(query, tuple(values))
             self.conn.commit()
+            logger.debug("[DB UPDATE] Database update committed successfully")
 
     def get_by_path(self, file_path: str) -> dict[str, Any] | None:
         """

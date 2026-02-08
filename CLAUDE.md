@@ -43,6 +43,8 @@ See `.claude/skills/session-management/SKILL.md` for details.
 
 ## Development Rigor (MANDATORY)
 
+**Core Principle:** Code is not complete until it passes type checking and relevant tests.
+
 ### Before Making ANY Code Change
 
 1. **Search exhaustively** - Don't assume you found all references
@@ -91,6 +93,56 @@ See `.claude/skills/session-management/SKILL.md` for details.
 - **Never make assumptions** - Verify by searching the codebase
 - **Explicit is better than implicit** - State what you found and what you're changing
 - **One fix, all locations** - Update everything consistently
+
+### Validation Before Committing (MANDATORY)
+
+**ALWAYS run these checks before considering any change complete:**
+
+1. **Type Check Modified Files**
+   ```bash
+   # Run mypy on the specific file you changed
+   mypy src/ui/file_details_grid.py --ignore-missing-imports
+
+   # Or check entire module
+   mypy src/ui/ --ignore-missing-imports
+   ```
+   **Why:** Catches method name errors, type mismatches, and attribute errors at development time.
+
+2. **Run Relevant Unit Tests**
+   ```bash
+   # If you modified a service
+   python run_tests.py tests/services/test_analysis_service.py -v
+
+   # If you modified a database class
+   python run_tests.py tests/db/test_analysis_db.py -v
+
+   # If you modified UI code, run integration tests
+   python run_tests.py tests/integration/ -k "save_metadata"
+   ```
+   **Why:** Verifies your changes work and don't break existing functionality.
+
+3. **Create Tests for New Functionality**
+   ```bash
+   # If you add a new method, add a test for it
+   # Location: tests/<module>/test_<class_name>.py
+   ```
+   **Why:** Prevents future regressions and documents expected behavior.
+
+**Example Workflow:**
+```bash
+# 1. Make code change to src/ui/file_details_grid.py
+# 2. Run type checker
+mypy src/ui/file_details_grid.py --ignore-missing-imports
+
+# 3. Run related tests
+python run_tests.py tests/ui/ -v
+python run_tests.py tests/integration/ -k "file_details"
+
+# 4. If tests don't exist, create them first (TDD)
+# 5. Only then commit the changes
+```
+
+**If you skip these checks, you WILL introduce bugs that could have been caught immediately.**
 
 ## File Organization (CRITICAL)
 
@@ -159,18 +211,35 @@ pre-commit install --hook-type commit-msg
 ```
 
 ### Code Quality
+
+**Pre-Commit Checklist (MANDATORY):**
 ```powershell
-# Lint code
+# 1. Type check modified files
+mypy src/path/to/modified_file.py --ignore-missing-imports
+
+# 2. Run relevant tests
+python run_tests.py tests/path/to/relevant_tests.py -v
+
+# 3. Lint code
 ruff check src/
 
-# Format code
+# 4. Format code
 ruff format src/
 
-# Type check
-mypy src/ --ignore-missing-imports
-
-# Run all pre-commit hooks manually
+# 5. Run all pre-commit hooks manually (if needed)
 pre-commit run --all-files
+```
+
+**Quick Commands:**
+```powershell
+# Type check specific file
+mypy src/ui/file_details_grid.py --ignore-missing-imports
+
+# Run tests for specific module
+python run_tests.py tests/ui/ -v
+
+# Run tests matching pattern
+python run_tests.py tests/ -k "metadata" -v
 ```
 
 ## Architecture Overview
@@ -344,6 +413,25 @@ tests/
 3. **Test both success and failure cases** - Including malformed JSON responses
 4. **Follow existing patterns** - See `tests/llm_providers/test_claude_cli_provider.py`
 5. **Minimum 80% coverage required** - Use `python run_tests.py tests/` to check
+6. **UI code needs tests too** - Even though `src/ui/` shows as "excluded" from coverage, business logic in UI components (like `_save_metadata()`, `_on_metadata_saved()`) MUST have unit tests with mocked dependencies
+
+**Testing UI Business Logic:**
+```python
+# tests/ui/test_file_details_dialog.py
+def test_save_metadata_calls_database(mocker):
+    """Test that save metadata calls the correct database methods."""
+    mock_analysis_db = mocker.Mock()
+    mock_analysis_db.get_analysis.return_value = {"rotation_needed": "90_cw"}
+
+    dialog = FileDetailsDialog(
+        file_data={"full_path": "/test.png"},
+        analysis_db=mock_analysis_db
+    )
+    dialog._save_metadata()
+
+    # Verify correct method was called (prevents typos like get_analysis_for_file)
+    mock_analysis_db.get_analysis.assert_called_once_with("/test.png")
+```
 
 ### Test Coverage Status
 
@@ -353,7 +441,9 @@ tests/
 | `src/db/` | 98%+ | ✓ Complete |
 | `src/llm_providers/` | 98%+ | ✓ Complete |
 | `src/services/` | 0% | ⚠ Needs tests |
-| `src/ui/` | Excluded | GUI (separate testing) |
+| `src/ui/` | Excluded | ⚠ Business logic needs unit tests (mock Qt dependencies) |
+
+**Note:** "Excluded" for UI doesn't mean "no tests needed" - it means coverage tracking is disabled for Qt rendering code. Business logic in UI classes (save handlers, data transformations, validation) MUST still have unit tests with mocked Qt dependencies.
 
 ## Development Workflow
 

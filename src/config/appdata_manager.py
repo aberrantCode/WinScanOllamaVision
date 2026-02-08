@@ -168,19 +168,28 @@ class AppDataManager:
                 template_version = self._get_template_schema_version()
 
                 if current_version < template_version:
-                    print(
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.info(
                         f"Database schema update available: v{current_version} -> v{template_version}"
                     )
-                    print("Creating backup before migration...")
+                    logger.info("Creating backup before migration...")
                     self._backup_database()
-                    print("MetadataDB/AnalysisDB will handle automatic migration")
+                    logger.info("MetadataDB/AnalysisDB will handle automatic migration")
                 else:
-                    print(f"Database schema up to date (v{current_version})")
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.info(f"Database schema up to date (v{current_version})")
 
             conn.close()
 
         except sqlite3.Error as e:
-            print(f"Error checking database version: {e}")
+            from services.logging_service import get_logger
+
+            logger = get_logger()
+            logger.error(f"Error checking database version: {e}")
 
     def _get_template_schema_version(self) -> int:
         """Get schema version from template database"""

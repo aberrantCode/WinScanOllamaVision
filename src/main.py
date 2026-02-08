@@ -1,3 +1,4 @@
+import argparse
 import logging
 import sys
 
@@ -13,9 +14,33 @@ from ui.gui import StartupWindow
 from ui.theme_manager import ThemeManager
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="WinScanLLM - Document scanning and analysis with LLM integration"
+    )
+    parser.add_argument(
+        "--console",
+        action="store_true",
+        help="Enable console logging output (shows all log messages in terminal)",
+    )
+    parser.add_argument(
+        "--console-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="DEBUG",
+        help="Set console logging level (default: DEBUG). Only used when --console is enabled.",
+    )
+    args = parser.parse_args()
+
+    # Convert console level string to logging constant
+    console_level = getattr(logging, args.console_level) if args.console else None
+
     # Initialize logging service
     logging_service = LoggingService()
-    logging_service.initialize(log_level=logging.INFO)
+    logging_service.initialize(
+        log_level=logging.DEBUG,  # File logging always at DEBUG
+        console_output=args.console,  # Enable console if --console flag provided
+        console_level=console_level,  # Use specified console level
+    )
     logger = get_logger()
 
     try:

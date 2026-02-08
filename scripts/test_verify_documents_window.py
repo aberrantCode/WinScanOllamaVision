@@ -11,9 +11,9 @@ from pathlib import Path
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from ui.bundle_review_window_v2 import BundleReviewWindow
+from ui.verify_documents_window import BundleReviewWindow  # noqa: E402
 
 
 def main():

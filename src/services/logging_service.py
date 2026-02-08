@@ -35,15 +35,19 @@ class LoggingService:
         log_level: int = logging.INFO,
         max_bytes: int = 10 * 1024 * 1024,  # 10 MB
         backup_count: int = 5,
+        console_output: bool = False,
+        console_level: int | None = None,
     ):
         """
         Initialize the logging configuration.
 
         Args:
             app_name: Application name for log directory
-            log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+            log_level: Logging level for file handler (DEBUG, INFO, WARNING, ERROR, CRITICAL)
             max_bytes: Maximum size of log file before rotation
             backup_count: Number of backup log files to keep
+            console_output: If True, enables console logging at console_level
+            console_level: Logging level for console handler (defaults to log_level if not specified)
         """
         if self.logger is not None:
             return  # Already initialized
@@ -73,20 +77,26 @@ class LoggingService:
         )
         file_handler.setLevel(log_level)
 
-        # Create console handler for debugging
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.WARNING)  # Only warnings and above to console
-
         # Create formatter
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
 
-        # Add handlers to logger
+        # Add file handler
         self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
+
+        # Optionally add console handler
+        if console_output:
+            console_handler = logging.StreamHandler()
+            # Use console_level if specified, otherwise use file log_level
+            handler_level = console_level if console_level is not None else log_level
+            console_handler.setLevel(handler_level)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+            self.logger.info(
+                f"Console logging enabled at level {logging.getLevelName(handler_level)}"
+            )
 
         # Log initialization
         self.logger.info(f"Logging service initialized. Log file: {self.log_file_path}")

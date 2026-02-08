@@ -21,6 +21,7 @@ from PyQt6.QtGui import (
     QTransform,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -250,12 +251,12 @@ class GuidedBundleWorkflow(QDialog):
 
         self.header_widget = QWidget()
         self.header_widget.setStyleSheet(f"background: {theme['bg_secondary']};")
-        self.header_widget.setFixedHeight(80)
+        self.header_widget.setFixedHeight(70)  # Reduced from 80
         header = self.header_widget
 
         layout = QVBoxLayout(header)
-        layout.setContentsMargins(20, 12, 20, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(20, 8, 20, 8)  # Reduced top/bottom from 12 to 8
+        layout.setSpacing(6)  # Reduced from 8 to 6
 
         # Top row - Title and stats
         top_row = QHBoxLayout()
@@ -468,6 +469,16 @@ class GuidedBundleWorkflow(QDialog):
         preview_area.setStyleSheet(f"background: {theme['preview_bg']};")
         preview_layout = QVBoxLayout(preview_area)
         preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(8)
+
+        # Page label - centered above image
+        page_label = QLabel(f"Page {self.current_page_index + 1}")
+        page_label.setStyleSheet(
+            f"color: {theme['text_secondary']}; font-size: 13px; font-weight: 500;"
+        )
+        page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_layout.addWidget(page_label)
+        self.page_label = page_label
 
         self.large_preview = QLabel()
         self.large_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -507,8 +518,8 @@ class GuidedBundleWorkflow(QDialog):
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
-                min-width: 28px;
-                max-width: 28px;
+                min-width: 36px;
+                max-width: 36px;
                 min-height: 28px;
                 max-height: 28px;
             }}
@@ -723,6 +734,10 @@ class GuidedBundleWorkflow(QDialog):
 
     def _create_metadata_form(self) -> QWidget:
         """Create editable metadata form with all fields."""
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
         theme = self._get_theme_colors()
 
         form = QWidget()
@@ -733,11 +748,24 @@ class GuidedBundleWorkflow(QDialog):
 
         bundle = self.bundles[self.current_bundle_index]
 
-        # Get current page analysis
-        if self.current_page_index < len(bundle.get("analyses", [])):
-            analysis = bundle["analyses"][self.current_page_index]
+        # Get current page analysis - use page_order to map visual index to actual index
+        actual_index = (
+            self.page_order[self.current_page_index]
+            if self.current_page_index < len(self.page_order)
+            else self.current_page_index
+        )
+        logger.info(
+            f"[CREATE METADATA FORM] current_page_index={self.current_page_index}, actual_index={actual_index}"
+        )
+
+        if actual_index < len(bundle.get("analyses", [])):
+            analysis = bundle["analyses"][actual_index]
+            logger.info(
+                f"[CREATE METADATA FORM] Found analysis: document_type={analysis.get('document_type')}, company={analysis.get('company')}"
+            )
         else:
             analysis = {}
+            logger.info(f"[CREATE METADATA FORM] No analysis found for actual_index {actual_index}")
 
         def add_field(label, field_name, value, widget_type="text", options=None, placeholder=""):
             field_container = QWidget()
@@ -1037,6 +1065,7 @@ class GuidedBundleWorkflow(QDialog):
 
         # Title
         title_label = QLabel(title)
+        title_label.setObjectName("accordion_title")  # Set object name for easy lookup
         title_label.setStyleSheet(
             f"color: {theme['text_primary']}; font-weight: 600; font-size: 12px; border: none;"
         )
@@ -1132,8 +1161,14 @@ class GuidedBundleWorkflow(QDialog):
 
         bundle = self.bundles[self.current_bundle_index]
 
-        if self.current_page_index < len(bundle.get("file_paths", [])):
-            file_path = bundle["file_paths"][self.current_page_index]
+        # Use page_order to map visual index to actual index
+        actual_index = (
+            self.page_order[self.current_page_index]
+            if self.current_page_index < len(self.page_order)
+            else self.current_page_index
+        )
+        if actual_index < len(bundle.get("file_paths", [])):
+            file_path = bundle["file_paths"][actual_index]
             filename = Path(file_path).name
             full_path = str(file_path)
 
@@ -1224,8 +1259,14 @@ class GuidedBundleWorkflow(QDialog):
 
         bundle = self.bundles[self.current_bundle_index]
 
-        if self.current_page_index < len(bundle.get("analyses", [])):
-            analysis = bundle["analyses"][self.current_page_index]
+        # Use page_order to map visual index to actual index
+        actual_index = (
+            self.page_order[self.current_page_index]
+            if self.current_page_index < len(self.page_order)
+            else self.current_page_index
+        )
+        if actual_index < len(bundle.get("analyses", [])):
+            analysis = bundle["analyses"][actual_index]
         else:
             analysis = {}
 
@@ -1350,15 +1391,6 @@ class GuidedBundleWorkflow(QDialog):
 
         layout.addStretch()
 
-        # Middle - Page actions and zoom/rotate controls
-        page_label = QLabel(f"Page {self.current_page_index + 1}")
-        page_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 12px;")
-        layout.addWidget(page_label)
-        self.page_label = page_label
-
-        # Add spacing
-        layout.addSpacing(20)
-
         # Zoom controls
         btn_style = f"""
             QPushButton {{
@@ -1368,10 +1400,6 @@ class GuidedBundleWorkflow(QDialog):
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
-                min-width: 32px;
-                max-width: 32px;
-                min-height: 32px;
-                max-height: 32px;
             }}
             QPushButton:hover {{
                 background: {theme['button_hover']};
@@ -1385,6 +1413,8 @@ class GuidedBundleWorkflow(QDialog):
 
         zoom_out_btn = QPushButton("−")
         zoom_out_btn.setStyleSheet(btn_style)
+        zoom_out_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
+        zoom_out_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         zoom_out_btn.setToolTip("Zoom Out")
         zoom_out_btn.clicked.connect(self._on_zoom_out)
         layout.addWidget(zoom_out_btn)
@@ -1416,6 +1446,8 @@ class GuidedBundleWorkflow(QDialog):
 
         zoom_in_btn = QPushButton("+")
         zoom_in_btn.setStyleSheet(btn_style)
+        zoom_in_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
+        zoom_in_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         zoom_in_btn.setToolTip("Zoom In")
         zoom_in_btn.clicked.connect(self._on_zoom_in)
         layout.addWidget(zoom_in_btn)
@@ -1423,15 +1455,47 @@ class GuidedBundleWorkflow(QDialog):
         # Separator
         layout.addSpacing(12)
 
+        # Fit buttons
+        fit_width_btn = QPushButton("⬌")
+        fit_width_btn.setStyleSheet(btn_style)
+        fit_width_btn.setFixedSize(40, 32)
+        fit_width_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        fit_width_btn.setToolTip("Fit to Width")
+        fit_width_btn.clicked.connect(self._on_fit_width)
+        layout.addWidget(fit_width_btn)
+
+        fit_height_btn = QPushButton("⬍")
+        fit_height_btn.setStyleSheet(btn_style)
+        fit_height_btn.setFixedSize(40, 32)
+        fit_height_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        fit_height_btn.setToolTip("Fit to Height")
+        fit_height_btn.clicked.connect(self._on_fit_height)
+        layout.addWidget(fit_height_btn)
+
+        fit_window_btn = QPushButton("⛶")
+        fit_window_btn.setStyleSheet(btn_style)
+        fit_window_btn.setFixedSize(40, 32)
+        fit_window_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        fit_window_btn.setToolTip("Fit to Window")
+        fit_window_btn.clicked.connect(self._on_fit_window)
+        layout.addWidget(fit_window_btn)
+
+        # Separator
+        layout.addSpacing(12)
+
         # Rotation controls
         rotate_left_btn = QPushButton("↺")
         rotate_left_btn.setStyleSheet(btn_style)
+        rotate_left_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
+        rotate_left_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         rotate_left_btn.setToolTip("Rotate Counter-Clockwise")
         rotate_left_btn.clicked.connect(self._on_rotate_ccw)
         layout.addWidget(rotate_left_btn)
 
         rotate_right_btn = QPushButton("↻")
         rotate_right_btn.setStyleSheet(btn_style)
+        rotate_right_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
+        rotate_right_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         rotate_right_btn.setToolTip("Rotate Clockwise")
         rotate_right_btn.clicked.connect(self._on_rotate_cw)
         layout.addWidget(rotate_right_btn)
@@ -1580,11 +1644,12 @@ class GuidedBundleWorkflow(QDialog):
         if hasattr(self, "output_filename_input"):
             self._update_output_filename()
 
-        # Apply configured zoom mode instead of always fit_to_width
-        QTimer.singleShot(100, self._apply_default_zoom)
-
         if hasattr(self, "accordion_sections"):  # Only if accordions initialized
             self._refresh_accordion_content()
+
+        # Apply configured zoom mode after UI is fully laid out
+        # Use longer delay to ensure container dimensions are available
+        QTimer.singleShot(300, self._apply_default_zoom)
 
     def _update_header(self):
         """Update header with current bundle info."""
@@ -1715,7 +1780,10 @@ class GuidedBundleWorkflow(QDialog):
         thumbnail.setFixedSize(80, 100)
         thumbnail.drag_started.connect(self._on_drag_started)
         thumbnail.drop_requested.connect(self._on_drop_requested)
-        thumbnail.clicked.connect(lambda: self._on_thumbnail_clicked(visual_index))
+        # Use functools.partial to avoid lambda closure issues
+        from functools import partial
+
+        thumbnail.clicked.connect(partial(self._on_thumbnail_clicked, visual_index))
 
         # Selection border
         if visual_index == self.current_page_index:
@@ -1829,17 +1897,30 @@ class GuidedBundleWorkflow(QDialog):
         """Update metadata form with current bundle data."""
         bundle = self.bundles[self.current_bundle_index]
 
+        # Temporarily disconnect signals to prevent triggering edit mode during programmatic updates
         if "document_type" in self.metadata_inputs:
             widget = self.metadata_inputs["document_type"]
+            if isinstance(widget, QComboBox):
+                widget.currentTextChanged.disconnect(self._enter_edit_mode)
             widget.setCurrentText(bundle.get("document_type", ""))
+            if isinstance(widget, QComboBox):
+                widget.currentTextChanged.connect(self._enter_edit_mode)
 
         if "company" in self.metadata_inputs:
             widget = self.metadata_inputs["company"]
+            if isinstance(widget, QComboBox):
+                widget.currentTextChanged.disconnect(self._enter_edit_mode)
             widget.setCurrentText(bundle.get("company", ""))
+            if isinstance(widget, QComboBox):
+                widget.currentTextChanged.connect(self._enter_edit_mode)
 
         if "document_date" in self.metadata_inputs:
             widget = self.metadata_inputs["document_date"]
+            if isinstance(widget, QLineEdit):
+                widget.textChanged.disconnect(self._enter_edit_mode)
             widget.setText(bundle.get("document_date", ""))
+            if isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._enter_edit_mode)
 
     def _display_current_page(self):
         """Display the current page in large preview."""
@@ -1917,10 +1998,30 @@ class GuidedBundleWorkflow(QDialog):
 
     def _on_thumbnail_clicked(self, visual_index: int):
         """Handle thumbnail click."""
-        self.current_page_index = visual_index
-        self._populate_thumbnails()
-        self._display_current_page()
-        self._refresh_accordion_content()  # Update metadata for new page
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
+        logger.info(
+            f"[THUMBNAIL CLICK] Clicked thumbnail {visual_index}, current_page_index was {self.current_page_index}"
+        )
+        try:
+            self.current_page_index = visual_index
+            logger.info(
+                f"[THUMBNAIL CLICK] Updated current_page_index to {self.current_page_index}"
+            )
+
+            self._populate_thumbnails()
+            logger.info("[THUMBNAIL CLICK] Thumbnails populated")
+
+            self._display_current_page()
+            logger.info("[THUMBNAIL CLICK] Current page displayed")
+
+            logger.info("[THUMBNAIL CLICK] Calling _refresh_accordion_content()")
+            self._refresh_accordion_content()  # Update metadata for new page
+            logger.info("[THUMBNAIL CLICK] Finished _refresh_accordion_content()")
+        except Exception as e:
+            logger.error(f"[THUMBNAIL CLICK] Error handling thumbnail click: {e}", exc_info=True)
 
     def _move_page_up(self, visual_index: int):
         """Move page up in order."""
@@ -2445,14 +2546,20 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             return
 
         # Production implementation (reference from bundle_review_window_v2.py)
-        from llm_providers.provider_factory import ProviderFactory
         from services.analysis_service import AnalysisService
 
         bundle = self.bundles[self.current_bundle_index]
-        if self.current_page_index >= len(bundle.get("file_paths", [])):
+
+        # Use page_order to map visual index to actual index
+        actual_index = (
+            self.page_order[self.current_page_index]
+            if self.current_page_index < len(self.page_order)
+            else self.current_page_index
+        )
+        if actual_index >= len(bundle.get("file_paths", [])):
             return
 
-        file_path = bundle["file_paths"][self.current_page_index]
+        file_path = bundle["file_paths"][actual_index]
 
         # Show progress
         progress = QProgressBar()
@@ -2463,37 +2570,32 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
         progress.show()
 
         try:
-            # Get provider
-            provider = ProviderFactory.create_from_config_manager(self.config_manager)
+            # Create progress callback to update progress bar title
+            def update_progress(status_text: str):
+                progress.setWindowTitle(status_text)
+                QApplication.processEvents()  # Force UI update
 
-            # Get prompt
-            prompt = self.config_manager.get_setting(
-                "Prompts", "document_metadata", AnalysisService.DEFAULT_ANALYSIS_PROMPT
+            # Use centralized re-analysis method (resets status and forces fresh analysis)
+            analysis_service = AnalysisService(
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-            # Analyze
-            result = provider.analyze_images([file_path], prompt, model=None)
+            result = analysis_service.re_analyze_file(file_path, progress_callback=update_progress)
 
             if result["success"]:
-                # Save to database
-                file_hash = self.metadata_db.compute_file_hash(file_path)
-                self.analysis_db.save_analysis(
-                    file_path=file_path,
-                    file_hash=file_hash,
-                    response=result["response"],
-                    metadata=result.get("metadata", {}),
-                    provider_name=result["provider_name"],
-                    model_name=result["model_used"],
-                    processing_time_ms=result["processing_time_ms"],
-                )
+                # Analysis already saved to database by re_analyze_file
+                # Get the fresh analysis from the result
+                fresh_analysis = result.get("analysis")
+                if fresh_analysis:
+                    # Update bundle data with the new analysis metadata
+                    # Use actual_index (already calculated above) to update the correct analysis
+                    bundle["analyses"][actual_index] = fresh_analysis
 
-                # Update bundle data
-                bundle["analyses"][self.current_page_index] = result.get("metadata", {})
+                    # Refresh UI
+                    self._refresh_accordion_content()
 
-                # Refresh UI
-                self._refresh_accordion_content()
-
-                QMessageBox.information(self, "Success", "Page re-analyzed successfully!")
+                    QMessageBox.information(self, "Success", "Page re-analyzed successfully!")
+                else:
+                    QMessageBox.warning(self, "Error", "Re-analysis completed but no data returned")
             else:
                 QMessageBox.warning(
                     self, "Error", f"Re-analysis failed:\n{result.get('error', 'Unknown error')}"
@@ -2580,36 +2682,117 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
 
     def _refresh_accordion_content(self):
         """Refresh accordion sections when page changes."""
-        # Find and update each accordion section
-        for section in self.accordion_sections:
-            if hasattr(section, "accordion_content"):
-                content_frame = section.accordion_content
+        from PyQt6.QtWidgets import QApplication
 
-                # Get title from the section
-                title_label = section.findChild(QLabel)
-                if title_label:
-                    title = title_label.text()
+        from services.logging_service import get_logger
 
-                    # Clear and rebuild content based on section type
-                    layout = content_frame.layout()
-                    if layout:
-                        # Remove old widget
-                        while layout.count():
-                            item = layout.takeAt(0)
-                            if item.widget():
-                                item.widget().deleteLater()
+        logger = get_logger()
 
-                        # Add new widget based on section title
-                        if "Extracted Metadata" in title:
-                            new_widget = self._create_metadata_form()
-                        elif "File Information" in title:
-                            new_widget = self._create_file_info_form()
-                        elif "Analysis Information" in title:
-                            new_widget = self._create_analysis_info_form()
+        try:
+            logger.info(
+                f"[REFRESH ACCORDION] Starting refresh, current_page_index={self.current_page_index}"
+            )
+            logger.info(
+                f"[REFRESH ACCORDION] Number of accordion sections: {len(self.accordion_sections)}"
+            )
+
+            # Find and update each accordion section
+            for idx, section in enumerate(self.accordion_sections):
+                logger.info(f"[REFRESH ACCORDION] Processing section {idx}")
+
+                if hasattr(section, "accordion_content"):
+                    content_scroll = section.accordion_content  # This is a QScrollArea
+                    logger.info(f"[REFRESH ACCORDION] Section {idx} has accordion_content")
+
+                    # Get title from the section - use object name to find the correct label
+                    title_label = section.findChild(QLabel, "accordion_title")
+                    if title_label:
+                        title = title_label.text()
+                        logger.info(f"[REFRESH ACCORDION] Section {idx} title: '{title}'")
+
+                        # Get the widget inside the scroll area (content_container)
+                        content_container = content_scroll.widget()
+                        if content_container:
+                            layout = content_container.layout()
+                            if layout:
+                                items_before = layout.count()
+                                logger.info(
+                                    f"[REFRESH ACCORDION] Section {idx} has layout with {items_before} items BEFORE clearing"
+                                )
+
+                                # Remove old widgets immediately (not deleteLater)
+                                widgets_to_delete = []
+                                spacer_items = []
+                                while layout.count() > 0:
+                                    item = layout.takeAt(0)
+                                    if item.widget():
+                                        widget = item.widget()
+                                        logger.info(
+                                            f"[REFRESH ACCORDION] Removing widget: {widget.__class__.__name__}"
+                                        )
+                                        widget.setParent(None)  # Remove parent immediately
+                                        widget.hide()  # Hide immediately
+                                        widgets_to_delete.append(widget)
+                                    elif item.spacerItem():
+                                        logger.info("[REFRESH ACCORDION] Removing spacer item")
+                                        spacer_items.append(item)
+
+                                # Delete all old widgets
+                                for widget in widgets_to_delete:
+                                    widget.deleteLater()
+
+                                # Force event processing to ensure widgets are deleted before adding new ones
+                                QApplication.processEvents()
+
+                                items_after_clear = layout.count()
+                                logger.info(
+                                    f"[REFRESH ACCORDION] Removed {len(widgets_to_delete)} widgets and {len(spacer_items)} spacers. Layout now has {items_after_clear} items"
+                                )
+
+                                # Add new widget based on section title
+                                if "Extracted Metadata" in title:
+                                    logger.info("[REFRESH ACCORDION] Creating new metadata form")
+                                    new_widget = self._create_metadata_form()
+                                elif "File Information" in title:
+                                    logger.info("[REFRESH ACCORDION] Creating new file info form")
+                                    new_widget = self._create_file_info_form()
+                                elif "Analysis Information" in title:
+                                    logger.info(
+                                        "[REFRESH ACCORDION] Creating new analysis info form"
+                                    )
+                                    new_widget = self._create_analysis_info_form()
+                                else:
+                                    logger.warning(
+                                        f"[REFRESH ACCORDION] Title '{title}' didn't match any section type"
+                                    )
+                                    continue
+
+                                layout.addWidget(new_widget)
+                                layout.addStretch()  # Add stretch like the initial creation does
+                                items_after_add = layout.count()
+                                logger.info(
+                                    f"[REFRESH ACCORDION] Added new widget ({new_widget.__class__.__name__}) and stretch to section {idx}. Layout now has {items_after_add} items"
+                                )
+                            else:
+                                logger.warning(
+                                    f"[REFRESH ACCORDION] Section {idx} content_container has no layout"
+                                )
                         else:
-                            continue
+                            logger.warning(
+                                f"[REFRESH ACCORDION] Section {idx} scroll area has no widget"
+                            )
+                    else:
+                        logger.warning(f"[REFRESH ACCORDION] Section {idx} has no title label")
+                else:
+                    logger.warning(
+                        f"[REFRESH ACCORDION] Section {idx} has no accordion_content attribute"
+                    )
 
-                        layout.addWidget(new_widget)
+            logger.info("[REFRESH ACCORDION] Finished refresh")
+        except Exception as e:
+            logger.error(
+                f"[REFRESH ACCORDION] Error refreshing accordion content: {e}", exc_info=True
+            )
 
     def _toggle_theme(self):
         """Toggle between light and dark mode (not used - theme set from config)."""
@@ -3481,8 +3664,9 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             self.metadata_cancel_btn.setVisible(False)
 
     def showEvent(self, event):  # noqa: N802
-        """Handle first show - fit to width."""
+        """Handle first show - apply configured default zoom."""
         super().showEvent(event)
         if self._first_show:
             self._first_show = False
-            QTimer.singleShot(100, self._on_fit_width)
+            # Apply user's configured default zoom mode instead of hardcoded fit_to_width
+            QTimer.singleShot(200, self._apply_default_zoom)
