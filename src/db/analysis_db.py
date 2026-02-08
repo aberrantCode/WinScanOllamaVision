@@ -23,7 +23,7 @@ from db.schema import create_all_tables
 class AnalysisDB:
     """Manages extended SQLite database for analysis results and bundling."""
 
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize analysis database connection.
 
@@ -80,7 +80,7 @@ class AnalysisDB:
         self._analysis.update_metadata(file_path, metadata)
 
     def get_analyzed_pages(
-        self, directory_filter: str = None, provider_filter: str = None
+        self, directory_filter: str | None = None, provider_filter: str | None = None
     ) -> list[dict[str, Any]]:
         """Get list of analyzed pages with optional filters."""
         return self._analysis.get_all(directory_filter, provider_filter)
@@ -92,8 +92,8 @@ class AnalysisDB:
         provider_name: str,
         provider_type: str,
         config: dict[str, Any],
-        default_model: str = None,
-        available_models: list[str] = None,
+        default_model: str | None = None,
+        available_models: list[str] | None = None,
     ) -> None:
         """Add or update LLM provider configuration."""
         self._providers.add(provider_name, provider_type, config, default_model, available_models)
@@ -128,12 +128,12 @@ class AnalysisDB:
 
     def save_bundle_suggestion(
         self, file_paths: list[str], bundle_metadata: dict[str, Any], confidence_score: float
-    ) -> int:
+    ) -> int | None:
         """Save a document bundle suggestion."""
         return self._bundles.save_suggestion(file_paths, bundle_metadata, confidence_score)
 
     def get_bundle_suggestions(
-        self, status_filter: str = "suggested", min_confidence: float = None
+        self, status_filter: str = "suggested", min_confidence: float | None = None
     ) -> list[dict[str, Any]]:
         """Get bundle suggestions with optional filters."""
         return self._bundles.get_suggestions(status_filter, min_confidence)
@@ -172,6 +172,7 @@ class AnalysisDB:
 
     def get_rotation_preference(self, file_path: str) -> dict[str, Any] | None:
         """Get rotation preference for a file."""
+        assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
         cursor.execute("SELECT * FROM rotation_preferences WHERE file_path = ?", (file_path,))
         row = cursor.fetchone()
@@ -217,6 +218,7 @@ class AnalysisDB:
 
     def get_extended_statistics(self) -> dict[str, Any]:
         """Get extended analysis statistics."""
+        assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
 
         # Total analyzed pages
@@ -273,6 +275,7 @@ class AnalysisDB:
 
     def get_analysis_statistics(self) -> dict[str, Any]:
         """Get comprehensive analysis statistics."""
+        assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
 
         # Total analyses
@@ -299,6 +302,7 @@ class AnalysisDB:
 
     def get_document_type_breakdown(self) -> dict[str, int]:
         """Get count of documents by type."""
+        assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT document_type, COUNT(*) as count

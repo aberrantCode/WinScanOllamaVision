@@ -991,7 +991,7 @@ class FileDetailsDialog(QDialog):
             content_frame.setVisible(True)
             toggle_indicator.setText("▼")
 
-        header.mousePressEvent = lambda e: toggle()  # type: ignore[method-assign]
+        header.mousePressEvent = lambda e: toggle()  # type: ignore[method-assign,assignment]
         section_layout.addWidget(header)
         section_layout.addWidget(content_frame)
 

@@ -25,8 +25,8 @@ class LoggingService:
     def __init__(self):
         """Initialize the logging service (only once)"""
         if not LoggingService._initialized:
-            self.logger = None
-            self.log_file_path = None
+            self.logger: logging.Logger | None = None
+            self.log_file_path: str | None = None
             LoggingService._initialized = True
 
     def initialize(

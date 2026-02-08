@@ -15,7 +15,7 @@ from db.schema import create_all_tables
 class MetadataDB:
     """Manages SQLite database for page metadata caching and archival."""
 
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize metadata database connection.
 
@@ -36,8 +36,8 @@ class MetadataDB:
         self._rotation = RotationRepository(self.connection)
 
         # Field history cache
-        self._companies_cache = None
-        self._titles_cache = None
+        self._companies_cache: list[str] | None = None
+        self._titles_cache: list[str] | None = None
 
     @staticmethod
     def compute_file_hash(file_path: str) -> str:
@@ -60,8 +60,8 @@ class MetadataDB:
         self,
         file_path: str,
         metadata: dict[str, Any],
-        model_used: str = None,
-        processing_time_ms: int = None,
+        model_used: str | None = None,
+        processing_time_ms: int | None = None,
     ) -> None:
         """Save or update metadata for a file."""
         self._metadata.save_metadata(file_path, metadata, model_used, processing_time_ms)
@@ -110,6 +110,7 @@ class MetadataDB:
         if use_cache and self._companies_cache is not None:
             return self._companies_cache
 
+        assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT DISTINCT company
@@ -129,6 +130,7 @@ class MetadataDB:
         if use_cache and self._titles_cache is not None:
             return self._titles_cache
 
+        assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT DISTINCT document_type

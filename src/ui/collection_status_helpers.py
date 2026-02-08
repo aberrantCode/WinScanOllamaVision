@@ -310,8 +310,8 @@ def create_completeness_bar(theme_colors, key: str, label: str) -> QWidget:
     layout.addWidget(bar)
 
     # Store references
-    container.label = text_label
-    container.bar = bar
+    container.label = text_label  # type: ignore[attr-defined]
+    container.bar = bar  # type: ignore[attr-defined]
 
     return container
 
@@ -451,7 +451,7 @@ def create_document_insights_widget_split(theme_colors) -> tuple:
     type_distribution_layout.setContentsMargins(0, 0, 0, 0)
     type_distribution_layout.setSpacing(6)
     layout.addWidget(type_distribution_container)
-    type_distribution_container.layout = type_distribution_layout  # Store reference
+    type_distribution_container.layout = type_distribution_layout  # type: ignore[method-assign,assignment]
 
     return (
         widget,
@@ -490,7 +490,7 @@ def create_company_insights_widget(theme_colors) -> tuple:
     company_distribution_layout.setContentsMargins(0, 0, 0, 0)
     company_distribution_layout.setSpacing(6)
     layout.addWidget(company_distribution_container)
-    company_distribution_container.layout = company_distribution_layout  # Store reference
+    company_distribution_container.layout = company_distribution_layout  # type: ignore[method-assign,assignment]
 
     return (widget, company_distribution_container)
 
@@ -542,7 +542,7 @@ def create_document_insights_widget(theme_colors) -> tuple:
     type_distribution_layout.setContentsMargins(0, 0, 0, 0)
     type_distribution_layout.setSpacing(6)
     layout.addWidget(type_distribution_container)
-    type_distribution_container.layout = type_distribution_layout  # Store reference
+    type_distribution_container.layout = type_distribution_layout  # type: ignore[method-assign,assignment]
 
     # Company distribution
     company_dist_title = QLabel("Top 5 Companies:")
@@ -556,7 +556,7 @@ def create_document_insights_widget(theme_colors) -> tuple:
     company_distribution_layout.setContentsMargins(0, 0, 0, 0)
     company_distribution_layout.setSpacing(6)
     layout.addWidget(company_distribution_container)
-    company_distribution_container.layout = company_distribution_layout  # Store reference
+    company_distribution_container.layout = company_distribution_layout  # type: ignore[method-assign,assignment]
 
     return (
         widget,
@@ -657,7 +657,7 @@ def create_collapsible_section(
         # Update container size hint
         container.updateGeometry()
 
-    header.mousePressEvent = lambda event: toggle_section()
+    header.mousePressEvent = lambda event: toggle_section()  # type: ignore[method-assign,assignment]
     toggle_btn.clicked.connect(toggle_section)
 
     main_layout.addWidget(header)

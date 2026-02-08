@@ -8,7 +8,7 @@ import contextlib
 import json
 import os
 import sqlite3
-from typing import Any
+from typing import Any, cast
 
 
 class DatabaseConnection:
@@ -55,6 +55,7 @@ class DatabaseConnection:
         Returns:
             Cursor with results
         """
+        assert self.connection is not None
         cursor = self.connection.cursor()
         cursor.execute(query, params)
         return cursor
@@ -67,6 +68,7 @@ class DatabaseConnection:
             query: SQL query string
             params_list: List of parameter tuples
         """
+        assert self.connection is not None
         cursor = self.connection.cursor()
         cursor.executemany(query, params_list)
 
@@ -82,7 +84,7 @@ class DatabaseConnection:
             Row object or None
         """
         cursor = self.execute(query, params)
-        return cursor.fetchone()
+        return cast(sqlite3.Row | None, cursor.fetchone())
 
     def fetch_all(self, query: str, params: tuple = ()) -> list[sqlite3.Row]:
         """
@@ -99,7 +101,7 @@ class DatabaseConnection:
         return cursor.fetchall()
 
     def fetch_one_dict(
-        self, query: str, params: tuple = (), json_fields: list[str] = None
+        self, query: str, params: tuple = (), json_fields: list[str] | None = None
     ) -> dict[str, Any] | None:
         """
         Fetch single row as dictionary with optional JSON parsing.
@@ -128,7 +130,7 @@ class DatabaseConnection:
         return result
 
     def fetch_all_dicts(
-        self, query: str, params: tuple = (), json_fields: list[str] = None
+        self, query: str, params: tuple = (), json_fields: list[str] | None = None
     ) -> list[dict[str, Any]]:
         """
         Fetch all rows as dictionaries with optional JSON parsing.

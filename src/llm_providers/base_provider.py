@@ -4,7 +4,7 @@ Defines the interface that all LLM providers must implement.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 
 class BaseLLMProvider(ABC):
@@ -73,7 +73,10 @@ class BaseLLMProvider(ABC):
         Returns:
             Default model name or None
         """
-        return self.config.get("default_model")
+        value = self.config.get("default_model")
+        if value is None:
+            return None
+        return str(value)
 
     def get_timeout(self) -> int:
         """
@@ -82,7 +85,7 @@ class BaseLLMProvider(ABC):
         Returns:
             Timeout in seconds
         """
-        return self.config.get("timeout", 300)
+        return cast(int, self.config.get("timeout", 300))
 
     def validate_config(self) -> tuple[bool, str | None]:
         """

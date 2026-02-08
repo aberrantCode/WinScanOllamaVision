@@ -6,7 +6,7 @@ Uses Google Gemini CLI tool for vision analysis via subprocess.
 import json
 import subprocess
 import time
-from typing import Any
+from typing import Any, cast
 
 from .base_provider import BaseLLMProvider
 from .command_builder import CommandBuilder
@@ -137,7 +137,7 @@ class GeminiCliProvider(BaseLLMProvider):
         Returns:
             List of model names from config
         """
-        return self.available_models
+        return cast(list[str], self.available_models)
 
     def test_connection(self) -> bool:
         """

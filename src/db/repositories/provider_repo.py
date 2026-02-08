@@ -27,8 +27,8 @@ class ProviderRepository:
         provider_name: str,
         provider_type: str,
         config: dict[str, Any],
-        default_model: str = None,
-        available_models: list[str] = None,
+        default_model: str | None = None,
+        available_models: list[str] | None = None,
     ) -> None:
         """
         Add or update LLM provider configuration.

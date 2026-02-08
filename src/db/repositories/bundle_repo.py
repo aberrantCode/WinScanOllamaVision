@@ -27,7 +27,7 @@ class BundleRepository:
         file_paths: list[str],
         bundle_metadata: dict[str, Any],
         confidence_score: float,
-    ) -> int:
+    ) -> int | None:
         """
         Save a document bundle suggestion.
 
@@ -84,7 +84,7 @@ class BundleRepository:
             List of bundle dicts
         """
         query = "SELECT * FROM document_bundles WHERE status = ?"
-        params = [status_filter]
+        params: list[str | float] = [status_filter]
 
         if min_confidence is not None:
             query += " AND confidence_score >= ?"
@@ -132,8 +132,8 @@ class BundleRepository:
             document_date: Updated document date
             bundle_name: Updated bundle name
         """
-        updates = []
-        params = []
+        updates: list[str] = []
+        params: list[str | int] = []
 
         if company is not None:
             updates.append("company = ?")
@@ -188,12 +188,12 @@ class BundleRepository:
             bundle_id: Bundle ID
             pdf_path: Full path to generated PDF
         """
-        cursor = self.conn.execute(
+        self.conn.execute(
             """
             UPDATE document_bundles
             SET pdf_path = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """,
-            (pdf_path, bundle_id)
+            (pdf_path, bundle_id),
         )
         self.conn.commit()

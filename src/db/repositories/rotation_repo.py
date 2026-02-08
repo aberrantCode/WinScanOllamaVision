@@ -4,6 +4,8 @@ Rotation repository for managing image rotation preferences.
 Simplified CRUD operations for rotation tracking across metadata and analysis databases.
 """
 
+from typing import cast
+
 from db.connection import DatabaseConnection
 
 
@@ -74,7 +76,7 @@ class RotationRepository:
         )
 
         if result and result[0] is not None:
-            return result[0]
+            return cast(int, result[0])
 
         return 0
 

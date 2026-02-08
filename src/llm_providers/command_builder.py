@@ -15,7 +15,7 @@ class CommandBuilder:
     VAR_PROMPT = "%PROMPT%"
 
     @staticmethod
-    def build_command(template: str, model: str, image_paths: list[str], prompt: str) -> list[str]:
+    def build_command(template: str, model: str, image_paths: list[str], prompt: str) -> str:
         """
         Build command from template with variable substitution.
 
@@ -26,7 +26,7 @@ class CommandBuilder:
             prompt: Prompt text
 
         Returns:
-            List of command parts (for subprocess)
+            Command string (for subprocess with shell=True)
         """
         # Check if template is valid
         if not template:

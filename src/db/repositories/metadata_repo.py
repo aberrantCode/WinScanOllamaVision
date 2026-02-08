@@ -20,8 +20,8 @@ class MetadataRepository:
         self,
         file_path: str,
         metadata: dict[str, Any],
-        model_used: str = None,
-        processing_time_ms: int = None,
+        model_used: str | None = None,
+        processing_time_ms: int | None = None,
     ) -> None:
         """Save or update metadata for a file."""
         file_hash = self._compute_file_hash(file_path)
@@ -127,11 +127,12 @@ class MetadataRepository:
 
     def get_statistics(self) -> dict[str, Any]:
         """Get database statistics."""
-        active_count = self.conn.fetch_one("SELECT COUNT(*) FROM active_metadata")[0]
-        archived_count = self.conn.fetch_one("SELECT COUNT(*) FROM archived_metadata")[0]
-        total_archived_pages = (
-            self.conn.fetch_one("SELECT SUM(total_pages) FROM archived_metadata")[0] or 0
-        )
+        active_row = self.conn.fetch_one("SELECT COUNT(*) FROM active_metadata")
+        active_count = active_row[0] if active_row else 0
+        archived_row = self.conn.fetch_one("SELECT COUNT(*) FROM archived_metadata")
+        archived_count = archived_row[0] if archived_row else 0
+        pages_row = self.conn.fetch_one("SELECT SUM(total_pages) FROM archived_metadata")
+        total_archived_pages = (pages_row[0] if pages_row else 0) or 0
         db_size = os.path.getsize(self.conn.db_path) if os.path.exists(self.conn.db_path) else 0
 
         return {

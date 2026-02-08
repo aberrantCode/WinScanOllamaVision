@@ -1,6 +1,7 @@
 import os
 import sys
 from enum import Enum
+from typing import cast
 
 from PyQt6.QtCore import QSize, Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QIcon, QMovie, QPixmap, QTransform
@@ -228,7 +229,7 @@ class ProgressBannerWidget(QWidget):
         """Update statistics"""
         self.stats_label.setText(f"Analyzed: {analyzed} | Cached: {cached} | Errors: {errors}")
 
-    def update_time(self, elapsed_seconds: int, estimated_remaining: int = None):
+    def update_time(self, elapsed_seconds: int, estimated_remaining: int | None = None):
         """Update elapsed/remaining time"""
         elapsed_str = self._format_time(elapsed_seconds)
 
@@ -286,8 +287,13 @@ class ProgressBannerWidget(QWidget):
             """)
             self.dismiss_button.clicked.connect(self.hide)
             # Add to layout
-            top_layout = self.layout().itemAt(0).layout()
-            top_layout.addWidget(self.dismiss_button)
+            parent_layout = self.layout()
+            if parent_layout is not None:
+                first_item = parent_layout.itemAt(0)
+                if first_item is not None:
+                    top_layout = first_item.layout()
+                    if top_layout is not None:
+                        top_layout.addWidget(self.dismiss_button)
         else:
             self.dismiss_button.setVisible(True)
 
@@ -461,7 +467,7 @@ class PagePreviewWidget(QWidget):
         layout.addWidget(page_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
     def is_selected(self) -> bool:
-        return self.checkbox.isChecked()
+        return cast(bool, self.checkbox.isChecked())
 
 
 class WorkflowStep(Enum):
@@ -814,13 +820,13 @@ class ImageGalleryWidget(QWidget):
     image_selected = pyqtSignal(str)  # file_path
     image_toggled = pyqtSignal(str, bool)  # file_path, checked
 
-    def __init__(self, analysis_db: "AnalysisDB" = None, parent=None):
+    def __init__(self, analysis_db: "AnalysisDB | None" = None, parent=None):
         super().__init__(parent)
         self.analysis_db = analysis_db
-        self.all_images = []  # List[Dict] - full image metadata
-        self.filtered_images = []  # List[Dict] - after search/sort
-        self.checked_files = set()  # Set[str] - file paths that are checked
-        self.current_file = None  # Currently selected file path
+        self.all_images: list[dict] = []  # full image metadata
+        self.filtered_images: list[dict] = []  # after search/sort
+        self.checked_files: set[str] = set()  # file paths that are checked
+        self.current_file: str | None = None  # Currently selected file path
         self._init_ui()
 
     def _init_ui(self):
@@ -1223,11 +1229,11 @@ class MetadataDisplayWidget(QWidget):
     re_analyze_requested = pyqtSignal(str)  # file_path
     thumbnail_clicked = pyqtSignal(str)  # file_path from bundle thumbnail
 
-    def __init__(self, analysis_db: "AnalysisDB" = None, parent=None):
+    def __init__(self, analysis_db: "AnalysisDB | None" = None, parent=None):
         super().__init__(parent)
         self.analysis_db = analysis_db
-        self.current_file_path = None
-        self.current_bundle_files = []  # List of file paths in current bundle
+        self.current_file_path: str | None = None
+        self.current_bundle_files: list[str] = []  # file paths in current bundle
         self._init_ui()
 
     def _init_ui(self):
@@ -1435,7 +1441,7 @@ class MetadataDisplayWidget(QWidget):
         widget.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Make widget clickable
-        widget.mousePressEvent = lambda event: self.thumbnail_clicked.emit(file_path)
+        widget.mousePressEvent = lambda event: self.thumbnail_clicked.emit(file_path)  # type: ignore[method-assign,assignment]
 
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -1604,8 +1610,8 @@ class MetadataDisplayWidget(QWidget):
         # Clear existing thumbnails
         while self.bundle_thumbnails_layout.count() > 1:  # Keep the stretch
             item = self.bundle_thumbnails_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is not None and item.widget() is not None:
+                item.widget().deleteLater()  # type: ignore[union-attr]
 
         # Add new thumbnails
         for file_path in file_paths:
