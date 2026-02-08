@@ -74,3 +74,4 @@ service-account*.json
 # Scanned files (input and output) - these should not be version controlled
 scans/
 organized/
+.worktrees/
