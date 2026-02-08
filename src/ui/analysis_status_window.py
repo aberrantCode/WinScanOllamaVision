@@ -334,12 +334,16 @@ class AnalysisStatusWindow(QDialog):
         self.tax_related_card = create_metric_card(self.theme_colors, "💰 Tax Related", "0%")
         self.tax_related_card.setToolTip("Percentage of documents identified as tax-related")
 
+        self.pdfs_generated_card = create_metric_card(self.theme_colors, "📑 PDFs Generated", "0")
+        self.pdfs_generated_card.setToolTip("Number of completed bundles with generated PDF files")
+
         self.total_files_card.setMinimumWidth(140)
         self.analyzed_pages_card.setMinimumWidth(160)
         self.documents_card.setMinimumWidth(140)
         self.metadata_quality_card.setMinimumWidth(160)
         self.avg_processing_card.setMinimumWidth(140)
         self.tax_related_card.setMinimumWidth(140)
+        self.pdfs_generated_card.setMinimumWidth(140)
 
         metrics_row.addWidget(self.total_files_card)
         metrics_row.addWidget(self.analyzed_pages_card)
@@ -347,6 +351,7 @@ class AnalysisStatusWindow(QDialog):
         metrics_row.addWidget(self.metadata_quality_card)
         metrics_row.addWidget(self.avg_processing_card)
         metrics_row.addWidget(self.tax_related_card)
+        metrics_row.addWidget(self.pdfs_generated_card)
 
         # Create main grid layout
         grid = QGridLayout()
@@ -581,6 +586,7 @@ class AnalysisStatusWindow(QDialog):
                 "high_confidence": 0,
                 "pages_bundled": 0,
                 "documents_archived": 0,
+                "pdfs_generated": 0,
                 "missing_metadata_pct": 0,
                 "processing_speed": 0,
                 "eta_minutes": 0,
@@ -647,6 +653,15 @@ class AnalysisStatusWindow(QDialog):
         """
         )
         documents_archived = cursor.fetchone()[0]
+
+        # PDFs generated (completed bundles with PDF paths)
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM document_bundles
+            WHERE status = 'completed' AND pdf_path IS NOT NULL
+        """
+        )
+        pdfs_generated = cursor.fetchone()[0]
 
         # Cached files count (for stats dictionary)
         cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 1")
@@ -816,6 +831,7 @@ class AnalysisStatusWindow(QDialog):
             "high_confidence": high_confidence,
             "pages_bundled": pages_bundled,
             "documents_archived": documents_archived,
+            "pdfs_generated": pdfs_generated,
             "missing_metadata_pct": missing_metadata_pct,
             "processing_speed": processing_speed,
             "eta_minutes": eta_minutes,
@@ -860,7 +876,7 @@ class AnalysisStatusWindow(QDialog):
 
         # Bundled Pages
         self.documents_card.findChild(QLabel, "📦_bundled_pages_value").setText(
-            str(stats['total_archived_pages'])
+            str(stats["total_archived_pages"])
         )
 
         # Missing Metadata Percentage
@@ -894,6 +910,12 @@ class AnalysisStatusWindow(QDialog):
         self.tax_related_card.setToolTip(
             f"Percentage of documents identified as tax-related\n\n"
             f"{tax_related_count:,} of {stats['files_analyzed']:,} files are tax-related"
+        )
+
+        # PDFs Generated
+        pdfs_generated = stats.get("pdfs_generated", 0)
+        self.pdfs_generated_card.findChild(QLabel, "📑_pdfs_generated_value").setText(
+            str(pdfs_generated)
         )
 
     def _update_funnel(self, stats):
