@@ -2,17 +2,35 @@
 Database connection management and utilities.
 
 Provides shared infrastructure for all database repositories.
+
+Thread-safety:
+    DatabaseConnection uses ``check_same_thread=False`` so a single
+    connection can be shared across Qt worker threads.  All public
+    methods that touch the underlying ``sqlite3.Connection`` are
+    serialised with a ``threading.RLock`` so concurrent callers are
+    safe.  The lock is re-entrant, allowing higher-level helpers
+    (e.g. ``fetch_one``) to call ``execute`` without deadlocking.
 """
 
 import contextlib
 import json
 import os
 import sqlite3
+import threading
 from typing import Any, cast
 
 
 class DatabaseConnection:
-    """Manages SQLite connection lifecycle with helper methods."""
+    """Manages SQLite connection lifecycle with helper methods.
+
+    Thread-safety
+    -------------
+    All public methods that access the underlying ``sqlite3.Connection``
+    are protected by a re-entrant lock (``threading.RLock``).  The
+    connection is opened with ``check_same_thread=False`` so it can be
+    used from any thread; the lock ensures only one thread executes a
+    database operation at a time.
+    """
 
     def __init__(self, db_path: str):
         """
@@ -22,12 +40,17 @@ class DatabaseConnection:
             db_path: Path to SQLite database file
         """
         self.db_path = db_path
-        self.connection = None
+        self.connection: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
         self._connect()
 
     def _connect(self):
         """Establish database connection with row factory."""
-        self.connection = sqlite3.connect(self.db_path)
+        self.connection = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,
+            timeout=30.0,
+        )
         self.connection.row_factory = sqlite3.Row
 
     @classmethod
@@ -55,11 +78,12 @@ class DatabaseConnection:
         Returns:
             Cursor with results
         """
-        if self.connection is None:
-            raise RuntimeError("Database connection not initialized")
-        cursor = self.connection.cursor()
-        cursor.execute(query, params)
-        return cursor
+        with self._lock:
+            if self.connection is None:
+                raise RuntimeError("Database connection not initialized")
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            return cursor
 
     def execute_many(self, query: str, params_list: list[tuple]) -> None:
         """
@@ -69,10 +93,11 @@ class DatabaseConnection:
             query: SQL query string
             params_list: List of parameter tuples
         """
-        if self.connection is None:
-            raise RuntimeError("Database connection not initialized")
-        cursor = self.connection.cursor()
-        cursor.executemany(query, params_list)
+        with self._lock:
+            if self.connection is None:
+                raise RuntimeError("Database connection not initialized")
+            cursor = self.connection.cursor()
+            cursor.executemany(query, params_list)
 
     def fetch_one(self, query: str, params: tuple = ()) -> sqlite3.Row | None:
         """
@@ -85,8 +110,9 @@ class DatabaseConnection:
         Returns:
             Row object or None
         """
-        cursor = self.execute(query, params)
-        return cast(sqlite3.Row | None, cursor.fetchone())
+        with self._lock:
+            cursor = self.execute(query, params)
+            return cast(sqlite3.Row | None, cursor.fetchone())
 
     def fetch_all(self, query: str, params: tuple = ()) -> list[sqlite3.Row]:
         """
@@ -99,8 +125,9 @@ class DatabaseConnection:
         Returns:
             List of Row objects
         """
-        cursor = self.execute(query, params)
-        return cursor.fetchall()
+        with self._lock:
+            cursor = self.execute(query, params)
+            return cursor.fetchall()
 
     def fetch_one_dict(
         self, query: str, params: tuple = (), json_fields: list[str] | None = None
@@ -116,13 +143,14 @@ class DatabaseConnection:
         Returns:
             Dictionary or None
         """
-        row = self.fetch_one(query, params)
-        if not row:
-            return None
+        with self._lock:
+            row = self.fetch_one(query, params)
+            if not row:
+                return None
 
-        result = dict(row)
+            result = dict(row)
 
-        # Parse JSON fields
+        # Parse JSON fields outside the lock (pure dict manipulation)
         if json_fields:
             for field in json_fields:
                 if result.get(field):
@@ -145,36 +173,42 @@ class DatabaseConnection:
         Returns:
             List of dictionaries
         """
-        rows = self.fetch_all(query, params)
+        with self._lock:
+            rows = self.fetch_all(query, params)
+            raw_results = [dict(row) for row in rows]
+
+        # Parse JSON fields outside the lock (pure dict manipulation)
         results = []
-
-        for row in rows:
-            result = dict(row)
-
-            # Parse JSON fields
+        for result in raw_results:
             if json_fields:
                 for field in json_fields:
                     if result.get(field):
                         with contextlib.suppress(json.JSONDecodeError, TypeError):
                             result[field] = json.loads(result[field])
-
             results.append(result)
 
         return results
 
     def commit(self):
         """Commit current transaction."""
-        self.connection.commit()
+        with self._lock:
+            if self.connection is None:
+                raise RuntimeError("Database connection not initialized")
+            self.connection.commit()
 
     def rollback(self):
         """Rollback current transaction."""
-        self.connection.rollback()
+        with self._lock:
+            if self.connection is None:
+                raise RuntimeError("Database connection not initialized")
+            self.connection.rollback()
 
     def close(self):
         """Close database connection."""
-        if self.connection:
-            self.connection.close()
-            self.connection = None
+        with self._lock:
+            if self.connection:
+                self.connection.close()
+                self.connection = None
 
     def __enter__(self):
         """Context manager entry."""
