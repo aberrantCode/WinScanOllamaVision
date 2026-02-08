@@ -58,6 +58,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("tax_related", "Tax Related", True),
         ("page_number", "Page", True),
         ("total_pages", "Total", True),
+        ("rotation", "Rotation", True),
         ("file_size", "Size", True),
         ("modified_time", "Modified", True),
         ("analysis_time", "Analyzed", False),
@@ -180,6 +181,11 @@ class FileDetailsTableModel(QAbstractTableModel):
             return self._format_duration(value)
         elif col_key in ("cache_hit", "tax_related"):
             return "Yes" if value else "No"
+        elif col_key == "rotation":
+            # Display rotation as degrees (0°, 90°, 180°, 270°)
+            if isinstance(value, int | float):
+                return f"{int(value)}°"
+            return "0°"
         elif col_key == "error_message":
             # Truncate long error messages
             msg = str(value)
@@ -253,6 +259,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "page_number",
             "total_pages",
             "processing_duration",
+            "rotation",
         ):
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         elif col_key in ("cache_hit", "tax_related"):
@@ -271,6 +278,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "tax_related": "Whether document is related to taxes (W-2, 1099, tax returns, etc.)",
             "page_number": "Page number (if detected)",
             "total_pages": "Total pages in document (if detected)",
+            "rotation": "Suggested rotation in degrees (0, 90, 180, 270)",
             "file_size": "Size of file on disk",
             "modified_time": "Last modification time of file",
             "analysis_time": "When the file was analyzed",

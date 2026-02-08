@@ -262,7 +262,7 @@ class AnalysisStatusWindow(QDialog):
                 color: {colors["text_primary"]};
             }}
         """)
-        self.tabs.addTab(self._create_collection_status_tab(), "Collection Status")
+        self.tabs.addTab(self._create_collection_status_tab(), "Analytics")
         self.tabs.addTab(self._create_file_grid_tab(), "Page Details")
         self.tabs.addTab(self._create_document_details_tab(), "Document Details")
 
@@ -1534,6 +1534,7 @@ class AnalysisStatusWindow(QDialog):
                 "document_date": row.get("document_date", ""),
                 "page_number": row.get("page_number"),
                 "total_pages": row.get("total_pages"),
+                "rotation": row.get("suggested_rotation", 0),
                 "file_size": file_size,
                 "modified_time": modified_time,
                 "analysis_time": row.get("analyzed_at"),
