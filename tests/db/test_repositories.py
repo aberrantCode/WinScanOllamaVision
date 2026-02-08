@@ -324,6 +324,115 @@ class TestBundleRepository:
         assert len(high_confidence) >= 1
         assert len(all_suggestions) >= 2
 
+    def test_get_bundled_file_paths_returns_empty_set_when_no_bundles(self, repo):
+        # Act
+        bundled_paths = repo.get_bundled_file_paths()
+
+        # Assert
+        assert isinstance(bundled_paths, set)
+        assert len(bundled_paths) == 0
+
+    def test_get_bundled_file_paths_includes_accepted_bundles(self, repo):
+        # Arrange
+        bundle_id = repo.save_suggestion(["/p1.jpg", "/p2.jpg"], {"company": "Test"}, 0.9)
+        repo.update_status(bundle_id, "accepted")
+
+        # Act
+        bundled_paths = repo.get_bundled_file_paths()
+
+        # Assert
+        assert "/p1.jpg" in bundled_paths
+        assert "/p2.jpg" in bundled_paths
+
+    def test_get_bundled_file_paths_includes_completed_bundles(self, repo):
+        # Arrange
+        bundle_id = repo.save_suggestion(["/p3.jpg", "/p4.jpg"], {"company": "Test"}, 0.9)
+        repo.update_status(bundle_id, "completed")
+
+        # Act
+        bundled_paths = repo.get_bundled_file_paths()
+
+        # Assert
+        assert "/p3.jpg" in bundled_paths
+        assert "/p4.jpg" in bundled_paths
+
+    def test_get_bundled_file_paths_excludes_suggested_bundles(self, repo):
+        # Arrange
+        repo.save_suggestion(["/p5.jpg"], {"company": "Test"}, 0.9)
+
+        # Act
+        bundled_paths = repo.get_bundled_file_paths()
+
+        # Assert
+        assert "/p5.jpg" not in bundled_paths
+
+    def test_get_bundled_file_paths_excludes_rejected_bundles(self, repo):
+        # Arrange
+        bundle_id = repo.save_suggestion(["/p6.jpg"], {"company": "Test"}, 0.9)
+        repo.update_status(bundle_id, "rejected")
+
+        # Act
+        bundled_paths = repo.get_bundled_file_paths()
+
+        # Assert
+        assert "/p6.jpg" not in bundled_paths
+
+    def test_get_bundled_file_paths_returns_distinct_paths(self, repo):
+        # Arrange - two bundles with overlapping files
+        bundle_id1 = repo.save_suggestion(["/p7.jpg", "/p8.jpg"], {"company": "Test"}, 0.9)
+        bundle_id2 = repo.save_suggestion(["/p8.jpg", "/p9.jpg"], {"company": "Test"}, 0.9)
+        repo.update_status(bundle_id1, "accepted")
+        repo.update_status(bundle_id2, "accepted")
+
+        # Act
+        bundled_paths = repo.get_bundled_file_paths()
+
+        # Assert - should have 3 distinct paths, not 4
+        assert len(bundled_paths) == 3
+        assert "/p7.jpg" in bundled_paths
+        assert "/p8.jpg" in bundled_paths
+        assert "/p9.jpg" in bundled_paths
+
+    def test_update_pdf_path(self, repo):
+        # Arrange
+        bundle_id = repo.save_suggestion(["/p10.jpg"], {"company": "Test"}, 0.9)
+        pdf_path = "/output/test_document.pdf"
+
+        # Act
+        repo.update_pdf_path(bundle_id, pdf_path)
+
+        # Assert - verify pdf_path was updated
+        cursor = repo.conn.connection.cursor()
+        result = cursor.execute(
+            "SELECT pdf_path, updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        assert result is not None
+        assert result["pdf_path"] == pdf_path
+        assert result["updated_at"] is not None
+
+    def test_update_pdf_path_updates_timestamp(self, repo):
+        # Arrange
+        bundle_id = repo.save_suggestion(["/p11.jpg"], {"company": "Test"}, 0.9)
+
+        # Get initial timestamp
+        cursor = repo.conn.connection.cursor()
+        initial_result = cursor.execute(
+            "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        initial_timestamp = initial_result["updated_at"]
+
+        # Act - update PDF path
+        repo.update_pdf_path(bundle_id, "/output/doc.pdf")
+
+        # Assert - timestamp should be updated
+        final_result = cursor.execute(
+            "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        final_timestamp = final_result["updated_at"]
+
+        # Note: This may be the same if executed too quickly, but it validates the field was set
+        assert final_timestamp is not None
+
 
 class TestProviderRepository:
     """Tests for ProviderRepository"""

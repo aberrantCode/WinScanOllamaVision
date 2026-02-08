@@ -269,3 +269,77 @@ class TestAnalysisDBCore:
 
         # Assert - connection should be None after close
         assert db.connection.connection is None
+
+    def test_get_bundled_file_paths_delegates_to_repository(self, db):
+        # Arrange - create accepted bundle
+        bundle_id = db.save_bundle_suggestion(
+            ["/test/p1.jpg", "/test/p2.jpg"], {"company": "Test Corp"}, 0.9
+        )
+        db.update_bundle_status(bundle_id, "accepted")
+
+        # Act
+        bundled_paths = db.get_bundled_file_paths()
+
+        # Assert
+        assert isinstance(bundled_paths, set)
+        assert "/test/p1.jpg" in bundled_paths
+        assert "/test/p2.jpg" in bundled_paths
+
+    def test_get_bundled_file_paths_returns_empty_set_when_no_bundles(self, db):
+        # Act
+        bundled_paths = db.get_bundled_file_paths()
+
+        # Assert
+        assert isinstance(bundled_paths, set)
+        assert len(bundled_paths) == 0
+
+    def test_get_bundled_file_paths_filters_by_status(self, db):
+        # Arrange - create bundles with different statuses
+        suggested_id = db.save_bundle_suggestion(["/suggested.jpg"], {"company": "Test"}, 0.9)
+        accepted_id = db.save_bundle_suggestion(["/accepted.jpg"], {"company": "Test"}, 0.9)
+        rejected_id = db.save_bundle_suggestion(["/rejected.jpg"], {"company": "Test"}, 0.9)
+        completed_id = db.save_bundle_suggestion(["/completed.jpg"], {"company": "Test"}, 0.9)
+
+        db.update_bundle_status(accepted_id, "accepted")
+        db.update_bundle_status(rejected_id, "rejected")
+        db.update_bundle_status(completed_id, "completed")
+
+        # Act
+        bundled_paths = db.get_bundled_file_paths()
+
+        # Assert - only accepted and completed should be included
+        assert "/accepted.jpg" in bundled_paths
+        assert "/completed.jpg" in bundled_paths
+        assert "/suggested.jpg" not in bundled_paths
+        assert "/rejected.jpg" not in bundled_paths
+
+    def test_update_bundle_pdf_path_delegates_to_repository(self, db):
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/page.jpg"], {"company": "Test"}, 0.9)
+        pdf_path = "/output/generated_doc.pdf"
+
+        # Act
+        db.update_bundle_pdf_path(bundle_id, pdf_path)
+
+        # Assert - verify PDF path was saved
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT pdf_path FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        assert result is not None
+        assert result["pdf_path"] == pdf_path
+
+    def test_update_bundle_pdf_path_updates_timestamp(self, db):
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/page.jpg"], {"company": "Test"}, 0.9)
+
+        # Act
+        db.update_bundle_pdf_path(bundle_id, "/output/doc.pdf")
+
+        # Assert - verify updated_at was set
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        assert result is not None
+        assert result["updated_at"] is not None

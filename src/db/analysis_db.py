@@ -154,6 +154,14 @@ class AnalysisDB:
             bundle_name=metadata.get("bundle_name"),
         )
 
+    def get_bundled_file_paths(self) -> set[str]:
+        """Get all file paths that are part of accepted or completed bundles."""
+        return self._bundles.get_bundled_file_paths()
+
+    def update_bundle_pdf_path(self, bundle_id: int, pdf_path: str) -> None:
+        """Update bundle with generated PDF path."""
+        self._bundles.update_pdf_path(bundle_id, pdf_path)
+
     # ==================== Rotation Methods ====================
 
     def save_rotation_preference(

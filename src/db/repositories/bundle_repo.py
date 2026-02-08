@@ -165,3 +165,35 @@ class BundleRepository:
 
         self.conn.execute(query, tuple(params))
         self.conn.commit()
+
+    def get_bundled_file_paths(self) -> set[str]:
+        """
+        Get all file paths that are part of accepted or completed bundles.
+
+        Returns:
+            Set of file paths already in processed bundles
+        """
+        cursor = self.conn.execute("""
+            SELECT DISTINCT json_each.value
+            FROM document_bundles, json_each(document_bundles.file_paths)
+            WHERE status IN ('accepted', 'completed')
+        """)
+        return {row[0] for row in cursor.fetchall()}
+
+    def update_pdf_path(self, bundle_id: int, pdf_path: str) -> None:
+        """
+        Update bundle with generated PDF path.
+
+        Args:
+            bundle_id: Bundle ID
+            pdf_path: Full path to generated PDF
+        """
+        cursor = self.conn.execute(
+            """
+            UPDATE document_bundles
+            SET pdf_path = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """,
+            (pdf_path, bundle_id)
+        )
+        self.conn.commit()
