@@ -39,7 +39,10 @@ from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
 from llm_providers.provider_factory import ProviderFactory
+from services.logging_service import get_logger
 from ui.styles import show_critical, show_information, show_question, show_warning
+
+logger = get_logger()
 
 
 class ExpandablePromptEdit(QPlainTextEdit):
@@ -2182,7 +2185,7 @@ Example response:
                     if now - last_updated < timedelta(hours=24):
                         # Use cached download status
                         downloaded_model_names = set(json.loads(cached_downloaded))
-                        print(
+                        logger.debug(
                             f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %H:%M')})"
                         )
                 except (ValueError, json.JSONDecodeError):
@@ -2204,7 +2207,7 @@ Example response:
                     json.dumps(list(downloaded_model_names)),
                 )
                 self.config_manager.set_setting("ModelCache", "ollama_models_timestamp", timestamp)
-                print(f"Checked Ollama download status at {timestamp}")
+                logger.debug(f"Checked Ollama download status at {timestamp}")
 
             except Exception as e:
                 show_warning(self, "Error", f"Failed to load Ollama models: {e}")
@@ -2412,13 +2415,13 @@ Example response:
                 # Cache is valid - parse and return models
                 models = json.loads(cached_json)
                 if isinstance(models, list) and len(models) > 0:
-                    print(
+                    logger.debug(
                         f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %H:%M')})"
                     )
                     return models
 
         except (ValueError, json.JSONDecodeError) as e:
-            print(f"Error parsing cached {provider} models: {e}")
+            logger.warning(f"Error parsing cached {provider} models: {e}")
 
         return None
 
@@ -2442,7 +2445,7 @@ Example response:
         self.config_manager.set_setting("ModelCache", cache_key, models_json)
         self.config_manager.set_setting("ModelCache", timestamp_key, timestamp)
 
-        print(f"Cached {len(models)} {provider} models at {timestamp}")
+        logger.debug(f"Cached {len(models)} {provider} models at {timestamp}")
 
     def _fetch_claude_models_from_web(self) -> list[str]:
         """Use Claude to search the web for latest vision-capable models"""
@@ -2494,7 +2497,7 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            print(f"Note: Could not fetch Claude models from web: {e}")
+            logger.info(f"Could not fetch Claude models from web: {e}")
 
         # Fallback to curated list
         return [
@@ -2592,7 +2595,7 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            print(f"Note: Could not fetch Gemini models from web: {e}")
+            logger.info(f"Could not fetch Gemini models from web: {e}")
 
         # Fallback to curated list
         return [

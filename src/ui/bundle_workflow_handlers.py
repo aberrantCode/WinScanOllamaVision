@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QMessageBox
 
+from services.logging_service import get_logger
 from ui.styles import show_information, show_question
+
+logger = get_logger()
 
 if TYPE_CHECKING:
     from enum import Enum
@@ -39,24 +42,23 @@ def _load_and_show_bundle_suggestions(self):
             # Show bundle suggestions view
             self.bundle_suggestions_view.set_bundles(bundles)
             self.bundle_suggestions_view.setVisible(True)
-            print(f"[Bundle Suggestions] Showing {len(bundles)} suggestions")
+            logger.info(f"[Bundle Suggestions] Showing {len(bundles)} suggestions")
         else:
             # No bundles found, skip to manual workflow
-            print("[Bundle Suggestions] No bundles generated, skipping to manual workflow")
+            logger.info("[Bundle Suggestions] No bundles generated, skipping to manual workflow")
             self._on_skip_to_manual_workflow()
 
     except Exception as e:
-        print(f"[Bundle Suggestions] Error generating suggestions: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"[Bundle Suggestions] Error generating suggestions: {e}", exc_info=True)
         # Fall back to manual workflow
         self._on_skip_to_manual_workflow()
 
 
 def _on_bundle_accepted(self, bundle_data):
     """Handle bundle acceptance"""
-    print(f"[Bundle] Accepted: {bundle_data.get('document_type')} - {bundle_data.get('company')}")
+    logger.info(
+        f"[Bundle] Accepted: {bundle_data.get('document_type')} - {bundle_data.get('company')}"
+    )
 
     # Add to completed groups
     file_paths = bundle_data.get("file_paths", [])
@@ -83,7 +85,7 @@ def _on_bundle_accepted(self, bundle_data):
 
 def _on_bundle_modified(self, bundle_data):
     """Handle bundle modification request"""
-    print(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
+    logger.info(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
 
     # Load the bundle files into the stitching workflow
     file_paths = bundle_data.get("file_paths", [])
@@ -107,7 +109,7 @@ def _on_bundle_modified(self, bundle_data):
 
 def _on_bundle_rejected(self, bundle_data):
     """Handle bundle rejection"""
-    print(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
+    logger.info(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
 
     # Mark files as excluded/rejected (optional - could add to a reject list)
     # For now, just remove from suggestions
@@ -165,7 +167,7 @@ def _on_accept_all_high_confidence(self):
 
 def _on_skip_to_manual_workflow(self):
     """Skip bundle suggestions and go to manual stitching"""
-    print("[Bundle] Skipping to manual workflow")
+    logger.info("[Bundle] Skipping to manual workflow")
 
     # Hide bundle suggestions
     self.bundle_suggestions_view.setVisible(False)

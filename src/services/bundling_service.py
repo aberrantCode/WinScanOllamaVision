@@ -505,23 +505,29 @@ class BundlingService:
 
 # Example usage
 if __name__ == "__main__":
+    import logging
+
     from db.analysis_db import AnalysisDB
+    from services.logging_service import LoggingService, get_logger
+
+    LoggingService().initialize(log_level=logging.DEBUG, console_output=True)
+    _logger = get_logger()
 
     # Create instance
     analysis_db = AnalysisDB()
     service = BundlingService(analysis_db)
 
     # Test bundling (won't have data without actual analysis)
-    print("Testing bundling service...")
+    _logger.info("Testing bundling service...")
     bundles = service.generate_bundle_recommendations()
-    print(f"Generated {len(bundles)} bundle suggestions")
+    _logger.info(f"Generated {len(bundles)} bundle suggestions")
 
     for i, bundle in enumerate(bundles, 1):
-        print(f"\nBundle {i}:")
-        print(f"  Files: {len(bundle['file_paths'])}")
-        print(f"  Company: {bundle.get('company')}")
-        print(f"  Type: {bundle.get('document_type')}")
-        print(f"  Confidence: {bundle['confidence_score']:.2f}")
+        _logger.info(
+            f"Bundle {i}: Files={len(bundle['file_paths'])}, "
+            f"Company={bundle.get('company')}, Type={bundle.get('document_type')}, "
+            f"Confidence={bundle['confidence_score']:.2f}"
+        )
 
     # Cleanup
     analysis_db.close()
