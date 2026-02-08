@@ -52,6 +52,13 @@ class BundlingService:
         if not analyses:
             return []
 
+        # NEW: Exclude files already in accepted/completed bundles
+        bundled_files = self.analysis_db.get_bundled_file_paths()
+        analyses = [a for a in analyses if a["file_path"] not in bundled_files]
+
+        if not analyses:
+            return []  # All files already bundled
+
         # Group by explicit page numbers first
         bundles_by_page_numbers = self._group_by_page_numbers(analyses)
 
@@ -293,6 +300,30 @@ class BundlingService:
             user_action: Description of user action
         """
         self.analysis_db.update_bundle_status(bundle_id, status, user_action)
+
+    def mark_bundle_completed(self, bundle_id: int, pdf_path: str) -> None:
+        """
+        Mark bundle as completed after successful PDF generation.
+
+        Args:
+            bundle_id: Bundle ID
+            pdf_path: Full path to generated PDF file
+        """
+        import os
+
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+        if not os.path.exists(pdf_path):
+            logger.warning(f"PDF path does not exist: {pdf_path}")
+
+        # Save PDF path
+        self.analysis_db.update_bundle_pdf_path(bundle_id, pdf_path)
+
+        # Update status to completed
+        self.update_bundle_status(
+            bundle_id, "completed", f"PDF generated: {os.path.basename(pdf_path)}"
+        )
 
     def accept_bundle(self, bundle_id: int) -> None:
         """Mark bundle as accepted"""

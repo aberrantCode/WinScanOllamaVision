@@ -4,7 +4,7 @@ Comprehensive tests for BundlingService.
 Tests bundle recommendation generation, confidence scoring, and bundle management.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -638,3 +638,197 @@ class TestGetHighConfidenceBundles:
 
         # Assert
         assert result == bundles
+
+
+class TestFilterAlreadyBundledFiles:
+    """Tests for filtering already-bundled files from recommendations"""
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_db):
+        return BundlingService(mock_db)
+
+    def test_excludes_files_in_accepted_bundles(self, service, mock_db):
+        # Arrange
+        analyses = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 1,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 2,
+            },
+            {
+                "file_path": "file3.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 3,
+            },
+        ]
+        mock_db.get_analyzed_pages.return_value = analyses
+        # file1.png is already in an accepted bundle
+        mock_db.get_bundled_file_paths.return_value = {"file1.png"}
+        mock_db.save_bundle_suggestion.return_value = 1
+
+        # Act
+        result = service.generate_bundle_recommendations()
+
+        # Assert
+        mock_db.get_bundled_file_paths.assert_called_once()
+        # Should only bundle file2.png and file3.png
+        assert len(result) == 1
+        assert "file1.png" not in result[0]["file_paths"]
+        assert "file2.png" in result[0]["file_paths"]
+        assert "file3.png" in result[0]["file_paths"]
+
+    def test_excludes_files_in_completed_bundles(self, service, mock_db):
+        # Arrange
+        analyses = [
+            {"file_path": "file1.png", "company": "TestCo", "document_type": "invoice"},
+            {"file_path": "file2.png", "company": "TestCo", "document_type": "invoice"},
+        ]
+        mock_db.get_analyzed_pages.return_value = analyses
+        # Both files are in completed bundles
+        mock_db.get_bundled_file_paths.return_value = {"file1.png", "file2.png"}
+
+        # Act
+        result = service.generate_bundle_recommendations()
+
+        # Assert
+        assert result == []  # All files already bundled
+
+    def test_returns_empty_when_all_files_bundled(self, service, mock_db):
+        # Arrange
+        analyses = [
+            {"file_path": "file1.png", "company": "TestCo"},
+            {"file_path": "file2.png", "company": "TestCo"},
+        ]
+        mock_db.get_analyzed_pages.return_value = analyses
+        mock_db.get_bundled_file_paths.return_value = {"file1.png", "file2.png"}
+
+        # Act
+        result = service.generate_bundle_recommendations()
+
+        # Assert
+        assert result == []
+        mock_db.save_bundle_suggestion.assert_not_called()
+
+    def test_generates_bundles_when_no_files_bundled(self, service, mock_db):
+        # Arrange
+        analyses = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 1,
+                "total_pages": 2,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 2,
+                "total_pages": 2,
+            },
+        ]
+        mock_db.get_analyzed_pages.return_value = analyses
+        mock_db.get_bundled_file_paths.return_value = set()  # No files bundled yet
+        mock_db.save_bundle_suggestion.return_value = 1
+
+        # Act
+        result = service.generate_bundle_recommendations()
+
+        # Assert
+        assert len(result) == 1
+        assert len(result[0]["file_paths"]) == 2
+
+
+class TestMarkBundleCompleted:
+    """Tests for mark_bundle_completed method"""
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_db):
+        return BundlingService(mock_db)
+
+    @patch("services.logging_service.get_logger")
+    def test_updates_pdf_path(self, mock_logger, service, mock_db, tmp_path):
+        # Arrange
+        pdf_path = str(tmp_path / "test.pdf")
+        # Create the file so it exists
+        with open(pdf_path, "w") as f:
+            f.write("test")
+
+        # Act
+        service.mark_bundle_completed(123, pdf_path)
+
+        # Assert
+        mock_db.update_bundle_pdf_path.assert_called_once_with(123, pdf_path)
+
+    @patch("services.logging_service.get_logger")
+    def test_sets_status_completed(self, mock_logger, service, mock_db, tmp_path):
+        # Arrange
+        pdf_path = str(tmp_path / "test.pdf")
+        with open(pdf_path, "w") as f:
+            f.write("test")
+
+        # Act
+        service.mark_bundle_completed(123, pdf_path)
+
+        # Assert
+        mock_db.update_bundle_status.assert_called_once()
+        call_args = mock_db.update_bundle_status.call_args
+        assert call_args[0][0] == 123
+        assert call_args[0][1] == "completed"
+        assert "test.pdf" in call_args[0][2]
+
+    @patch("services.logging_service.get_logger")
+    def test_handles_nonexistent_pdf_path_gracefully(self, mock_logger, service, mock_db):
+        # Arrange
+        pdf_path = "/nonexistent/path/test.pdf"
+
+        # Act - should not raise exception
+        service.mark_bundle_completed(123, pdf_path)
+
+        # Assert - still updates database even though file doesn't exist
+        mock_db.update_bundle_pdf_path.assert_called_once_with(123, pdf_path)
+        mock_db.update_bundle_status.assert_called_once()
+
+    @patch("services.logging_service.get_logger")
+    def test_logs_warning_for_nonexistent_pdf(self, mock_logger, service, mock_db):
+        # Arrange
+        pdf_path = "/nonexistent/path/test.pdf"
+
+        # Act
+        service.mark_bundle_completed(123, pdf_path)
+
+        # Assert
+        mock_logger.return_value.warning.assert_called_once()
+        assert pdf_path in str(mock_logger.return_value.warning.call_args)
+
+    @patch("services.logging_service.get_logger")
+    def test_includes_pdf_filename_in_user_action(self, mock_logger, service, mock_db, tmp_path):
+        # Arrange
+        pdf_path = str(tmp_path / "invoice_2024-01-01.pdf")
+        with open(pdf_path, "w") as f:
+            f.write("test")
+
+        # Act
+        service.mark_bundle_completed(123, pdf_path)
+
+        # Assert
+        call_args = mock_db.update_bundle_status.call_args
+        user_action = call_args[0][2]
+        assert "invoice_2024-01-01.pdf" in user_action
+        assert "PDF generated:" in user_action
