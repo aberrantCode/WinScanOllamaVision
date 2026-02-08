@@ -2335,6 +2335,46 @@ class GuidedBundleWorkflow(QDialog):
         # Show PDF conversion progress
         self._show_pdf_conversion(bundle, metadata)
 
+    def _determine_output_directory(self, bundle: dict) -> str:
+        """
+        Determine output directory based on configuration strategy.
+
+        Args:
+            bundle: Bundle data containing file_paths
+
+        Returns:
+            Path to output directory
+        """
+        import os
+
+        # Get strategy from config
+        strategy = self.config_manager.get_setting(
+            "OutputDirectory", "strategy", default="same_as_source"
+        )
+
+        if strategy == "global_custom":
+            # Use global custom path
+            custom_path = self.config_manager.get_setting(
+                "OutputDirectory", "global_custom_path", default=""
+            )
+            if custom_path and os.path.isdir(custom_path):
+                return custom_path
+            # Fall through to default if custom path not set or invalid
+
+        elif strategy == "same_as_source":
+            # Use source file directory with subdirectory
+            if bundle.get("file_paths"):
+                first_file = bundle["file_paths"][0]
+                source_dir = os.path.dirname(first_file)
+                subdirectory = self.config_manager.get_setting(
+                    "OutputDirectory", "subdirectory_name", default="ORGANIZED"
+                )
+                return os.path.join(source_dir, subdirectory)
+
+        # Default fallback: Documents/WinScanLLM/PDFs
+        default_output = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
+        return default_output
+
     def _show_pdf_conversion(self, bundle, metadata):
         """Show PDF conversion progress dialog."""
         progress_dialog = QDialog(self)
@@ -2353,7 +2393,7 @@ class GuidedBundleWorkflow(QDialog):
         layout.addWidget(icon_label)
 
         message = QLabel(f"Converting to PDF...\n\n{metadata['output_filename']}")
-        message.setStyleSheet(f"color: {Colors.GRAY_700}; font-size: 14px;")
+        message.setStyleSheet("color: white; font-size: 14px;")  # White text for dark mode
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         message.setWordWrap(True)
         layout.addWidget(message)
@@ -2427,8 +2467,8 @@ class GuidedBundleWorkflow(QDialog):
             # Apply page reordering
             ordered_paths = [bundle["file_paths"][i] for i in self.page_order]
 
-            # Get output directory from config
-            output_dir = self.config_manager.get_setting("OutputDirectory", "path", default=".")
+            # Get output directory from config based on strategy
+            output_dir = self._determine_output_directory(bundle)
             output_path = Path(output_dir) / metadata["output_filename"]
 
             # Ensure output directory exists
@@ -2446,9 +2486,8 @@ class GuidedBundleWorkflow(QDialog):
             bundle_id = bundle.get("id")
             if bundle_id:
                 bundling_service.update_bundle_metadata(bundle_id, metadata)
-                bundling_service.update_bundle_status(
-                    bundle_id, "accepted", "User accepted via guided workflow"
-                )
+                # Mark bundle as completed and save PDF path
+                bundling_service.mark_bundle_completed(bundle_id, pdf_path)
 
             # Success!
             success_dialog = QMessageBox(self)
