@@ -981,3 +981,183 @@ class TestImageFilesRepository:
         img = repo.get_by_path("/test/img1.png")
         assert img["status"] == "deleted"
         assert img["deleted_at"] is not None
+
+
+class TestPdfFilesRepository:
+    """Tests for PdfFilesRepository"""
+
+    @pytest.fixture
+    def temp_db_path(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        yield db_path
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+    @pytest.fixture
+    def conn(self, temp_db_path):
+        connection = DatabaseConnection(temp_db_path)
+        from db.schema import create_all_tables
+
+        create_all_tables(connection)
+        yield connection
+        connection.close()
+
+    @pytest.fixture
+    def repo(self, conn):
+        from db.repositories.pdf_files_repo import PdfFilesRepository
+
+        return PdfFilesRepository(conn)
+
+    @pytest.fixture
+    def bundle_id(self, conn):
+        """Create a test bundle and return its ID."""
+        from db.repositories.bundle_repo import BundleRepository
+
+        bundle_repo = BundleRepository(conn)
+        return bundle_repo.save_suggestion(
+            ["/test/img1.png", "/test/img2.png"],
+            {"company": "Test Co", "document_type": "Invoice"},
+            0.95,
+        )
+
+    def test_register_new_pdf(self, repo, bundle_id):
+        # Act
+        pdf_id = repo.register(
+            pdf_path="/output/test_doc.pdf",
+            pdf_filename="test_doc.pdf",
+            bundle_id=bundle_id,
+            source_image_ids=[1, 2, 3],
+            page_count=3,
+            file_hash="hash123",
+            file_size=102400,
+        )
+
+        # Assert
+        assert pdf_id > 0
+        pdf = repo.get_by_path("/output/test_doc.pdf")
+        assert pdf is not None
+        assert pdf["pdf_filename"] == "test_doc.pdf"
+        assert pdf["bundle_id"] == bundle_id
+        assert pdf["source_image_ids"] == [1, 2, 3]  # Should be parsed from JSON
+        assert pdf["page_count"] == 3
+        assert pdf["file_hash"] == "hash123"
+        assert pdf["file_size"] == 102400
+        assert pdf["generation_status"] == "completed"
+
+    def test_register_replaces_existing(self, repo, bundle_id):
+        # Arrange - register first time
+        repo.register("/output/test.pdf", "test.pdf", bundle_id, [1, 2], 2, "hash1", 1000)
+
+        # Act - register again with different data
+        repo.register("/output/test.pdf", "test.pdf", bundle_id, [3, 4, 5], 3, "hash2", 2000)
+
+        # Assert - should be replaced
+        pdf = repo.get_by_path("/output/test.pdf")
+        assert pdf["source_image_ids"] == [3, 4, 5]
+        assert pdf["page_count"] == 3
+        assert pdf["file_hash"] == "hash2"
+
+    def test_register_without_optional_fields(self, repo, bundle_id):
+        # Act
+        pdf_id = repo.register(
+            pdf_path="/output/doc.pdf",
+            pdf_filename="doc.pdf",
+            bundle_id=bundle_id,
+            source_image_ids=[1],
+            page_count=1,
+        )
+
+        # Assert
+        assert pdf_id > 0
+        pdf = repo.get_by_path("/output/doc.pdf")
+        assert pdf["file_hash"] is None
+        assert pdf["file_size"] is None
+
+    def test_get_by_path_nonexistent(self, repo):
+        # Act
+        pdf = repo.get_by_path("/nonexistent.pdf")
+
+        # Assert
+        assert pdf is None
+
+    def test_get_by_bundle(self, repo, bundle_id):
+        # Arrange
+        repo.register("/out/doc.pdf", "doc.pdf", bundle_id, [1, 2], 2)
+
+        # Act
+        pdf = repo.get_by_bundle(bundle_id)
+
+        # Assert
+        assert pdf is not None
+        assert pdf["bundle_id"] == bundle_id
+        assert pdf["source_image_ids"] == [1, 2]
+
+    def test_get_by_bundle_nonexistent(self, repo):
+        # Act
+        pdf = repo.get_by_bundle(99999)
+
+        # Assert
+        assert pdf is None
+
+    def test_update_generation_status(self, repo, bundle_id):
+        # Arrange
+        repo.register("/out/doc.pdf", "doc.pdf", bundle_id, [1], 1)
+
+        # Act
+        repo.update_generation_status("/out/doc.pdf", "failed")
+
+        # Assert
+        pdf = repo.get_by_path("/out/doc.pdf")
+        assert pdf["generation_status"] == "failed"
+
+    def test_get_all(self, repo, bundle_id, conn):
+        # Arrange
+        from db.repositories.bundle_repo import BundleRepository
+
+        bundle_repo = BundleRepository(conn)
+        bundle_id2 = bundle_repo.save_suggestion(["/test/img3.png"], {"company": "Other Co"}, 0.8)
+
+        repo.register("/out/doc1.pdf", "doc1.pdf", bundle_id, [1, 2], 2)
+        repo.register("/out/doc2.pdf", "doc2.pdf", bundle_id2, [3], 1)
+
+        # Act
+        all_pdfs = repo.get_all()
+
+        # Assert
+        assert len(all_pdfs) == 2
+        # Should be ordered by generated_at DESC (most recent first)
+        # Both have source_image_ids parsed from JSON
+        assert all(isinstance(pdf["source_image_ids"], list) for pdf in all_pdfs)
+
+    def test_get_stats(self, repo, bundle_id):
+        # Arrange
+        repo.register("/out/doc1.pdf", "doc1.pdf", bundle_id, [1], 1)
+        repo.register("/out/doc2.pdf", "doc2.pdf", bundle_id, [2], 1)
+        repo.register("/out/doc3.pdf", "doc3.pdf", bundle_id, [3], 1)
+
+        repo.update_generation_status("/out/doc1.pdf", "generating")
+        repo.update_generation_status("/out/doc2.pdf", "failed")
+        # doc3 remains "completed"
+
+        # Act
+        stats = repo.get_stats()
+
+        # Assert
+        assert stats["total"] == 3
+        assert stats["status_generating"] == 1
+        assert stats["status_failed"] == 1
+        assert stats["status_completed"] == 1
+
+    def test_source_image_ids_json_handling(self, repo, bundle_id):
+        # Arrange - register with large list
+        large_list = list(range(1, 51))  # 50 image IDs
+        repo.register("/out/big.pdf", "big.pdf", bundle_id, large_list, 50)
+
+        # Act
+        pdf = repo.get_by_path("/out/big.pdf")
+
+        # Assert - should correctly parse JSON back to list
+        assert pdf is not None
+        assert len(pdf["source_image_ids"]) == 50
+        assert pdf["source_image_ids"] == large_list
