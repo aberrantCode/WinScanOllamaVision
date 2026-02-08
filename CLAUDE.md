@@ -242,6 +242,82 @@ python run_tests.py tests/ui/ -v
 python run_tests.py tests/ -k "metadata" -v
 ```
 
+## Pull Request Requirements (MANDATORY)
+
+**All pull requests MUST pass the automated "Validate PR" GitHub Actions workflow before merging.**
+
+The workflow enforces the following requirements:
+
+### 1. Semantic PR Title Format
+
+PR titles MUST follow conventional commit format:
+
+```
+<type>: <description>
+
+Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+```
+
+**Requirements:**
+- Type must be one of the allowed types listed above
+- Subject (description) must begin with an uppercase letter
+- Total title should be under 70 characters for readability
+
+**Examples:**
+- ✅ `feat: Add Claude CLI provider support`
+- ✅ `fix: Resolve SQL injection in file details grid`
+- ✅ `refactor: Replace print statements with logging`
+- ❌ `security: fix command injection` (wrong type, lowercase subject)
+- ❌ `add new feature` (missing type prefix)
+
+### 2. Breaking Change Detection
+
+If your PR contains breaking changes:
+- Include `BREAKING CHANGE:` in one or more commit messages
+- This alerts reviewers to API/behavior modifications that may affect users
+- Example commit message:
+  ```
+  feat: Change provider interface signature
+
+  BREAKING CHANGE: analyze_images() now requires config_manager parameter
+  ```
+
+### 3. PR Size Guidelines
+
+**Recommended:** Keep PRs under 1,000 lines of changes
+
+- PRs exceeding 1,000 lines will trigger a warning
+- Consider breaking large changes into smaller, focused PRs
+- Use stacked PRs for related changes that build on each other
+
+**Automatic size labeling:**
+- `xs`: ≤10 lines changed
+- `s`: ≤100 lines changed
+- `m`: ≤500 lines changed
+- `l`: ≤1,000 lines changed
+- `xl`: >1,000 lines changed
+
+### 4. File-Based Auto-Labeling
+
+The workflow automatically applies labels based on changed files (configured in `.github/labeler.yml`):
+- Changes to `/src/db/` → `database` label
+- Changes to `/src/ui/` → `ui` label
+- Changes to `/tests/` → `testing` label
+- etc.
+
+### Pre-PR Checklist
+
+Before creating a PR, ensure:
+- [ ] PR title follows semantic format with allowed type
+- [ ] Subject begins with uppercase letter
+- [ ] PR is reasonably sized (<1,000 lines if possible)
+- [ ] Breaking changes are documented in commit messages
+- [ ] All pre-commit checks pass locally
+- [ ] All tests pass (`python run_tests.py tests/`)
+- [ ] Type checking passes (`mypy src/`)
+
+**Note:** The GitHub Actions workflow will fail your PR if the title format is incorrect. Fix the title and the workflow will automatically re-run.
+
 ## Architecture Overview
 
 ### Package Structure
