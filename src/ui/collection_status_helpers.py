@@ -24,22 +24,28 @@ from ui.styles import (
 
 def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     """Create a metric card with title and value"""
+    from PyQt6.QtWidgets import QSizePolicy
+
     card = QFrame()
     card.setStyleSheet(f"""
         QFrame {{
             background-color: {theme_colors["bg_tertiary"]};
             border: 1px solid {theme_colors["border"]};
             border-radius: 8px;
-            padding: 16px;
+            padding: 2px;
         }}
     """)
     card_layout = QVBoxLayout(card)
-    card_layout.setSpacing(8)
+    card_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
+    card_layout.setSpacing(4)  # Reduced spacing between title and value
 
     # Title label - no border, centered with word wrap
     title_label = QLabel(title)
     title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     title_label.setWordWrap(True)  # Enable word wrapping for long titles
+    title_label.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+    )  # Prevent clipping
     title_label.setStyleSheet(f"""
         color: {theme_colors["text_tertiary"]};
         font-size: 10pt;
@@ -53,6 +59,9 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     value_label = QLabel(value)
     value_label.setObjectName(f"{title.lower().replace(' ', '_')}_value")
     value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    value_label.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+    )  # Prevent clipping
     value_label.setStyleSheet(f"""
         color: {theme_colors["text_primary"]};
         font-size: 24pt;
