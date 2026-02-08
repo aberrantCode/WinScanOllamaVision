@@ -5,6 +5,10 @@ from typing import Any, cast
 import httpx
 import ollama
 
+from services.logging_service import get_logger
+
+logger = get_logger()
+
 
 class OllamaService:
     def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
@@ -100,14 +104,15 @@ class OllamaService:
             The model's response.
         """
         # DEBUG: Show what images are being processed
-        print("\n=== DEBUG: WinScanLLM Vision Request (SDK) ===")
-        print(f"Model: {model_name}")
-        print(f"Image paths received: {len(image_paths)}")
+        logger.debug(
+            "WinScanLLM Vision Request (SDK) - Model: %s, Image paths: %d",
+            model_name,
+            len(image_paths),
+        )
         for i, path in enumerate(image_paths, 1):
             exists = os.path.exists(path) if path else False
             size = os.path.getsize(path) if exists else 0
-            print(f"  Image {i}: {path}")
-            print(f"    Exists: {exists} | Size: {size} bytes")
+            logger.debug("  Image %d: %s (Exists: %s, Size: %d bytes)", i, path, exists, size)
 
         try:
             # The SDK accepts file paths directly and handles encoding
@@ -133,16 +138,16 @@ class OllamaService:
             # Use client with configured timeout
             response = self.client.chat(**chat_params)  # type: ignore[call-overload]
 
-            print("SDK Response received successfully")
-            print(f"  Message content length: {len(response['message']['content'])} chars")
-            print(f"  Timeout setting: {self.timeout} seconds")
-            print("==========================================\n")
+            logger.debug(
+                "SDK Response received - Content length: %d chars, Timeout: %s seconds",
+                len(response["message"]["content"]),
+                self.timeout,
+            )
 
             return cast(dict[str, Any], response.get("message", {}))
 
         except Exception as e:
-            print(f"ERROR in chat_with_vision_model: {e}")
-            print("==========================================\n")
+            logger.error(f"Error in chat_with_vision_model: {e}")
             raise ConnectionError(f"Failed to communicate with Ollama: {e}") from e
 
     # --- Specific Application Prompts ---
@@ -169,12 +174,13 @@ class OllamaService:
         response_message = response.get("content", "").strip()
 
         # DEBUG: Show raw response
-        print("\n=== DEBUG: Validation Response ===")
-        print(f"Raw response: '{response_message}'")
-        print(f"Upper case: '{response_message.upper()}'")
-        print(f"Equals 'YES': {response_message.upper() == 'YES'}")
-        print(f"Contains 'YES': {'YES' in response_message.upper()}")
-        print("=================================\n")
+        logger.debug(
+            "Validation Response - Raw: '%s', Upper: '%s', Equals YES: %s, Contains YES: %s",
+            response_message,
+            response_message.upper(),
+            response_message.upper() == "YES",
+            "YES" in response_message.upper(),
+        )
 
         return cast(bool, response_message.upper() == "YES")
 
@@ -239,10 +245,7 @@ Respond ONLY with valid JSON in this format:
             parsed = json.loads(content)
 
             # Debug output
-            print("\n=== DEBUG: Document Validation (New Format) ===")
-            print(f"Raw response: {content}")
-            print(f"Parsed: {parsed}")
-            print("=============================================\n")
+            logger.debug("Document Validation (New Format) - Raw: %s, Parsed: %s", content, parsed)
 
             # Extract new format fields
             all_belong = parsed.get("all_belong", False)
@@ -267,10 +270,7 @@ Respond ONLY with valid JSON in this format:
                 "additional": {},
             }
         except Exception as e:
-            print(f"Error in validate_grouping_with_page_number: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"Error in validate_grouping_with_page_number: {e}", exc_info=True)
             return {
                 "belongs": False,
                 "doc_page_count": 1,
@@ -327,9 +327,7 @@ Rules:
             )
             content = response.get("content", "{}")
 
-            print("\n=== DEBUG: Metadata Extraction Response ===")
-            print(f"Raw content: {content}")
-            print("==========================================\n")
+            logger.debug("Metadata Extraction Response - Raw content: %s", content)
 
             # Try to clean the JSON if it has markdown code blocks or extra text
             content = content.strip()
@@ -354,7 +352,7 @@ Rules:
                 if end != -1:
                     content = content[: end + 1]
 
-            print(f"Cleaned content: {content}")
+            logger.debug(f"Cleaned content: {content}")
 
             extracted_info = json.loads(content)
 
@@ -365,8 +363,8 @@ Rules:
                 "date": extracted_info.get("date"),
             }
         except json.JSONDecodeError as e:
-            print(f"JSON decode error in extract_document_info: {e}")
-            print(f"Content was: {content}")
+            logger.warning(f"JSON decode error in extract_document_info: {e}")
+            logger.debug(f"Content was: {content}")
 
             # Try to manually parse what we can from the broken JSON
             # Look for key-value pairs even if JSON is incomplete
@@ -392,10 +390,10 @@ Rules:
                 if match:
                     date = match.group(1)
 
-            print(f"Manually extracted: company={company}, title={title}, date={date}")
+            logger.debug(f"Manually extracted: company={company}, title={title}, date={date}")
             return {"company": company, "title": title, "date": date}
         except Exception as e:
-            print(f"Error in extract_document_info: {e}")
+            logger.error(f"Error in extract_document_info: {e}")
             # Silently handle extraction errors - return None values
             return {"company": None, "title": None, "date": None}
 
@@ -449,22 +447,23 @@ Provide the CORRECT order as indices."""
             ordered_indices = parsed.get("ordered_indices", list(range(len(image_paths))))
             confidence = parsed.get("confidence", "low")
 
-            print("\n=== DEBUG: Content-Based Ordering ===")
-            print(f"Raw response: {content}")
-            print(f"Ordered indices: {ordered_indices}")
-            print(f"Confidence: {confidence}")
-            print("====================================\n")
+            logger.debug(
+                "Content-Based Ordering - Raw: %s, Ordered indices: %s, Confidence: %s",
+                content,
+                ordered_indices,
+                confidence,
+            )
 
             # Validate indices
             if len(ordered_indices) != len(image_paths) or set(ordered_indices) != set(
                 range(len(image_paths))
             ):
-                print(f"Invalid ordering received: {ordered_indices}")
+                logger.warning(f"Invalid ordering received: {ordered_indices}")
                 return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
 
             return {"ordered_indices": ordered_indices, "confidence": confidence}
         except Exception as e:
-            print(f"Error in infer_page_order_from_content: {e}")
+            logger.error(f"Error in infer_page_order_from_content: {e}")
             return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
 
     def extract_text_and_coords(

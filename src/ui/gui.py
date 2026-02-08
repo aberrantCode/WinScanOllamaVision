@@ -36,7 +36,11 @@ from PyQt6.QtWidgets import (
 try:
     import fitz
 except ImportError:
-    print("Error: PyMuPDF (fitz) is not installed. Please run 'pip install PyMuPDF'.")
+    import logging
+
+    logging.getLogger(__name__).critical(
+        "PyMuPDF (fitz) is not installed. Please run 'pip install PyMuPDF'."
+    )
     sys.exit(1)
 
 from config.config_manager import ConfigManager
@@ -45,10 +49,13 @@ from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
 from services.bundling_service import BundlingService
 from services.file_service import FileService
+from services.logging_service import get_logger
 from ui.analysis_status_window import AnalysisStatusWindow
 from ui.bundle_widgets import BundleSuggestionsView
 from ui.settings_window_enhanced import EnhancedSettingsWindow
 from ui.styles import show_critical, show_information, show_question, show_warning
+
+logger = get_logger()
 
 
 class ProgressBannerWidget(QWidget):
@@ -1629,18 +1636,19 @@ class MetadataDisplayWidget(QWidget):
 class ConvertImagesWindow(QMainWindow):
     processing_finished = pyqtSignal()
 
-    def __init__(self):
-        super().__init__()
-        self.config_manager = ConfigManager()
+    def __init__(self, parent=None, config_manager=None, analysis_db=None, metadata_db=None):
+        super().__init__(parent)
+        self.config_manager = config_manager if config_manager is not None else ConfigManager()
         timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
         self.ollama_service = OllamaService(
             base_url=self.config_manager.get_setting("Ollama", "base_url"), timeout=timeout
         )
         self.file_service = FileService(self.config_manager)
-        self.metadata_db = MetadataDB()  # Initialize metadata database for caching
+        # Use shared database instances when provided (no ownership)
+        self.metadata_db = metadata_db if metadata_db is not None else MetadataDB()
+        self.analysis_db = analysis_db if analysis_db is not None else AnalysisDB()
 
         # Phase 7: Bundle suggestion services
-        self.analysis_db = AnalysisDB()
         self.bundling_service = BundlingService(self.analysis_db)
 
         # Analysis service for pre-processing files
@@ -1775,7 +1783,7 @@ class ConvertImagesWindow(QMainWindow):
         self.main_layout.addWidget(self.thumbnail_scroll)
 
         # ===== PHASE 7: Bundle Suggestions View =====
-        self.bundle_suggestions_view = BundleSuggestionsView()
+        self.bundle_suggestions_view = BundleSuggestionsView(analysis_db=self.analysis_db)
         self.bundle_suggestions_view.bundle_accepted.connect(self._on_bundle_accepted)
         self.bundle_suggestions_view.bundle_modified.connect(self._on_bundle_modified)
         self.bundle_suggestions_view.bundle_rejected.connect(self._on_bundle_rejected)
@@ -2488,16 +2496,13 @@ class ConvertImagesWindow(QMainWindow):
             # Refresh preview with rotation applied
             self._refresh_preview_zoom()
 
-            print(
-                f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation}° (display-only, source file unchanged)"
+            logger.info(
+                f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation} degrees (display-only, source file unchanged)"
             )
 
         except Exception as e:
             show_warning(self, "Rotation Failed", f"Could not save rotation: {e}")
-            print(f"[Rotation] Error: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"[Rotation] Error: {e}", exc_info=True)
 
     # ===== VISUAL FEEDBACK METHODS (PHASE 6) =====
 
@@ -3451,9 +3456,9 @@ class ConvertImagesWindow(QMainWindow):
         if hasattr(self, "created_pdf_path") and os.path.exists(self.created_pdf_path):
             try:
                 os.remove(self.created_pdf_path)
-                print(f"Deleted preview PDF: {self.created_pdf_path}")
+                logger.debug(f"Deleted preview PDF: {self.created_pdf_path}")
             except Exception as e:
-                print(f"Warning: Could not delete preview PDF: {e}")
+                logger.warning(f"Could not delete preview PDF: {e}")
 
         # Return to Step 3
         self._setup_step3_ui()
@@ -3488,7 +3493,7 @@ class ConvertImagesWindow(QMainWindow):
 
         # Safety check: ensure we're still in Step 3 (Ordering)
         if not hasattr(self, "current_step") or self.current_step != WorkflowStep.ORDERING:
-            print("⚠ Content ordering completed but UI has moved to a different step")
+            logger.warning("Content ordering completed but UI has moved to a different step")
             return
 
         if isinstance(result, Exception):
@@ -3515,7 +3520,7 @@ class ConvertImagesWindow(QMainWindow):
                         f"✓ Pages reordered by content analysis (confidence: {confidence}). Review and approve."
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
         except Exception as e:
             show_critical(self, "Ordering Error", f"Failed to apply content-based ordering: {e}")
 
@@ -3949,7 +3954,7 @@ class ConvertImagesWindow(QMainWindow):
                     f"Found {len(analyzed_files)} analyzed file(s). Generating bundle suggestions..."
                 )
 
-            print(f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling")
+            logger.info(f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling")
 
             # Generate bundle suggestions immediately (no analysis needed)
             self._load_and_show_bundle_suggestions()
@@ -3969,7 +3974,7 @@ class ConvertImagesWindow(QMainWindow):
 
             # Check if this file has already been processed (in page_states)
             if next_file in self.page_states:
-                print(f"⚠ Skipping already processed file: {os.path.basename(next_file)}")
+                logger.debug(f"Skipping already processed file: {os.path.basename(next_file)}")
                 self.current_file_index += 1
                 continue
 
@@ -4075,7 +4080,7 @@ Files being sent to Ollama:
 
         if cached_metadata and cached_metadata.get("belongs_to_same_doc") is not None:
             # Use cached metadata instead of calling Ollama
-            print(f"✓ Using cached metadata for {os.path.basename(next_file)}")
+            logger.debug(f"Using cached metadata for {os.path.basename(next_file)}")
 
             # Convert cached data to expected format
             result = {
@@ -4095,7 +4100,7 @@ Files being sent to Ollama:
             return
 
         # No cache or stale cache - call Ollama
-        print(f"⟳ Fetching fresh metadata for {os.path.basename(next_file)}")
+        logger.info(f"Fetching fresh metadata for {os.path.basename(next_file)}")
 
         # Start spinner animation
         if hasattr(self, "step1_spinner_timer"):
@@ -4128,7 +4133,7 @@ Files being sent to Ollama:
 
         # Safety check: ensure we're still in Step 1 (Stitching)
         if not hasattr(self, "current_step") or self.current_step != WorkflowStep.STITCHING:
-            print("⚠ Page validation completed but UI has moved to a different step")
+            logger.warning("Page validation completed but UI has moved to a different step")
             return
 
         # Hide cancel request button, keep abort visible
@@ -4136,7 +4141,7 @@ Files being sent to Ollama:
             try:
                 self.cancel_request_button.setVisible(False)
             except RuntimeError:
-                print("⚠ Step 1 UI no longer exists")
+                logger.warning("Step 1 UI no longer exists")
                 return
 
         # Extract validation result and comprehensive metadata
@@ -4194,11 +4199,11 @@ Files being sent to Ollama:
                     model_used=selected_model,
                     processing_time_ms=processing_time_ms,
                 )
-                print(
-                    f"✓ Cached metadata for {os.path.basename(evaluated_file)} ({processing_time_ms}ms)"
+                logger.debug(
+                    f"Cached metadata for {os.path.basename(evaluated_file)} ({processing_time_ms}ms)"
                 )
             except Exception as e:
-                print(f"⚠ Failed to cache metadata: {e}")
+                logger.warning(f"Failed to cache metadata: {e}")
 
         # Store page metadata for ordering step
         metadata = {
@@ -4230,7 +4235,7 @@ Files being sent to Ollama:
                         f"Group has {len(self.current_group)} page(s). Use buttons to override."
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
             return
 
         if belongs:
@@ -4252,7 +4257,7 @@ Files being sent to Ollama:
                         f"({files_remaining} remaining)"
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
 
             # Auto-load next page
             if self.current_file_index < len(self.all_files):
@@ -4266,7 +4271,7 @@ Files being sent to Ollama:
                             f"Click Exclude to finish stitching."
                         )
                     except RuntimeError:
-                        print("⚠ Status label no longer exists")
+                        logger.warning("Status label no longer exists")
         else:
             # Ollama says NO - mark as excluded visually, let user decide
             self._update_thumbnail_state(evaluated_file, "excluded")
@@ -4293,7 +4298,7 @@ Files being sent to Ollama:
                         f"Use buttons to Include, Skip, or Finish Group."
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
 
             # Start auto-approval on Approve button if group is not empty
             if (
@@ -4304,7 +4309,7 @@ Files being sent to Ollama:
                 try:
                     self._start_auto_approval(self.exclude_button, "Approve")
                 except RuntimeError:
-                    print("⚠ Exclude button no longer exists")
+                    logger.warning("Exclude button no longer exists")
 
     def _on_include_current_page(self):
         """User clicked Include button - change excluded page to included or include new page"""
@@ -4656,9 +4661,9 @@ Files being sent to Ollama:
                 cursor = self.metadata_db.conn.cursor()
                 cursor.execute("DELETE FROM active_metadata WHERE file_path = ?", (current_page,))
                 self.metadata_db.conn.commit()
-                print(f"✓ Cleared cached metadata for {os.path.basename(current_page)}")
+                logger.debug(f"Cleared cached metadata for {os.path.basename(current_page)}")
         except Exception as e:
-            print(f"⚠ Error clearing cache: {e}")
+            logger.warning(f"Error clearing cache: {e}")
 
         # Remove from page_metadata_list
         self.page_metadata_list = [
@@ -4888,8 +4893,8 @@ Files being sent to Ollama:
         """Add a thumbnail to the thumbnail strip with status indicator"""
         # Check if this image is already in the thumbnail strip
         if image_path in self.page_states:
-            print(
-                f"⚠ Skipping duplicate thumbnail: {os.path.basename(image_path)} (already in strip)"
+            logger.debug(
+                f"Skipping duplicate thumbnail: {os.path.basename(image_path)} (already in strip)"
             )
             return
 
@@ -4897,7 +4902,7 @@ Files being sent to Ollama:
         for i in range(self.thumbnail_layout.count()):
             widget = self.thumbnail_layout.itemAt(i).widget()
             if widget and widget.property("image_path") == image_path:
-                print(f"⚠ Thumbnail already exists in layout: {os.path.basename(image_path)}")
+                logger.debug(f"Thumbnail already exists in layout: {os.path.basename(image_path)}")
                 return
 
         self.page_states[image_path] = state
@@ -5161,12 +5166,10 @@ Files being sent to Ollama:
         # DEBUG: Verify current_group contents
         import os
 
-        print("\n=== DEBUG: Metadata Extraction ===")
-        print(f"current_group length: {len(self.current_group)}")
+        logger.debug("Metadata Extraction - current_group length: %d", len(self.current_group))
         for i, img_path in enumerate(self.current_group, 1):
             exists = os.path.exists(img_path) if img_path else False
-            print(f"  Image {i}: exists={exists} | path={img_path}")
-        print("=================================\n")
+            logger.debug("  Image %d: exists=%s | path=%s", i, exists, img_path)
 
         # Store the request prompt for debugging (with file paths)
         file_list = "\n".join(
@@ -5205,14 +5208,14 @@ Files being sent to Ollama:
 
         # Safety check: ensure UI elements still exist (user may have navigated away)
         if not hasattr(self, "cancel_ollama_button") or not self.cancel_ollama_button:
-            print("⚠ Metadata extraction completed but UI has changed - ignoring result")
+            logger.warning("Metadata extraction completed but UI has changed - ignoring result")
             return
 
         # Try to access button, but handle gracefully if deleted
         try:
             self.cancel_ollama_button.setEnabled(False)
         except RuntimeError:
-            print("⚠ Metadata extraction completed but Step 2 UI no longer exists")
+            logger.warning("Metadata extraction completed but Step 2 UI no longer exists")
             return
 
         if isinstance(result, Exception):
@@ -5242,7 +5245,7 @@ Files being sent to Ollama:
             if hasattr(self, "date_edit") and self.date_edit:
                 self.date_edit.setText(result.get("date", "") or "")
         except RuntimeError as e:
-            print(f"⚠ UI elements deleted during metadata update: {e}")
+            logger.warning(f"UI elements deleted during metadata update: {e}")
             return
 
         # Store raw response for debugging
@@ -5256,7 +5259,7 @@ Files being sent to Ollama:
             if hasattr(self, "continue_button") and self.continue_button:
                 self.continue_button.setEnabled(True)
         except RuntimeError as e:
-            print(f"⚠ Button access failed: {e}")
+            logger.warning(f"Button access failed: {e}")
             return
 
         self.status_label.setText("✓ Metadata extracted successfully. Review and click Approve.")
@@ -5496,13 +5499,15 @@ Files being sent to Ollama:
                     document_metadata=document_metadata,
                 )
 
-                print(f"✓ Archived metadata for {os.path.basename(self.created_pdf_path)}")
-                print(f"  - {len(self.current_group)} source files")
-                print(f"  - Company: {document_metadata.get('company')}")
-                print(f"  - Type: {document_metadata.get('title')}")
+                logger.info(
+                    f"Archived metadata for {os.path.basename(self.created_pdf_path)} - "
+                    f"{len(self.current_group)} source files, "
+                    f"Company: {document_metadata.get('company')}, "
+                    f"Type: {document_metadata.get('title')}"
+                )
 
             except Exception as e:
-                print(f"⚠ Failed to archive metadata: {e}")
+                logger.warning(f"Failed to archive metadata: {e}")
                 # Don't fail the whole operation if archival fails
 
             # Reset UI state before processing
@@ -5568,7 +5573,7 @@ Files being sent to Ollama:
 
     def _on_analysis_complete_proceed_to_bundling(self, stats):
         """Analysis complete - proceed to bundle suggestions"""
-        print(f"[ConvertImages] Analysis complete: {stats}")
+        logger.info(f"[ConvertImages] Analysis complete: {stats}")
         if hasattr(self, "status_label") and self.status_label:
             self.status_label.setText(
                 f"Analysis complete. Generating bundle suggestions for {len(self.all_files)} file(s)..."
@@ -5580,13 +5585,13 @@ Files being sent to Ollama:
         """Generate and display bundle suggestions using guided workflow"""
         try:
             # Generate bundle suggestions using BundlingService
-            print(
+            logger.info(
                 f"[Bundle Suggestions] Generating recommendations for {len(self.all_files)} files..."
             )
             bundles = self.bundling_service.generate_bundle_recommendations(self.all_files)
 
             if bundles and len(bundles) > 0:
-                print(
+                logger.info(
                     f"[Bundle Suggestions] Launching guided workflow with {len(bundles)} suggestions"
                 )
 
@@ -5620,17 +5625,16 @@ Files being sent to Ollama:
 
             else:
                 # No bundles found, skip to manual workflow
-                print("[Bundle Suggestions] No bundles generated, skipping to manual workflow")
+                logger.info(
+                    "[Bundle Suggestions] No bundles generated, skipping to manual workflow"
+                )
                 self.status_label.setText(
                     "No bundle suggestions generated. Proceeding to manual stitching..."
                 )
                 QTimer.singleShot(1000, self._on_skip_to_manual_workflow)
 
         except Exception as e:
-            print(f"[Bundle Suggestions] Error generating suggestions: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"[Bundle Suggestions] Error generating suggestions: {e}", exc_info=True)
             # Fall back to manual workflow
             show_warning(
                 self,
@@ -5683,7 +5687,7 @@ Files being sent to Ollama:
 
     def _on_bundle_accepted_from_workflow(self, bundle):
         """Handle bundle acceptance from guided workflow."""
-        print(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
+        logger.info(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
         # The workflow already handled PDF conversion and database updates
         # Just track it in completed groups
         file_paths = bundle.get("file_paths", [])
@@ -5704,7 +5708,7 @@ Files being sent to Ollama:
         bundle_id = bundle.get("bundle_id")
         if bundle_id:
             # Already marked as rejected in database by workflow
-            print(f"Bundle rejected from workflow: {bundle_id}")
+            logger.info(f"Bundle rejected from workflow: {bundle_id}")
 
     def _on_workflow_completed(self, stats):
         """Handle workflow completion."""
@@ -5717,15 +5721,15 @@ Files being sent to Ollama:
         if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
             try:
                 self._analysis_status_window._refresh_all()
-                print("[Auto-refresh] Updated metrics after bundle operation")
+                logger.debug("[Auto-refresh] Updated metrics after bundle operation")
             except Exception as e:
-                print(f"[Auto-refresh] Failed to refresh metrics: {e}")
+                logger.warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     # ===== PHASE 7: Bundle Suggestion Handlers =====
 
     def _on_bundle_accepted(self, bundle_data):
         """Handle bundle acceptance - add to completed groups"""
-        print(
+        logger.info(
             f"[Bundle] Accepted: {bundle_data.get('document_type')} - {bundle_data.get('company')}"
         )
         file_paths = bundle_data.get("file_paths", [])
@@ -5809,7 +5813,7 @@ Files being sent to Ollama:
 
     def _on_bundle_modified(self, bundle_data):
         """Handle bundle modification - launch bundle review window"""
-        print(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
+        logger.info(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
 
         bundle_id = bundle_data.get("id")
         if not bundle_id:
@@ -5841,7 +5845,7 @@ Files being sent to Ollama:
         bundle_id = result_data.get("bundle_id")
         file_paths = result_data.get("file_paths", [])
 
-        print(f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages")
+        logger.info(f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages")
 
         # Remove this bundle from display
         self._remove_bundle_card(bundle_id)
@@ -5862,7 +5866,7 @@ Files being sent to Ollama:
         """Handle bundle review rejection."""
         bundle_id = bundle_data.get("bundle_id")
 
-        print(f"[Bundle Review] Rejected bundle {bundle_id}")
+        logger.info(f"[Bundle Review] Rejected bundle {bundle_id}")
 
         # Mark bundle as rejected in database
         from services.bundling_service import BundlingService
@@ -5895,7 +5899,7 @@ Files being sent to Ollama:
 
     def _on_bundle_rejected(self, bundle_data):
         """Handle bundle rejection - pages remain in pool for manual processing"""
-        print(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
+        logger.info(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
         file_paths = bundle_data.get("file_paths", [])
 
         # Display confirmation
@@ -6030,7 +6034,7 @@ Files being sent to Ollama:
 
     def _show_bundle_view(self):
         """Show bundle suggestions view and hide three-column layout"""
-        print("[Bundle View] Showing bundle suggestions view")
+        logger.info("[Bundle View] Showing bundle suggestions view")
 
         # Stop and clear any loading UI
         if hasattr(self, "loading_spinner_timer") and self.loading_spinner_timer.isActive():
@@ -6067,7 +6071,7 @@ Files being sent to Ollama:
 
     def _show_manual_view(self):
         """Show three-column manual stitching view and hide bundle suggestions"""
-        print("[Manual View] Showing three-column layout")
+        logger.info("[Manual View] Showing three-column layout")
 
         # Hide bundle suggestions view
         self.bundle_suggestions_view.setVisible(False)
@@ -6085,7 +6089,7 @@ Files being sent to Ollama:
 
     def _on_skip_to_manual_workflow(self):
         """Skip bundle suggestions and go to manual stitching"""
-        print("[Bundle] Skipping to manual workflow")
+        logger.info("[Bundle] Skipping to manual workflow")
 
         # Setup Step 1 UI if not already done
         if self.current_step != WorkflowStep.STITCHING:
@@ -6116,7 +6120,9 @@ class StartupWindow(QWidget):
         self.analysis_service = None
         self.analysis_worker = None
         self.analysis_start_time = None
-        self.analysis_db = AnalysisDB()  # Initialize database for stats
+        # Shared database instances - created once, passed to all child windows
+        self.analysis_db = AnalysisDB()
+        self.metadata_db = MetadataDB()
         self._init_ui()
 
     def _init_ui(self):
@@ -6332,15 +6338,12 @@ class StartupWindow(QWidget):
         """Launch workflow immediately with cached results, analyze new files in workflow."""
         from PyQt6.QtWidgets import QMessageBox
 
-        from config.config_manager import ConfigManager
-        from db.analysis_db import AnalysisDB
-        from db.metadata_db import MetadataDB
         from services.bundling_service import BundlingService
 
-        # Initialize services
-        config_manager = ConfigManager()
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
+        # Use shared database instances
+        analysis_db = self.analysis_db
+        metadata_db = self.metadata_db
+        config_manager = self.config_manager
         bundling_service = BundlingService(analysis_db)
 
         try:
@@ -6408,26 +6411,18 @@ class StartupWindow(QWidget):
             QMessageBox.critical(self, "Workflow Failed", f"Failed to launch workflow:\n\n{str(e)}")
             self.show()
 
-        finally:
-            # Clean up
-            analysis_db.close()
-            metadata_db.close()
-
     def _run_full_analysis_then_launch(self):
         """Run full analysis with progress dialog, then launch workflow."""
         from PyQt6.QtCore import QApplication
         from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 
-        from config.config_manager import ConfigManager
-        from db.analysis_db import AnalysisDB
-        from db.metadata_db import MetadataDB
         from services.analysis_service import AnalysisService
         from services.bundling_service import BundlingService
 
-        # Initialize services
-        config_manager = ConfigManager()
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
+        # Use shared database instances
+        config_manager = self.config_manager
+        analysis_db = self.analysis_db
+        metadata_db = self.metadata_db
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
         bundling_service = BundlingService(analysis_db)
 
@@ -6534,11 +6529,6 @@ class StartupWindow(QWidget):
             )
             self.show()
 
-        finally:
-            # Clean up
-            analysis_db.close()
-            metadata_db.close()
-
     def _prepare_workflow_bundles(self, bundles, analysis_db):
         """Prepare bundles for guided workflow."""
         workflow_bundles = []
@@ -6588,7 +6578,9 @@ class StartupWindow(QWidget):
         )
 
     def show_settings_window(self):
-        settings_window = EnhancedSettingsWindow(self)
+        settings_window = EnhancedSettingsWindow(
+            self, analysis_db=self.analysis_db, metadata_db=self.metadata_db
+        )
         settings_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         settings_window.setWindowModality(Qt.WindowModality.ApplicationModal)
         settings_window.show()
@@ -6600,27 +6592,11 @@ class StartupWindow(QWidget):
         """Manually trigger document analysis - opens status window with auto-start"""
         # Initialize analysis service if not already done
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from config.config_manager import ConfigManager
-            from db.analysis_db import AnalysisDB
-            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
-            config_manager = ConfigManager()
-            self.analysis_db = AnalysisDB()
-            self.metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(
-                config_manager, self.analysis_db, self.metadata_db
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-        # Ensure database instances exist
-        if not hasattr(self, "analysis_db") or self.analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        if not hasattr(self, "metadata_db") or self.metadata_db is None:
-            from db.metadata_db import MetadataDB
-
-            self.metadata_db = MetadataDB()
 
         # Open status window with auto-start based on config
         auto_start = self.config_manager.get_bool("GUI", "auto_start_analysis", False)
@@ -6643,27 +6619,11 @@ class StartupWindow(QWidget):
         """Show the Analysis Status window"""
         # Initialize analysis service if needed
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from config.config_manager import ConfigManager
-            from db.analysis_db import AnalysisDB
-            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
-            config_manager = ConfigManager()
-            self.analysis_db = AnalysisDB()
-            self.metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(
-                config_manager, self.analysis_db, self.metadata_db
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-        # Ensure database instances exist
-        if not hasattr(self, "analysis_db") or self.analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        if not hasattr(self, "metadata_db") or self.metadata_db is None:
-            from db.metadata_db import MetadataDB
-
-            self.metadata_db = MetadataDB()
 
         status_window = AnalysisStatusWindow(
             parent=self,
@@ -6746,19 +6706,18 @@ class StartupWindow(QWidget):
         """Check for unanalyzed files and show welcome dialog if needed"""
         import glob
 
-        from db.analysis_db import AnalysisDB
         from services.logging_service import get_logger
 
         logger = get_logger()
 
-        analysis_db = AnalysisDB()
+        # Use shared analysis_db instance
+        analysis_db = self.analysis_db
 
         # Get scan folder
         scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
         logger.debug(f"Scan folder: {scan_folder}")
         if not scan_folder or not os.path.exists(scan_folder):
             logger.debug("Scan folder doesn't exist or not set")
-            analysis_db.close()
             return
 
         # Count PNG/JPG files (use set to avoid duplicates)
@@ -6771,7 +6730,6 @@ class StartupWindow(QWidget):
         logger.debug(f"Total files found: {total_files}")
         if total_files == 0:
             logger.debug("No files found, returning")
-            analysis_db.close()
             return
 
         # Count analyzed files
@@ -6779,8 +6737,6 @@ class StartupWindow(QWidget):
         for image_path in image_files:
             if analysis_db.get_analysis(image_path):
                 analyzed_count += 1
-
-        analysis_db.close()
 
         unanalyzed_count = total_files - analyzed_count
         logger.debug(f"Analyzed: {analyzed_count}, Unanalyzed: {unanalyzed_count}")
@@ -6821,16 +6777,11 @@ class StartupWindow(QWidget):
 
                 if reply == QMessageBox.StandardButton.Yes:
                     logger.info(f"User chose to analyze {unanalyzed_count} documents")
-                    # Open status window with auto-start
-                    from db.metadata_db import MetadataDB
-
-                    status_analysis_db = AnalysisDB()
-                    status_metadata_db = MetadataDB()
-
+                    # Open status window with auto-start using shared DB instances
                     status_window = AnalysisStatusWindow(
                         parent=self,
-                        analysis_db=status_analysis_db,
-                        metadata_db=status_metadata_db,
+                        analysis_db=self.analysis_db,
+                        metadata_db=self.metadata_db,
                         analysis_service=analysis_service,
                         config_manager=self.config_manager,
                         auto_start_analysis=True,
@@ -6853,9 +6804,9 @@ class StartupWindow(QWidget):
         if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
             try:
                 self._analysis_status_window._refresh_all()
-                print("[Auto-refresh] Updated metrics after bundle operation")
+                logger.debug("[Auto-refresh] Updated metrics after bundle operation")
             except Exception as e:
-                print(f"[Auto-refresh] Failed to refresh metrics: {e}")
+                logger.warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     def closeEvent(self, event):  # noqa: N802
         """Handle window close event with optional confirmation"""
@@ -6870,11 +6821,24 @@ class StartupWindow(QWidget):
             )
 
             if reply == QMessageBox.StandardButton.Yes:
+                self._cleanup_shared_db()
                 event.accept()
             else:
                 event.ignore()
         else:
+            self._cleanup_shared_db()
             event.accept()
+
+    def _cleanup_shared_db(self):
+        """Close shared database connections on application exit."""
+        import contextlib
+
+        if hasattr(self, "analysis_db") and self.analysis_db:
+            with contextlib.suppress(Exception):
+                self.analysis_db.close()
+        if hasattr(self, "metadata_db") and self.metadata_db:
+            with contextlib.suppress(Exception):
+                self.metadata_db.close()
 
 
 class AnalysisWorker(QThread):
@@ -6894,9 +6858,9 @@ class AnalysisWorker(QThread):
         """Run analysis in background thread"""
         try:
             # Create new database connections in this thread to avoid SQLite thread errors
-            from analysis_db import AnalysisDB
-            from analysis_service import AnalysisService
-            from metadata_db import MetadataDB
+            from db.analysis_db import AnalysisDB
+            from db.metadata_db import MetadataDB
+            from services.analysis_service import AnalysisService
 
             analysis_db = AnalysisDB()
             metadata_db = MetadataDB()
@@ -6945,9 +6909,7 @@ class AnalysisWorker(QThread):
                     }
                 )
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"Analysis error: {e}", exc_info=True)
             self.finished.emit(
                 {
                     "total_files": 0,
@@ -7017,9 +6979,7 @@ class SpecificFilesAnalysisWorker(QThread):
                 }
             )
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"Analysis error: {e}", exc_info=True)
             self.finished.emit(
                 {
                     "total_files": len(self.file_paths),

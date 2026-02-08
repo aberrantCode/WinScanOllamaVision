@@ -9,8 +9,11 @@ from typing import Any, cast
 
 # Import the existing OllamaService
 from llm_providers.ollama_service import OllamaService
+from services.logging_service import get_logger
 
 from .base_provider import BaseLLMProvider
+
+logger = get_logger()
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -116,7 +119,7 @@ class OllamaProvider(BaseLLMProvider):
             models = self.service.list_models()
             return [model["name"] for model in models]
         except Exception as e:
-            print(f"Error listing Ollama models: {e}")
+            logger.error(f"Error listing Ollama models: {e}")
             return []
 
     def test_connection(self) -> bool:

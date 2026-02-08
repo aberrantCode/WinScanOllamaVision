@@ -5,6 +5,10 @@ from typing import Any
 import fitz  # PyMuPDF
 from PIL import Image
 
+from services.logging_service import get_logger
+
+logger = get_logger()
+
 
 class FileService:
     def __init__(self, config_manager):
@@ -42,7 +46,7 @@ class FileService:
             os.remove(tiff_path)  # Delete original TIFF after conversion
             return png_path
         except Exception as e:
-            print(f"Error converting TIFF {tiff_path} to PNG: {e}")
+            logger.error(f"Error converting TIFF {tiff_path} to PNG: {e}")
             return None
 
     def group_files_by_timestamp(
@@ -63,7 +67,7 @@ class FileService:
                 m_time = os.path.getmtime(f)
                 file_data.append({"path": f, "mtime": m_time})
             except Exception as e:
-                print(f"Warning: Could not get mtime for {f}: {e}. Skipping file.")
+                logger.warning(f"Could not get mtime for {f}: {e}. Skipping file.")
                 continue
 
         # Sort files by modification time
@@ -176,19 +180,19 @@ class FileService:
                                 )  # oc=0 makes text invisible but searchable.
                                 # An alternative might be fill=None, stroke=None, but oc is cleaner for searchability
 
-                print(f"Added {img_path} to PDF.")
+                logger.debug(f"Added {img_path} to PDF.")
             except Exception as e:
-                print(f"Error processing image {img_path} for PDF: {e}")
+                logger.error(f"Error processing image {img_path} for PDF: {e}")
                 # Decide if we want to fail the whole PDF or just skip the page
                 # For now, print error and continue, will result in fewer pages
 
         if not doc.page_count:
-            print("Warning: No pages were added to the PDF document.")
+            logger.warning("No pages were added to the PDF document.")
             return None
 
         doc.save(output_path)
         doc.close()
-        print(f"PDF created: {output_path}")
+        logger.info(f"PDF created: {output_path}")
         return output_path
 
     def delete_files(self, file_paths: list[str]):
@@ -196,17 +200,17 @@ class FileService:
         for f_path in file_paths:
             try:
                 os.remove(f_path)
-                print(f"Deleted: {f_path}")
+                logger.info(f"Deleted: {f_path}")
             except Exception as e:
-                print(f"Error deleting file {f_path}: {e}")
+                logger.error(f"Error deleting file {f_path}: {e}")
 
     def move_pdf_to_organized(self, pdf_path: str, new_filename: str) -> str | None:
         """Moves the created PDF to the organized folder with the new filename."""
         final_path = os.path.join(self.organized_folder, new_filename)
         try:
             shutil.move(pdf_path, final_path)
-            print(f"Moved PDF to {final_path}")
+            logger.info(f"Moved PDF to {final_path}")
             return final_path
         except Exception as e:
-            print(f"Error moving PDF {pdf_path} to {final_path}: {e}")
+            logger.error(f"Error moving PDF {pdf_path} to {final_path}: {e}")
             return None

@@ -39,7 +39,7 @@ class ClickableLabel(QLabel):
 class EnlargedPagesDialog(QDialog):
     """Dialog to display enlarged pages from a bundle with navigation"""
 
-    def __init__(self, file_paths: list[str], analysis_db=None, parent=None):
+    def __init__(self, file_paths: list[str], analysis_db, parent=None):
         super().__init__(parent)
         self.file_paths = file_paths
         self.current_page_index = 0
@@ -47,13 +47,8 @@ class EnlargedPagesDialog(QDialog):
         self.zoom_level = 100  # Default zoom level (100%)
         self.image_labels: list[QLabel] = []  # Store image labels for zoom updates
         self.original_pixmaps: list[QPixmap] = []  # Store original pixmaps for re-scaling
-        # Get analysis_db for metadata tooltips
-        if analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        else:
-            self.analysis_db = analysis_db
+        # Use shared analysis_db for metadata tooltips (injected, not owned)
+        self.analysis_db = analysis_db
         self.setWindowTitle("Bundle Pages - Enlarged View")
         self.setMinimumSize(800, 600)
         self._init_ui()
@@ -464,13 +459,11 @@ class BundleSuggestionCard(QFrame):
     modified = pyqtSignal(dict)  # Emitted when user wants to modify
     rejected = pyqtSignal(dict)  # Emitted when bundle is rejected
 
-    def __init__(self, bundle_data: dict[str, Any], parent=None):
+    def __init__(self, bundle_data: dict[str, Any], analysis_db, parent=None):
         super().__init__(parent)
         self.bundle_data = bundle_data
-        # Import here to avoid circular imports
-        from db.analysis_db import AnalysisDB
-
-        self.analysis_db = AnalysisDB()
+        # Use shared analysis_db instance (injected, not owned)
+        self.analysis_db = analysis_db
         self._init_ui()
 
     def _init_ui(self):
@@ -795,8 +788,9 @@ class BundleSuggestionsView(QWidget):
     accept_all_high = pyqtSignal()  # Accept all high confidence bundles
     skip_to_manual = pyqtSignal()  # Skip to manual workflow
 
-    def __init__(self, parent=None):
+    def __init__(self, analysis_db=None, parent=None):
         super().__init__(parent)
+        self.analysis_db = analysis_db
         self.bundle_cards = []
         self.loading_dot_count = 0
         self.loading_timer = None
@@ -1032,7 +1026,7 @@ class BundleSuggestionsView(QWidget):
 
         # Add new cards
         for bundle in bundles:
-            card = BundleSuggestionCard(bundle)
+            card = BundleSuggestionCard(bundle, analysis_db=self.analysis_db)
             card.accepted.connect(self.bundle_accepted.emit)
             card.modified.connect(self.bundle_modified.emit)
             card.rejected.connect(self.bundle_rejected.emit)

@@ -100,6 +100,13 @@ class ProviderFactory:
 
 # Example usage
 if __name__ == "__main__":
+    import logging
+
+    from services.logging_service import LoggingService, get_logger
+
+    LoggingService().initialize(log_level=logging.DEBUG, console_output=True)
+    _logger = get_logger()
+
     # Test creating providers
     ollama_config = {"base_url": "http://localhost:11434", "timeout": 300, "model": "qwen2.5-vl"}
 
@@ -110,15 +117,15 @@ if __name__ == "__main__":
         "models": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
     }
 
-    print("Creating Ollama provider...")
+    _logger.info("Creating Ollama provider...")
     ollama_provider = ProviderFactory.create_provider("ollama", ollama_config)
-    print(f"Created: {ollama_provider}")
-    print(f"Available models: {ollama_provider.get_available_models()}")
+    _logger.info(f"Created: {ollama_provider}")
+    _logger.info(f"Available models: {ollama_provider.get_available_models()}")
 
-    print("\nCreating Claude CLI provider...")
+    _logger.info("Creating Claude CLI provider...")
     claude_provider = ProviderFactory.create_provider("claude_cli", claude_config)
-    print(f"Created: {claude_provider}")
-    print(f"Available models: {claude_provider.get_available_models()}")
+    _logger.info(f"Created: {claude_provider}")
+    _logger.info(f"Available models: {claude_provider.get_available_models()}")
 
-    print("\nAvailable provider types:", ProviderFactory.get_available_provider_types())
-    print("Test completed successfully!")
+    _logger.info(f"Available provider types: {ProviderFactory.get_available_provider_types()}")
+    _logger.info("Test completed successfully!")

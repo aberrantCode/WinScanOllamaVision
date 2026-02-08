@@ -23,6 +23,9 @@ from PyQt6.QtWidgets import (
 )
 
 from db.analysis_db import AnalysisDB
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class AnalysisStatusWindow(QDialog):
@@ -41,7 +44,10 @@ class AnalysisStatusWindow(QDialog):
         auto_start_analysis: bool = False,
     ):
         super().__init__(parent)
-        self.analysis_db = analysis_db if analysis_db else AnalysisDB()
+        # Track ownership: only close DB connections we create ourselves
+        self._owns_analysis_db = analysis_db is None
+        self._owns_metadata_db = metadata_db is None
+        self.analysis_db = analysis_db if analysis_db is not None else AnalysisDB()
         self.config_manager = config_manager
         self.analysis_service = analysis_service
         self._auto_start_analysis = auto_start_analysis
@@ -661,7 +667,7 @@ class AnalysisStatusWindow(QDialog):
         except Exception as e:
             # Silently ignore errors during shutdown
             if self.analysis_db and self.analysis_db.connection:
-                print(f"Error refreshing collection status: {e}")
+                logger.error(f"Error refreshing collection status: {e}")
 
     def _calculate_collection_statistics(self):
         """Calculate comprehensive collection statistics from database"""
@@ -1173,14 +1179,12 @@ class AnalysisStatusWindow(QDialog):
         if not self.analysis_service:
             from PyQt6.QtWidgets import QMessageBox
 
-            # Create analysis service if not provided
+            # Create analysis service if not provided, using existing db instances
             if self.config_manager:
-                from db.metadata_db import MetadataDB
                 from services.analysis_service import AnalysisService
 
-                metadata_db = MetadataDB()
                 self.analysis_service = AnalysisService(
-                    self.config_manager, self.analysis_db, metadata_db
+                    self.config_manager, self.analysis_db, self.metadata_db
                 )
             else:
                 QMessageBox.warning(
@@ -1695,8 +1699,10 @@ class AnalysisStatusWindow(QDialog):
             self.analysis_worker.cancel()
             self.analysis_worker.wait(2000)  # Wait max 2 seconds
 
-        # Close database connection
-        if self.analysis_db:
+        # Close database connection only if we own it (not injected)
+        if self._owns_analysis_db and self.analysis_db:
             self.analysis_db.close()
+        if self._owns_metadata_db and self.metadata_db:
+            self.metadata_db.close()
 
         super().closeEvent(event)

@@ -110,7 +110,8 @@ class MetadataDB:
         if use_cache and self._companies_cache is not None:
             return self._companies_cache
 
-        assert self.connection.connection is not None
+        if self.connection.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT DISTINCT company
@@ -130,7 +131,8 @@ class MetadataDB:
         if use_cache and self._titles_cache is not None:
             return self._titles_cache
 
-        assert self.connection.connection is not None
+        if self.connection.connection is None:
+            raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT DISTINCT document_type
