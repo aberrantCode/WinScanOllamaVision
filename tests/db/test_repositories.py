@@ -419,7 +419,7 @@ class TestBundleRepository:
         initial_result = cursor.execute(
             "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
         ).fetchone()
-        initial_timestamp = initial_result["updated_at"]
+        _ = initial_result["updated_at"]  # Verify field exists but we don't use it
 
         # Act - update PDF path
         repo.update_pdf_path(bundle_id, "/output/doc.pdf")
@@ -710,3 +710,274 @@ class TestErrorRepository:
         # Assert
         count = repo.get_error_count()
         assert count == 0
+
+
+class TestImageFilesRepository:
+    """Tests for ImageFilesRepository"""
+
+    @pytest.fixture
+    def temp_db_path(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        yield db_path
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+    @pytest.fixture
+    def conn(self, temp_db_path):
+        connection = DatabaseConnection(temp_db_path)
+        from db.schema import create_all_tables
+
+        create_all_tables(connection)
+        yield connection
+        connection.close()
+
+    @pytest.fixture
+    def repo(self, conn):
+        from db.repositories.image_files_repo import ImageFilesRepository
+
+        return ImageFilesRepository(conn)
+
+    def test_register_new_image(self, repo):
+        # Act
+        image_id = repo.register(
+            file_path="/test/image1.png",
+            file_hash="hash123",
+            directory_path="/test",
+            filename="image1.png",
+            file_size=1024,
+            file_mtime=1234567890.0,
+        )
+
+        # Assert
+        assert image_id > 0
+        image = repo.get_by_path("/test/image1.png")
+        assert image is not None
+        assert image["file_hash"] == "hash123"
+        assert image["status"] == "registered"
+
+    def test_register_replaces_existing(self, repo):
+        # Arrange - register first time
+        repo.register(
+            "/test/image1.png",
+            "hash123",
+            "/test",
+            "image1.png",
+            1024,
+            1234567890.0,
+        )
+
+        # Act - register again with different hash
+        repo.register(
+            "/test/image1.png",
+            "hash456",
+            "/test",
+            "image1.png",
+            2048,
+            1234567891.0,
+        )
+
+        # Assert - should be replaced
+        image = repo.get_by_path("/test/image1.png")
+        assert image["file_hash"] == "hash456"
+        assert image["file_size"] == 2048
+
+    def test_get_by_path_nonexistent(self, repo):
+        # Act
+        image = repo.get_by_path("/nonexistent.png")
+
+        # Assert
+        assert image is None
+
+    def test_get_by_directory(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        repo.register("/other/img3.png", "h3", "/other", "img3.png", 300, 125.0)
+
+        # Act
+        test_images = repo.get_by_directory("/test")
+
+        # Assert
+        assert len(test_images) == 2
+        assert all(img["directory_path"] == "/test" for img in test_images)
+
+    def test_get_by_status(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        repo.update_status("/test/img1.png", "analyzed", analysis_id=1)
+
+        # Act
+        registered = repo.get_by_status("registered")
+        analyzed = repo.get_by_status("analyzed")
+
+        # Assert
+        assert len(registered) == 1
+        assert registered[0]["file_path"] == "/test/img2.png"
+        assert len(analyzed) == 1
+        assert analyzed[0]["file_path"] == "/test/img1.png"
+
+    def test_get_all_excludes_deleted(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        repo.mark_deleted("/test/img2.png")
+
+        # Act
+        all_images = repo.get_all()
+
+        # Assert
+        assert len(all_images) == 1
+        assert all_images[0]["file_path"] == "/test/img1.png"
+
+    def test_update_status_without_analysis_id(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+
+        # Act
+        repo.update_status("/test/img1.png", "analyzing")
+
+        # Assert
+        image = repo.get_by_path("/test/img1.png")
+        assert image["status"] == "analyzing"
+        assert image["analysis_id"] is None
+
+    def test_update_status_with_analysis_id(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+
+        # Act
+        repo.update_status("/test/img1.png", "analyzed", analysis_id=42)
+
+        # Assert
+        image = repo.get_by_path("/test/img1.png")
+        assert image["status"] == "analyzed"
+        assert image["analysis_id"] == 42
+
+    def test_update_last_seen(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        image_before = repo.get_by_path("/test/img1.png")
+        discovered = image_before["discovered_at"]
+        last_seen_before = image_before["last_seen_at"]
+
+        # Act
+        import time
+
+        time.sleep(0.1)  # Ensure timestamp difference
+        repo.update_last_seen("/test/img1.png")
+
+        # Assert
+        image_after = repo.get_by_path("/test/img1.png")
+        assert image_after["discovered_at"] == discovered  # Should not change
+        # Last seen may be same or later due to CURRENT_TIMESTAMP resolution
+        assert image_after["last_seen_at"] >= last_seen_before
+
+    def test_update_hash(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "old_hash", "/test", "img1.png", 100, 123.0)
+
+        # Act
+        repo.update_hash("/test/img1.png", "new_hash")
+
+        # Assert
+        image = repo.get_by_path("/test/img1.png")
+        assert image["file_hash"] == "new_hash"
+
+    def test_mark_deleted(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+
+        # Act
+        repo.mark_deleted("/test/img1.png")
+
+        # Assert
+        image = repo.get_by_path("/test/img1.png")
+        assert image["status"] == "deleted"
+        assert image["deleted_at"] is not None
+
+    def test_mark_deleted_batch(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        repo.register("/test/img3.png", "h3", "/test", "img3.png", 300, 125.0)
+
+        # Act
+        count = repo.mark_deleted_batch(["/test/img1.png", "/test/img2.png"])
+
+        # Assert
+        assert count == 2
+        img1 = repo.get_by_path("/test/img1.png")
+        img2 = repo.get_by_path("/test/img2.png")
+        img3 = repo.get_by_path("/test/img3.png")
+
+        assert img1["status"] == "deleted"
+        assert img2["status"] == "deleted"
+        assert img3["status"] == "registered"
+
+    def test_mark_deleted_batch_empty(self, repo):
+        # Act
+        count = repo.mark_deleted_batch([])
+
+        # Assert
+        assert count == 0
+
+    def test_set_output_filename(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+
+        # Act
+        repo.set_output_filename("/test/img1.png", "output_doc.pdf")
+
+        # Assert
+        image = repo.get_by_path("/test/img1.png")
+        assert image["output_filename"] == "output_doc.pdf"
+
+    def test_get_stats(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        repo.register("/test/img3.png", "h3", "/test", "img3.png", 300, 125.0)
+        repo.register("/test/img4.png", "h4", "/test", "img4.png", 400, 126.0)
+
+        repo.update_status("/test/img1.png", "analyzed", analysis_id=1)
+        repo.update_status("/test/img2.png", "bundled")
+        repo.mark_deleted("/test/img3.png")
+        # img4 remains "registered"
+
+        # Act
+        stats = repo.get_stats()
+
+        # Assert
+        assert stats["total"] == 3  # Excludes deleted
+        assert stats["status_registered"] == 1
+        assert stats["status_analyzed"] == 1
+        assert stats["status_bundled"] == 1
+        assert stats["status_deleted"] == 1
+
+    def test_status_transitions(self, repo):
+        # Arrange
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+
+        # Act & Assert - registered → analyzing
+        repo.update_status("/test/img1.png", "analyzing")
+        img = repo.get_by_path("/test/img1.png")
+        assert img["status"] == "analyzing"
+
+        # analyzing → analyzed
+        repo.update_status("/test/img1.png", "analyzed", analysis_id=1)
+        img = repo.get_by_path("/test/img1.png")
+        assert img["status"] == "analyzed"
+        assert img["analysis_id"] == 1
+
+        # analyzed → bundled
+        repo.update_status("/test/img1.png", "bundled")
+        img = repo.get_by_path("/test/img1.png")
+        assert img["status"] == "bundled"
+
+        # bundled → deleted
+        repo.mark_deleted("/test/img1.png")
+        img = repo.get_by_path("/test/img1.png")
+        assert img["status"] == "deleted"
+        assert img["deleted_at"] is not None
