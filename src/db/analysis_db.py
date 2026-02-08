@@ -14,6 +14,8 @@ from db.repositories import (
     BundleRepository,
     DirectoryRepository,
     ErrorRepository,
+    ImageFilesRepository,
+    PdfFilesRepository,
     ProviderRepository,
     RotationRepository,
 )
@@ -47,6 +49,8 @@ class AnalysisDB:
         self._errors = ErrorRepository(self.connection)
         self._rotation = RotationRepository(self.connection)
         self._audit = AuditRepository(self.connection)
+        self._image_files = ImageFilesRepository(self.connection)
+        self._pdf_files = PdfFilesRepository(self.connection)
 
     # ==================== Analysis Results Methods ====================
 
@@ -315,6 +319,113 @@ class AnalysisDB:
             GROUP BY document_type
         """)
         return {row[0]: row[1] for row in cursor.fetchall()}
+
+    # ==================== Image Files Methods ====================
+
+    def register_image_file(
+        self,
+        file_path: str,
+        file_hash: str,
+        directory_path: str,
+        filename: str,
+        file_size: int,
+        file_mtime: float,
+    ) -> int:
+        """Register a discovered image file."""
+        return self._image_files.register(
+            file_path, file_hash, directory_path, filename, file_size, file_mtime
+        )
+
+    def get_image_file(self, file_path: str) -> dict[str, Any] | None:
+        """Get image file record by path."""
+        return self._image_files.get_by_path(file_path)
+
+    def get_images_by_directory(self, directory_path: str) -> list[dict[str, Any]]:
+        """Get all images in a directory."""
+        return self._image_files.get_by_directory(directory_path)
+
+    def get_images_by_status(self, status: str) -> list[dict[str, Any]]:
+        """Get images by status (registered, analyzed, etc)."""
+        return self._image_files.get_by_status(status)
+
+    def get_registered_images(self) -> list[dict[str, Any]]:
+        """Get all registered (pending analysis) images."""
+        return self._image_files.get_by_status("registered")
+
+    def get_all_image_files(self) -> list[dict[str, Any]]:
+        """Get all image files (excluding deleted)."""
+        return self._image_files.get_all()
+
+    def update_image_status(
+        self, file_path: str, status: str, analysis_id: int | None = None
+    ) -> None:
+        """Update image file status."""
+        self._image_files.update_status(file_path, status, analysis_id)
+
+    def update_image_last_seen(self, file_path: str) -> None:
+        """Update last_seen_at timestamp."""
+        self._image_files.update_last_seen(file_path)
+
+    def update_image_hash(self, file_path: str, file_hash: str) -> None:
+        """Update file hash (used when file changes detected)."""
+        self._image_files.update_hash(file_path, file_hash)
+
+    def mark_image_deleted(self, file_path: str) -> None:
+        """Mark image as deleted (soft delete)."""
+        self._image_files.mark_deleted(file_path)
+
+    def mark_images_deleted_batch(self, file_paths: list[str]) -> int:
+        """Mark multiple images as deleted (batch operation)."""
+        return self._image_files.mark_deleted_batch(file_paths)
+
+    def set_image_output_filename(self, file_path: str, output_filename: str) -> None:
+        """Set proposed output filename for image."""
+        self._image_files.set_output_filename(file_path, output_filename)
+
+    def get_image_files_stats(self) -> dict[str, int]:
+        """Get image files statistics."""
+        return self._image_files.get_stats()
+
+    # ==================== PDF Files Methods ====================
+
+    def register_pdf_file(
+        self,
+        pdf_path: str,
+        pdf_filename: str,
+        bundle_id: int,
+        source_image_ids: list[int],
+        page_count: int,
+        file_hash: str | None = None,
+        file_size: int | None = None,
+    ) -> int:
+        """Register a generated PDF."""
+        return self._pdf_files.register(
+            pdf_path, pdf_filename, bundle_id, source_image_ids, page_count, file_hash, file_size
+        )
+
+    def get_pdf_file(self, pdf_path: str) -> dict[str, Any] | None:
+        """Get PDF record by path."""
+        return self._pdf_files.get_by_path(pdf_path)
+
+    def get_pdf_by_bundle(self, bundle_id: int) -> dict[str, Any] | None:
+        """Get PDF by bundle ID."""
+        return self._pdf_files.get_by_bundle(bundle_id)
+
+    def update_pdf_generation_status(self, pdf_path: str, status: str) -> None:
+        """Update PDF generation status."""
+        self._pdf_files.update_generation_status(pdf_path, status)
+
+    def update_pdf_searchability(self, pdf_path: str, is_searchable: bool) -> None:
+        """Update PDF searchability flag."""
+        self._pdf_files.update_searchability(pdf_path, is_searchable)
+
+    def get_all_pdf_files(self) -> list[dict[str, Any]]:
+        """Get all generated PDFs."""
+        return self._pdf_files.get_all()
+
+    def get_pdf_files_stats(self) -> dict[str, int]:
+        """Get PDF files statistics."""
+        return self._pdf_files.get_stats()
 
     # ==================== Utility Methods ====================
 

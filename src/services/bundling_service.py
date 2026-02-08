@@ -3,11 +3,15 @@ Bundling Service
 Generates intelligent document bundling recommendations based on analysis results.
 """
 
+import contextlib
+import json
 import os
+import re
 from collections import defaultdict
 from typing import Any, cast
 
 from db.analysis_db import AnalysisDB
+from db.metadata_db import MetadataDB
 
 
 class BundlingService:
@@ -95,6 +99,14 @@ class BundlingService:
             )
             # Attach the database ID to the bundle dict for caller convenience
             bundle["id"] = bundle_id
+
+            # Set proposed output filename for source images
+            proposed_filename = self.propose_output_filename(bundle)
+            for file_path in bundle["file_paths"]:
+                # If image file doesn't exist in database, skip silently
+                # (this can happen for files not yet registered)
+                with contextlib.suppress(Exception):
+                    self.analysis_db.set_image_output_filename(file_path, proposed_filename)
 
         return scored_bundles
 
@@ -304,26 +316,103 @@ class BundlingService:
     def mark_bundle_completed(self, bundle_id: int, pdf_path: str) -> None:
         """
         Mark bundle as completed after successful PDF generation.
+        Also registers the PDF and updates source image statuses.
 
         Args:
             bundle_id: Bundle ID
             pdf_path: Full path to generated PDF file
         """
-        import os
-
         from services.logging_service import get_logger
 
         logger = get_logger()
-        if not os.path.exists(pdf_path):
+
+        # Get bundle details
+        bundle = self.get_bundle_by_id(bundle_id)
+        if not bundle:
+            logger.warning(f"Bundle {bundle_id} not found")
+            return
+
+        # Extract source image IDs and update their status
+        file_paths = bundle.get("file_paths", [])
+        if isinstance(file_paths, str):
+            # Handle case where file_paths might still be JSON string
+            file_paths = json.loads(file_paths)
+
+        source_image_ids = []
+        for path in file_paths:
+            img = self.analysis_db.get_image_file(path)
+            if img:
+                source_image_ids.append(img["id"])
+                # Update image status to 'bundled'
+                self.analysis_db.update_image_status(path, "bundled")
+            else:
+                logger.warning(f"Image file not found in database: {path}")
+
+        # Compute PDF metadata
+        file_hash = None
+        file_size = None
+        if os.path.exists(pdf_path):
+            file_hash = MetadataDB.compute_file_hash(pdf_path)
+            file_stats = os.stat(pdf_path)
+            file_size = file_stats.st_size
+        else:
             logger.warning(f"PDF path does not exist: {pdf_path}")
 
-        # Save PDF path
+        pdf_filename = os.path.basename(pdf_path)
+
+        # Register PDF in pdf_files table
+        try:
+            self.analysis_db.register_pdf_file(
+                pdf_path=pdf_path,
+                pdf_filename=pdf_filename,
+                bundle_id=bundle_id,
+                source_image_ids=source_image_ids,
+                page_count=len(file_paths),
+                file_hash=file_hash,
+                file_size=file_size,
+            )
+            logger.info(
+                f"Registered PDF: {pdf_filename} with {len(source_image_ids)} source images"
+            )
+        except Exception as e:
+            logger.error(f"Failed to register PDF file: {str(e)}", exc_info=True)
+
+        # Save PDF path to bundle
         self.analysis_db.update_bundle_pdf_path(bundle_id, pdf_path)
 
         # Update status to completed
-        self.update_bundle_status(
-            bundle_id, "completed", f"PDF generated: {os.path.basename(pdf_path)}"
-        )
+        self.update_bundle_status(bundle_id, "completed", f"PDF generated: {pdf_filename}")
+
+    def propose_output_filename(self, bundle: dict[str, Any]) -> str:
+        """
+        Generate proposed output filename for bundle based on metadata.
+
+        Args:
+            bundle: Bundle dictionary with metadata
+
+        Returns:
+            Proposed PDF filename (sanitized for filesystem)
+        """
+        company = bundle.get("company") or "Unknown"
+        doc_type = bundle.get("document_type") or "Document"
+        doc_date = bundle.get("document_date") or ""
+
+        # Handle None values
+        if company is None or company == "None":
+            company = "Unknown"
+        if doc_type is None or doc_type == "None":
+            doc_type = "Document"
+
+        # Sanitize for filesystem (remove special characters)
+        safe_company = re.sub(r"[^\w\s-]", "", str(company)).strip().replace(" ", "_")
+        safe_type = re.sub(r"[^\w\s-]", "", str(doc_type)).strip().replace(" ", "_")
+
+        # Build filename
+        if doc_date:
+            safe_date = re.sub(r"[^\w-]", "", str(doc_date))
+            return f"{safe_company}_{safe_type}_{safe_date}.pdf"
+        else:
+            return f"{safe_company}_{safe_type}.pdf"
 
     def accept_bundle(self, bundle_id: int) -> None:
         """Mark bundle as accepted"""

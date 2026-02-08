@@ -295,7 +295,7 @@ class TestAnalysisDBCore:
 
     def test_get_bundled_file_paths_filters_by_status(self, db):
         # Arrange - create bundles with different statuses
-        suggested_id = db.save_bundle_suggestion(["/suggested.jpg"], {"company": "Test"}, 0.9)
+        _ = db.save_bundle_suggestion(["/suggested.jpg"], {"company": "Test"}, 0.9)
         accepted_id = db.save_bundle_suggestion(["/accepted.jpg"], {"company": "Test"}, 0.9)
         rejected_id = db.save_bundle_suggestion(["/rejected.jpg"], {"company": "Test"}, 0.9)
         completed_id = db.save_bundle_suggestion(["/completed.jpg"], {"company": "Test"}, 0.9)
@@ -343,3 +343,123 @@ class TestAnalysisDBCore:
         ).fetchone()
         assert result is not None
         assert result["updated_at"] is not None
+
+    # ==================== Image Files Facade Tests ====================
+
+    def test_register_image_file(self, db):
+        # Act
+        image_id = db.register_image_file(
+            file_path="/test/image.png",
+            file_hash="hash123",
+            directory_path="/test",
+            filename="image.png",
+            file_size=1024,
+            file_mtime=1234567890.0,
+        )
+
+        # Assert
+        assert image_id > 0
+        image = db.get_image_file("/test/image.png")
+        assert image is not None
+        assert image["file_hash"] == "hash123"
+
+    def test_get_registered_images(self, db):
+        # Arrange
+        db.register_image_file("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        db.register_image_file("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        db.update_image_status("/test/img1.png", "analyzed", analysis_id=1)
+
+        # Act
+        registered = db.get_registered_images()
+
+        # Assert
+        assert len(registered) == 1
+        assert registered[0]["file_path"] == "/test/img2.png"
+
+    def test_mark_images_deleted_batch(self, db):
+        # Arrange
+        db.register_image_file("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        db.register_image_file("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+
+        # Act
+        count = db.mark_images_deleted_batch(["/test/img1.png", "/test/img2.png"])
+
+        # Assert
+        assert count == 2
+        img1 = db.get_image_file("/test/img1.png")
+        assert img1["status"] == "deleted"
+
+    def test_get_image_files_stats(self, db):
+        # Arrange
+        db.register_image_file("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        db.register_image_file("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+        db.update_image_status("/test/img1.png", "analyzed", analysis_id=1)
+
+        # Act
+        stats = db.get_image_files_stats()
+
+        # Assert
+        assert stats["total"] == 2
+        assert stats["status_registered"] == 1
+        assert stats["status_analyzed"] == 1
+
+    # ==================== PDF Files Facade Tests ====================
+
+    def test_register_pdf_file(self, db):
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
+
+        # Act
+        pdf_id = db.register_pdf_file(
+            pdf_path="/output/doc.pdf",
+            pdf_filename="doc.pdf",
+            bundle_id=bundle_id,
+            source_image_ids=[1, 2, 3],
+            page_count=3,
+            file_hash="hash_pdf",
+            file_size=102400,
+        )
+
+        # Assert
+        assert pdf_id > 0
+        pdf = db.get_pdf_file("/output/doc.pdf")
+        assert pdf is not None
+        assert pdf["bundle_id"] == bundle_id
+        assert pdf["source_image_ids"] == [1, 2, 3]
+
+    def test_get_pdf_by_bundle(self, db):
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
+        db.register_pdf_file("/out/doc.pdf", "doc.pdf", bundle_id, [1, 2], 2)
+
+        # Act
+        pdf = db.get_pdf_by_bundle(bundle_id)
+
+        # Assert
+        assert pdf is not None
+        assert pdf["bundle_id"] == bundle_id
+
+    def test_update_pdf_generation_status(self, db):
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
+        db.register_pdf_file("/out/doc.pdf", "doc.pdf", bundle_id, [1], 1)
+
+        # Act
+        db.update_pdf_generation_status("/out/doc.pdf", "failed")
+
+        # Assert
+        pdf = db.get_pdf_file("/out/doc.pdf")
+        assert pdf["generation_status"] == "failed"
+
+    def test_get_pdf_files_stats(self, db):
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
+        db.register_pdf_file("/out/doc1.pdf", "doc1.pdf", bundle_id, [1], 1)
+        db.register_pdf_file("/out/doc2.pdf", "doc2.pdf", bundle_id, [2], 1)
+
+        # Act
+        stats = db.get_pdf_files_stats()
+
+        # Assert
+        assert stats["total"] == 2
+        assert stats["status_completed"] == 2

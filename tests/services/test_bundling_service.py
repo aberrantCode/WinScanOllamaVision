@@ -770,6 +770,9 @@ class TestMarkBundleCompleted:
         with open(pdf_path, "w") as f:
             f.write("test")
 
+        mock_db.get_bundle_suggestions.return_value = [{"id": 123, "file_paths": ["image1.png"]}]
+        mock_db.get_image_file.return_value = {"id": 1}
+
         # Act
         service.mark_bundle_completed(123, pdf_path)
 
@@ -782,6 +785,9 @@ class TestMarkBundleCompleted:
         pdf_path = str(tmp_path / "test.pdf")
         with open(pdf_path, "w") as f:
             f.write("test")
+
+        mock_db.get_bundle_suggestions.return_value = [{"id": 123, "file_paths": ["image1.png"]}]
+        mock_db.get_image_file.return_value = {"id": 1}
 
         # Act
         service.mark_bundle_completed(123, pdf_path)
@@ -797,6 +803,8 @@ class TestMarkBundleCompleted:
     def test_handles_nonexistent_pdf_path_gracefully(self, mock_logger, service, mock_db):
         # Arrange
         pdf_path = "/nonexistent/path/test.pdf"
+        mock_db.get_bundle_suggestions.return_value = [{"id": 123, "file_paths": ["image1.png"]}]
+        mock_db.get_image_file.return_value = {"id": 1}
 
         # Act - should not raise exception
         service.mark_bundle_completed(123, pdf_path)
@@ -809,13 +817,16 @@ class TestMarkBundleCompleted:
     def test_logs_warning_for_nonexistent_pdf(self, mock_logger, service, mock_db):
         # Arrange
         pdf_path = "/nonexistent/path/test.pdf"
+        mock_db.get_bundle_suggestions.return_value = [{"id": 123, "file_paths": ["image1.png"]}]
+        mock_db.get_image_file.return_value = {"id": 1}
 
         # Act
         service.mark_bundle_completed(123, pdf_path)
 
         # Assert
-        mock_logger.return_value.warning.assert_called_once()
-        assert pdf_path in str(mock_logger.return_value.warning.call_args)
+        # Should log warning about nonexistent PDF
+        warning_calls = [str(call) for call in mock_logger.return_value.warning.call_args_list]
+        assert any(pdf_path in call for call in warning_calls)
 
     @patch("services.logging_service.get_logger")
     def test_includes_pdf_filename_in_user_action(self, mock_logger, service, mock_db, tmp_path):
@@ -823,6 +834,9 @@ class TestMarkBundleCompleted:
         pdf_path = str(tmp_path / "invoice_2024-01-01.pdf")
         with open(pdf_path, "w") as f:
             f.write("test")
+
+        mock_db.get_bundle_suggestions.return_value = [{"id": 123, "file_paths": ["image1.png"]}]
+        mock_db.get_image_file.return_value = {"id": 1}
 
         # Act
         service.mark_bundle_completed(123, pdf_path)
@@ -832,3 +846,304 @@ class TestMarkBundleCompleted:
         user_action = call_args[0][2]
         assert "invoice_2024-01-01.pdf" in user_action
         assert "PDF generated:" in user_action
+
+    @patch("services.logging_service.get_logger")
+    @patch("db.metadata_db.MetadataDB.compute_file_hash")
+    def test_registers_pdf_in_database(self, mock_hash, mock_logger, service, mock_db, tmp_path):
+        # Arrange
+        pdf_path = str(tmp_path / "test.pdf")
+        with open(pdf_path, "w") as f:
+            f.write("test content")
+
+        mock_hash.return_value = "abc123hash"
+        mock_db.get_bundle_suggestions.return_value = [
+            {"id": 123, "file_paths": ["image1.png", "image2.png"]}
+        ]
+        mock_db.get_image_file.side_effect = [
+            {"id": 1},
+            {"id": 2},
+        ]
+
+        # Act
+        service.mark_bundle_completed(123, pdf_path)
+
+        # Assert
+        mock_db.register_pdf_file.assert_called_once()
+        call_args = mock_db.register_pdf_file.call_args
+        assert call_args[1]["pdf_path"] == pdf_path
+        assert call_args[1]["pdf_filename"] == "test.pdf"
+        assert call_args[1]["bundle_id"] == 123
+        assert call_args[1]["source_image_ids"] == [1, 2]
+        assert call_args[1]["page_count"] == 2
+        assert call_args[1]["file_hash"] == "abc123hash"
+        assert call_args[1]["file_size"] > 0
+
+    @patch("services.logging_service.get_logger")
+    def test_updates_image_status_to_bundled(self, mock_logger, service, mock_db):
+        # Arrange
+        mock_db.get_bundle_suggestions.return_value = [
+            {"id": 123, "file_paths": ["image1.png", "image2.png", "image3.png"]}
+        ]
+        mock_db.get_image_file.side_effect = [
+            {"id": 1},
+            {"id": 2},
+            {"id": 3},
+        ]
+
+        # Act
+        service.mark_bundle_completed(123, "/path/to/test.pdf")
+
+        # Assert
+        assert mock_db.update_image_status.call_count == 3
+        mock_db.update_image_status.assert_any_call("image1.png", "bundled")
+        mock_db.update_image_status.assert_any_call("image2.png", "bundled")
+        mock_db.update_image_status.assert_any_call("image3.png", "bundled")
+
+    @patch("services.logging_service.get_logger")
+    def test_handles_missing_bundle_gracefully(self, mock_logger, service, mock_db):
+        # Arrange
+        mock_db.get_bundle_suggestions.return_value = []  # Bundle not found
+
+        # Act
+        service.mark_bundle_completed(999, "/path/to/test.pdf")
+
+        # Assert
+        mock_db.register_pdf_file.assert_not_called()
+        mock_db.update_image_status.assert_not_called()
+        mock_logger.return_value.warning.assert_called()
+
+    @patch("services.logging_service.get_logger")
+    def test_handles_json_string_file_paths(self, mock_logger, service, mock_db):
+        # Arrange - file_paths as JSON string instead of list
+        import json
+
+        mock_db.get_bundle_suggestions.return_value = [
+            {"id": 123, "file_paths": json.dumps(["image1.png", "image2.png"])}
+        ]
+        mock_db.get_image_file.side_effect = [
+            {"id": 1},
+            {"id": 2},
+        ]
+
+        # Act
+        service.mark_bundle_completed(123, "/path/to/test.pdf")
+
+        # Assert
+        assert mock_db.update_image_status.call_count == 2
+
+    @patch("services.logging_service.get_logger")
+    def test_logs_warning_for_missing_image_files(self, mock_logger, service, mock_db):
+        # Arrange
+        mock_db.get_bundle_suggestions.return_value = [
+            {"id": 123, "file_paths": ["image1.png", "missing.png"]}
+        ]
+        mock_db.get_image_file.side_effect = [
+            {"id": 1},
+            None,  # Missing image file
+        ]
+
+        # Act
+        service.mark_bundle_completed(123, "/path/to/test.pdf")
+
+        # Assert
+        mock_logger.return_value.warning.assert_any_call(
+            "Image file not found in database: missing.png"
+        )
+
+    @patch("services.logging_service.get_logger")
+    @patch("db.metadata_db.MetadataDB.compute_file_hash")
+    def test_handles_pdf_registration_error(self, mock_hash, mock_logger, service, mock_db):
+        # Arrange
+        mock_hash.return_value = "hash123"
+        mock_db.get_bundle_suggestions.return_value = [{"id": 123, "file_paths": ["image1.png"]}]
+        mock_db.get_image_file.return_value = {"id": 1}
+        mock_db.register_pdf_file.side_effect = Exception("Database error")
+
+        # Act - should not raise exception
+        service.mark_bundle_completed(123, "/path/to/test.pdf")
+
+        # Assert - still completes other operations
+        mock_logger.return_value.error.assert_called()
+        mock_db.update_bundle_pdf_path.assert_called_once()
+        mock_db.update_bundle_status.assert_called_once()
+
+
+class TestProposeOutputFilename:
+    """Tests for propose_output_filename method"""
+
+    @pytest.fixture
+    def service(self):
+        return BundlingService(MagicMock())
+
+    def test_generates_filename_with_all_metadata(self, service):
+        # Arrange
+        bundle = {
+            "company": "Acme Corp",
+            "document_type": "Invoice",
+            "document_date": "2024-01-15",
+        }
+
+        # Act
+        result = service.propose_output_filename(bundle)
+
+        # Assert
+        assert result == "Acme_Corp_Invoice_2024-01-15.pdf"
+
+    def test_generates_filename_without_date(self, service):
+        # Arrange
+        bundle = {
+            "company": "Test Company",
+            "document_type": "Receipt",
+            "document_date": "",
+        }
+
+        # Act
+        result = service.propose_output_filename(bundle)
+
+        # Assert
+        assert result == "Test_Company_Receipt.pdf"
+
+    def test_sanitizes_special_characters(self, service):
+        # Arrange
+        bundle = {
+            "company": "Company (Pty) Ltd.",
+            "document_type": "Tax/Invoice",
+            "document_date": "2024-01-15",
+        }
+
+        # Act
+        result = service.propose_output_filename(bundle)
+
+        # Assert
+        # Special characters should be removed
+        assert "(" not in result
+        assert ")" not in result
+        assert "." not in result.replace(".pdf", "")  # Ignore .pdf extension
+        assert "/" not in result
+
+    def test_handles_missing_metadata(self, service):
+        # Arrange
+        bundle = {}
+
+        # Act
+        result = service.propose_output_filename(bundle)
+
+        # Assert
+        assert result == "Unknown_Document.pdf"
+
+    def test_replaces_spaces_with_underscores(self, service):
+        # Arrange
+        bundle = {
+            "company": "Multi Word Company",
+            "document_type": "Purchase Order",
+            "document_date": "2024-01-15",
+        }
+
+        # Act
+        result = service.propose_output_filename(bundle)
+
+        # Assert
+        assert " " not in result
+        assert "Multi_Word_Company" in result
+        assert "Purchase_Order" in result
+
+    def test_handles_none_values(self, service):
+        # Arrange
+        bundle = {
+            "company": None,
+            "document_type": None,
+            "document_date": None,
+        }
+
+        # Act
+        result = service.propose_output_filename(bundle)
+
+        # Assert
+        assert result.endswith(".pdf")
+        assert "None" not in result  # Should convert None to string properly
+
+
+class TestSetOutputFilenameOnBundleCreation:
+    """Tests for setting output filename on source images during bundle creation"""
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def service(self, mock_db):
+        return BundlingService(mock_db)
+
+    def test_sets_output_filename_for_bundle_images(self, service, mock_db):
+        # Arrange
+        analyses = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "Invoice",
+                "document_date": "2024-01-01",
+                "page_number": 1,
+                "total_pages": 2,
+                "confidence_score": 0.9,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "Invoice",
+                "document_date": "2024-01-01",
+                "page_number": 2,
+                "total_pages": 2,
+                "confidence_score": 0.9,
+            },
+        ]
+        mock_db.get_analyzed_pages.return_value = analyses
+        mock_db.get_bundled_file_paths.return_value = set()
+        mock_db.save_bundle_suggestion.return_value = 1
+
+        # Act
+        service.generate_bundle_recommendations()
+
+        # Assert
+        assert mock_db.set_image_output_filename.call_count == 2
+        # Check that it was called with correct filename format
+        call_args_list = mock_db.set_image_output_filename.call_args_list
+        assert call_args_list[0][0][0] == "file1.png"
+        assert call_args_list[1][0][0] == "file2.png"
+        # Both should get the same proposed filename
+        assert call_args_list[0][0][1] == call_args_list[1][0][1]
+        # Filename is lowercase due to bundle metadata normalization
+        assert "testco" in call_args_list[0][0][1].lower()
+        assert "invoice" in call_args_list[0][0][1].lower()
+
+    def test_handles_set_filename_error_gracefully(self, service, mock_db):
+        # Arrange
+        analyses = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "Invoice",
+                "page_number": 1,
+                "total_pages": 2,
+                "confidence_score": 0.9,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "Invoice",
+                "page_number": 2,
+                "total_pages": 2,
+                "confidence_score": 0.9,
+            },
+        ]
+        mock_db.get_analyzed_pages.return_value = analyses
+        mock_db.get_bundled_file_paths.return_value = set()
+        mock_db.save_bundle_suggestion.return_value = 1
+        # Simulate error on first file
+        mock_db.set_image_output_filename.side_effect = [Exception("DB error"), None]
+
+        # Act - should not raise exception
+        bundles = service.generate_bundle_recommendations()
+
+        # Assert - bundle still created successfully
+        assert len(bundles) == 1
+        assert mock_db.save_bundle_suggestion.called

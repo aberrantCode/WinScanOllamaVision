@@ -230,6 +230,63 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
         )
     """)
 
+    # Image files - File discovery and lifecycle tracking
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS image_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT UNIQUE NOT NULL,
+            file_hash TEXT NOT NULL,
+
+            -- File metadata
+            directory_path TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            file_mtime REAL NOT NULL,
+
+            -- Lifecycle tracking
+            status TEXT DEFAULT 'registered',
+
+            -- Timestamps
+            discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP,
+
+            -- Analysis reference
+            analysis_id INTEGER,
+
+            -- Output tracking
+            output_filename TEXT,
+
+            FOREIGN KEY (analysis_id) REFERENCES analysis_results(id)
+        )
+    """)
+
+    # PDF files - Generated PDF tracking
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pdf_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pdf_path TEXT UNIQUE NOT NULL,
+            pdf_filename TEXT NOT NULL,
+            file_hash TEXT,
+
+            -- File metadata
+            file_size INTEGER,
+            page_count INTEGER,
+
+            -- Generation tracking
+            bundle_id INTEGER,
+            generation_status TEXT DEFAULT 'completed',
+
+            -- Source images (JSON array of image_files.id values)
+            source_image_ids TEXT NOT NULL,
+
+            -- Timestamps
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (bundle_id) REFERENCES document_bundles(id)
+        )
+    """)
+
     # Rotation preferences - per-file rotation tracking
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS rotation_preferences (
@@ -355,6 +412,38 @@ def _create_indices(conn: DatabaseConnection) -> None:
         ON source_directories(is_active)
     """)
 
+    # Image files indices
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_image_files_path
+        ON image_files(file_path)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_image_files_status
+        ON image_files(status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_image_files_directory
+        ON image_files(directory_path)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_image_files_hash
+        ON image_files(file_hash)
+    """)
+
+    # PDF files indices
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_pdf_files_path
+        ON pdf_files(pdf_path)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_pdf_files_bundle
+        ON pdf_files(bundle_id)
+    """)
+
 
 def _run_migrations(conn: DatabaseConnection) -> None:
     """Run database migrations to latest version."""
@@ -470,6 +559,139 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         """)
         conn.commit()
         current_version = 5
+
+    # Migration 6: Add image_files table
+    if current_version < 6:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS image_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT UNIQUE NOT NULL,
+                file_hash TEXT NOT NULL,
+
+                -- File metadata
+                directory_path TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                file_mtime REAL NOT NULL,
+
+                -- Lifecycle tracking
+                status TEXT DEFAULT 'registered',
+
+                -- Timestamps
+                discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP,
+
+                -- Analysis reference
+                analysis_id INTEGER,
+
+                -- Output tracking
+                output_filename TEXT,
+
+                FOREIGN KEY (analysis_id) REFERENCES analysis_results(id)
+            )
+        """)
+
+        # Create indices
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_image_files_path
+            ON image_files(file_path)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_image_files_status
+            ON image_files(status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_image_files_directory
+            ON image_files(directory_path)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_image_files_hash
+            ON image_files(file_hash)
+        """)
+
+        cursor.execute("""
+            INSERT INTO schema_version (version, description)
+            VALUES (6, 'Add image_files table for file discovery tracking')
+        """)
+        conn.commit()
+        current_version = 6
+
+    # Migration 7: Add pdf_files table
+    if current_version < 7:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pdf_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pdf_path TEXT UNIQUE NOT NULL,
+                pdf_filename TEXT NOT NULL,
+                file_hash TEXT,
+
+                -- File metadata
+                file_size INTEGER,
+                page_count INTEGER,
+
+                -- Generation tracking
+                bundle_id INTEGER,
+                generation_status TEXT DEFAULT 'completed',
+
+                -- Source images (JSON array of image_files.id values)
+                source_image_ids TEXT NOT NULL,
+
+                -- Timestamps
+                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (bundle_id) REFERENCES document_bundles(id)
+            )
+        """)
+
+        # Create indices
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pdf_files_path
+            ON pdf_files(pdf_path)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pdf_files_bundle
+            ON pdf_files(bundle_id)
+        """)
+
+        cursor.execute("""
+            INSERT INTO schema_version (version, description)
+            VALUES (7, 'Add pdf_files table for PDF tracking')
+        """)
+        conn.commit()
+        current_version = 7
+
+    # Migration 8: Back-fill image_files from analysis_results
+    if current_version < 8:
+        import os
+
+        # Fetch existing analysis results
+        cursor.execute("SELECT id, file_path, file_hash, analyzed_at FROM analysis_results")
+        analysis_results = cursor.fetchall()
+
+        # Insert into image_files with proper path parsing
+        for result_id, file_path, file_hash, analyzed_at in analysis_results:
+            # Parse directory and filename using os.path
+            directory_path = os.path.dirname(file_path) or "."
+            filename = os.path.basename(file_path)
+
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO image_files (
+                    file_path, file_hash, directory_path, filename,
+                    file_size, file_mtime, status, discovered_at, analysis_id
+                )
+                VALUES (?, ?, ?, ?, 0, 0, 'analyzed', ?, ?)
+            """,
+                (file_path, file_hash, directory_path, filename, analyzed_at, result_id),
+            )
+
+        cursor.execute("""
+            INSERT INTO schema_version (version, description)
+            VALUES (8, 'Back-fill image_files table from existing analysis_results')
+        """)
+        conn.commit()
+        current_version = 8
 
 
 def get_schema_version(conn: DatabaseConnection) -> int:

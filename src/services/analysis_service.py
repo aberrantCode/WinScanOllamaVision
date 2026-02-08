@@ -62,6 +62,42 @@ class AnalysisService:
             self.provider = ProviderFactory.create_from_config_manager(self.config)
         return self.provider
 
+    def _register_image_file(self, image_path: str) -> None:
+        """
+        Register an image file in the database (idempotent).
+
+        If the file is already registered, updates last_seen_at.
+        Otherwise, registers it with status 'registered'.
+
+        Args:
+            image_path: Path to the image file
+        """
+        try:
+            # Check if already registered
+            existing = self.analysis_db.get_image_file(image_path)
+
+            if existing:
+                # Update last_seen_at timestamp
+                self.analysis_db.update_image_last_seen(image_path)
+                self._log(f"[REGISTER] Updated last_seen for: {os.path.basename(image_path)}")
+            else:
+                # Register new file
+                file_hash = self.metadata_db.compute_file_hash(image_path)
+                file_stats = os.stat(image_path)
+                file_size = file_stats.st_size
+                file_mtime = file_stats.st_mtime
+                directory_path = os.path.dirname(image_path)
+                filename = os.path.basename(image_path)
+
+                self.analysis_db.register_image_file(
+                    image_path, file_hash, directory_path, filename, file_size, file_mtime
+                )
+                self._log(f"[REGISTER] Registered new image: {filename}")
+
+        except Exception as e:
+            self._log(f"[REGISTER ERROR] Failed to register {os.path.basename(image_path)}: {e}")
+            # Don't fail the scan if registration fails - continue with analysis
+
     def scan_all_directories(
         self,
         progress_callback: Callable[[str, int, int], None] | None = None,
@@ -158,6 +194,9 @@ class AnalysisService:
                         stats["total_files"],
                     )
 
+                # Register image file (idempotent operation)
+                self._register_image_file(image_path)
+
                 # Analyze single page
                 result = self._analyze_single_page(image_path, incremental)
 
@@ -225,12 +264,23 @@ class AnalysisService:
         if incremental:
             existing_analysis = self.analysis_db.get_analysis(image_path)
             if existing_analysis and existing_analysis["file_hash"] == file_hash:
+                # Update status to 'analyzed' if it exists
+                analysis_id = existing_analysis.get("id")
+                if analysis_id:
+                    self.analysis_db.update_image_status(image_path, "analyzed", analysis_id)
                 return {
                     "success": True,
                     "cached": True,
                     "skipped": False,
                     "analysis": existing_analysis,
                 }
+
+        # File needs analysis - mark as analyzing
+        try:
+            self.analysis_db.update_image_status(image_path, "analyzing")
+        except Exception as e:
+            self._log(f"[ANALYSIS WARNING] Could not update status to analyzing: {e}")
+            # Continue anyway
 
         # File needs analysis
         try:
@@ -252,6 +302,7 @@ class AnalysisService:
             if not result["success"]:
                 error_msg = result.get("error", "Unknown error")
                 self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
+                # Keep status as 'analyzing' on failure (or could set to 'error')
                 return {"success": False, "cached": False, "skipped": False, "error": error_msg}
 
             # Save analysis to database
@@ -274,6 +325,14 @@ class AnalysisService:
                 processing_time_ms=result["processing_time_ms"],
             )
 
+            # Get the analysis ID and update status to 'analyzed'
+            saved_analysis = self.analysis_db.get_analysis(image_path)
+            if saved_analysis:
+                analysis_id = saved_analysis.get("id")
+                if analysis_id:
+                    self.analysis_db.update_image_status(image_path, "analyzed", analysis_id)
+                    self._log(f"[ANALYSIS] Updated status to analyzed with ID: {analysis_id}")
+
             self._log("[ANALYSIS] Successfully saved to database")
             return {
                 "success": True,
@@ -290,6 +349,7 @@ class AnalysisService:
                 f"[ANALYSIS EXCEPTION] Error analyzing {os.path.basename(image_path)}: {str(e)}"
             )
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+            # Keep status as 'analyzing' on exception
             return {"success": False, "cached": False, "skipped": False, "error": str(e)}
 
     def _log(self, message: str):
