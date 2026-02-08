@@ -23,6 +23,9 @@ from PyQt6.QtWidgets import (
 )
 
 from db.analysis_db import AnalysisDB
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class AnalysisStatusWindow(QDialog):
@@ -661,7 +664,7 @@ class AnalysisStatusWindow(QDialog):
         except Exception as e:
             # Silently ignore errors during shutdown
             if self.analysis_db and self.analysis_db.connection:
-                print(f"Error refreshing collection status: {e}")
+                logger.error(f"Error refreshing collection status: {e}")
 
     def _calculate_collection_statistics(self):
         """Calculate comprehensive collection statistics from database"""

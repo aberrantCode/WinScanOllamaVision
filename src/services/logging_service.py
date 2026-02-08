@@ -180,6 +180,10 @@ def get_logger() -> logging.Logger:
     """
     Get the application logger instance.
 
+    Returns a fallback logger if the LoggingService has not been initialized yet.
+    Once LoggingService.initialize() is called, subsequent calls return the
+    fully configured logger.
+
     Returns:
         Logger instance
 
@@ -189,7 +193,12 @@ def get_logger() -> logging.Logger:
         >>> logger.info("Application started")
     """
     service = LoggingService()
-    return service.get_logger()
+    if service.logger is not None:
+        return service.logger
+    # Return a fallback logger before LoggingService is initialized.
+    # Messages will go to the root logger (typically stderr) until
+    # LoggingService.initialize() is called.
+    return logging.getLogger("WinScanLLM")
 
 
 # Example usage
@@ -212,4 +221,4 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("An exception occurred")
 
-    print(f"Log file location: {logging_service.get_log_file_path()}")
+    logger.info(f"Log file location: {logging_service.get_log_file_path()}")

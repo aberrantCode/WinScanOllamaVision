@@ -297,8 +297,10 @@ class AnalysisService:
         try:
             self.logger.info(message)
         except Exception:
-            # If logging fails, just print to console
-            print(message)
+            # If logging fails, use a fallback logger
+            import logging
+
+            logging.getLogger(__name__).info(message)
 
     def analyze_specific_files(
         self,
@@ -414,7 +416,13 @@ class AnalysisService:
 
 # Example usage
 if __name__ == "__main__":
+    import logging
+
     from config.config_manager import ConfigManager
+    from services.logging_service import LoggingService
+
+    LoggingService().initialize(log_level=logging.DEBUG, console_output=True)
+    _logger = get_logger()
 
     # Create instances
     config = ConfigManager()
@@ -426,11 +434,11 @@ if __name__ == "__main__":
 
     # Test scan (won't actually analyze without valid images)
     def progress(status, current, total):
-        print(f"[{current}/{total}] {status}")
+        _logger.info(f"[{current}/{total}] {status}")
 
-    print("Testing analysis service...")
+    _logger.info("Testing analysis service...")
     stats = service.scan_all_directories(progress_callback=progress)
-    print(f"Analysis complete: {stats}")
+    _logger.info(f"Analysis complete: {stats}")
 
     # Cleanup
     analysis_db_instance.close()

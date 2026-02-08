@@ -10,8 +10,12 @@ import sys
 import time
 from typing import Any, cast
 
+from services.logging_service import get_logger
+
 from .base_provider import BaseLLMProvider
 from .command_builder import CommandBuilder
+
+logger = get_logger()
 
 
 class ClaudeCliProvider(BaseLLMProvider):
@@ -60,11 +64,12 @@ class ClaudeCliProvider(BaseLLMProvider):
                 prompt=prompt,
             )
 
-            print("\n=== DEBUG: Claude CLI Request ===")
-            print(f"Command: {command}")
-            print(f"Model: {model_to_use}")
-            print(f"Images: {len(image_paths)}")
-            print("=================================\n")
+            logger.debug(
+                "Claude CLI Request - Command: %s, Model: %s, Images: %d",
+                command,
+                model_to_use,
+                len(image_paths),
+            )
 
             # Parse command into argument list to avoid shell injection
             args = shlex.split(command, posix=(sys.platform != "win32"))
@@ -99,10 +104,11 @@ class ClaudeCliProvider(BaseLLMProvider):
                 # If not valid JSON, return raw content
                 metadata = {"raw_content": response_text}
 
-            print("\n=== DEBUG: Claude CLI Response ===")
-            print(f"Response length: {len(response_text)} chars")
-            print(f"Processing time: {processing_time_ms}ms")
-            print("==================================\n")
+            logger.debug(
+                "Claude CLI Response - Length: %d chars, Processing time: %dms",
+                len(response_text),
+                processing_time_ms,
+            )
 
             return {
                 "response": response_text,

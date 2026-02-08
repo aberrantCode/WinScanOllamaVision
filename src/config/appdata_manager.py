@@ -10,6 +10,10 @@ import os
 import shutil
 import sqlite3
 
+from services.logging_service import get_logger
+
+logger = get_logger()
+
 
 class AppDataManager:
     """Manages application data directory in user's AppData"""
@@ -56,7 +60,7 @@ class AppDataManager:
         # Create AppData directory if it doesn't exist
         if not os.path.exists(self.appdata_dir):
             os.makedirs(self.appdata_dir)
-            print(f"Created AppData directory: {self.appdata_dir}")
+            logger.info(f"Created AppData directory: {self.appdata_dir}")
 
         # Initialize settings.ini
         self._initialize_settings()
@@ -72,10 +76,10 @@ class AppDataManager:
             # First run: copy template from solution data directory
             if os.path.exists(self.template_settings):
                 shutil.copy2(self.template_settings, self.settings_path)
-                print(f"Copied template settings to: {self.settings_path}")
+                logger.info(f"Copied template settings to: {self.settings_path}")
             else:
-                print(f"Warning: Template settings not found at {self.template_settings}")
-                print("Settings will be created with defaults by ConfigManager")
+                logger.warning(f"Template settings not found at {self.template_settings}")
+                logger.info("Settings will be created with defaults by ConfigManager")
         else:
             # Settings exist: check if update is needed
             self._update_settings_if_needed()
@@ -106,25 +110,25 @@ class AppDataManager:
                 for key, value in template_config.items(section):
                     user_config.set(section, key, value)
                 changes_made = True
-                print(f"Added new section [{section}] to settings.ini")
+                logger.info(f"Added new section [{section}] to settings.ini")
             else:
                 # Section exists: add missing keys only
                 for key, value in template_config.items(section):
                     if not user_config.has_option(section, key):
                         user_config.set(section, key, value)
                         changes_made = True
-                        print(f"Added new setting [{section}] {key} to settings.ini")
+                        logger.info(f"Added new setting [{section}] {key} to settings.ini")
 
         # Save updated config if changes were made
         if changes_made:
             # Create backup first
             backup_path = self.settings_path + ".backup"
             shutil.copy2(self.settings_path, backup_path)
-            print(f"Created backup: {backup_path}")
+            logger.info(f"Created backup: {backup_path}")
 
             with open(self.settings_path, "w") as f:
                 user_config.write(f)
-            print("Updated settings.ini with new options (user values preserved)")
+            logger.info("Updated settings.ini with new options (user values preserved)")
 
     def _initialize_database(self):
         """Initialize or migrate database in AppData"""
@@ -132,10 +136,10 @@ class AppDataManager:
             # First run: copy template from solution data directory
             if os.path.exists(self.template_database):
                 shutil.copy2(self.template_database, self.database_path)
-                print(f"Copied template database to: {self.database_path}")
+                logger.info(f"Copied template database to: {self.database_path}")
             else:
-                print(f"Warning: Template database not found at {self.template_database}")
-                print("Database will be created by MetadataDB/AnalysisDB")
+                logger.warning(f"Template database not found at {self.template_database}")
+                logger.info("Database will be created by MetadataDB/AnalysisDB")
         else:
             # Database exists: check if migration is needed
             self._migrate_database_if_needed()
@@ -156,8 +160,8 @@ class AppDataManager:
 
             if cursor.fetchone() is None:
                 # Old database without schema versioning - needs migration
-                print("Detected old database schema - migration may be needed")
-                print("MetadataDB/AnalysisDB will handle automatic migration")
+                logger.info("Detected old database schema - migration may be needed")
+                logger.info("MetadataDB/AnalysisDB will handle automatic migration")
             else:
                 # Check schema version
                 cursor.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
@@ -168,9 +172,6 @@ class AppDataManager:
                 template_version = self._get_template_schema_version()
 
                 if current_version < template_version:
-                    from services.logging_service import get_logger
-
-                    logger = get_logger()
                     logger.info(
                         f"Database schema update available: v{current_version} -> v{template_version}"
                     )
@@ -178,17 +179,11 @@ class AppDataManager:
                     self._backup_database()
                     logger.info("MetadataDB/AnalysisDB will handle automatic migration")
                 else:
-                    from services.logging_service import get_logger
-
-                    logger = get_logger()
                     logger.info(f"Database schema up to date (v{current_version})")
 
             conn.close()
 
         except sqlite3.Error as e:
-            from services.logging_service import get_logger
-
-            logger = get_logger()
             logger.error(f"Error checking database version: {e}")
 
     def _get_template_schema_version(self) -> int:
@@ -225,7 +220,7 @@ class AppDataManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = f"{self.database_path}.backup_{timestamp}"
         shutil.copy2(self.database_path, backup_path)
-        print(f"Created database backup: {backup_path}")
+        logger.info(f"Created database backup: {backup_path}")
 
     def get_settings_path(self) -> str:
         """Get path to settings.ini in AppData"""
@@ -253,12 +248,17 @@ def initialize_appdata() -> tuple[str, str]:
 
 # Example usage
 if __name__ == "__main__":
-    print("WinScanLLM AppData Manager\n")
-    print("=" * 60)
+    import logging
+
+    from services.logging_service import LoggingService
+
+    LoggingService().initialize(log_level=logging.DEBUG, console_output=True)
+    _logger = get_logger()
+
+    _logger.info("WinScanLLM AppData Manager")
 
     settings_path, db_path = initialize_appdata()
 
-    print("\n" + "=" * 60)
-    print("Initialization complete!")
-    print(f"\nSettings: {settings_path}")
-    print(f"Database: {db_path}")
+    _logger.info("Initialization complete!")
+    _logger.info(f"Settings: {settings_path}")
+    _logger.info(f"Database: {db_path}")
