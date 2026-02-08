@@ -1,7 +1,7 @@
 import configparser
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 
 class ConfigManager:
@@ -148,7 +148,7 @@ class ConfigManager:
         """Get list of source directories from JSON array"""
         directories_json = self.get_setting("SourceDirectories", "directories", "[]")
         try:
-            return json.loads(directories_json)
+            return cast(list[str], json.loads(directories_json))
         except json.JSONDecodeError:
             return []
 
@@ -172,7 +172,7 @@ class ConfigManager:
 
     def get_active_provider(self) -> str:
         """Get the currently active LLM provider"""
-        return self.get_setting("LLMProvider", "active_provider", "ollama")
+        return cast(str, self.get_setting("LLMProvider", "active_provider", "ollama"))
 
     def set_active_provider(self, provider_name: str) -> None:
         """Set the active LLM provider"""

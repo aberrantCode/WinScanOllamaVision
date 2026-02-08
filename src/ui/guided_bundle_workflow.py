@@ -11,6 +11,7 @@ Features:
 """
 
 from pathlib import Path
+from typing import cast
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
@@ -1097,7 +1098,9 @@ class GuidedBundleWorkflow(QDialog):
         content_scroll.setWidget(content_container)
 
         # Set viewport background explicitly
-        content_scroll.viewport().setStyleSheet(f"background: {theme['bg_secondary']};")
+        viewport = content_scroll.viewport()
+        if viewport is not None:
+            viewport.setStyleSheet(f"background: {theme['bg_secondary']};")
         section_layout.addWidget(content_scroll)
 
         # Set size policy for expansion
@@ -1135,12 +1138,12 @@ class GuidedBundleWorkflow(QDialog):
                 toggle_indicator.setText("▼")
             # If already visible, do nothing (can't close by clicking same section)
 
-        header.mousePressEvent = lambda e: toggle_section()
+        header.mousePressEvent = lambda e: toggle_section()  # type: ignore[method-assign,assignment]
 
         # Store references
-        section.accordion_header = header
-        section.accordion_content = content_scroll
-        section.accordion_toggle = toggle_indicator
+        section.accordion_header = header  # type: ignore[attr-defined]
+        section.accordion_content = content_scroll  # type: ignore[attr-defined]
+        section.accordion_toggle = toggle_indicator  # type: ignore[attr-defined]
 
         self.accordion_sections.append(section)
 
@@ -1317,13 +1320,14 @@ class GuidedBundleWorkflow(QDialog):
 
         return widget
 
-    def _format_file_size(self, size_bytes: int) -> str:
+    def _format_file_size(self, size_bytes: int | float) -> str:
         """Format file size in human-readable format."""
+        size: float = float(size_bytes)
         for unit in ["B", "KB", "MB", "GB"]:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.1f} TB"
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} TB"
 
     def _create_action_bar(self) -> QWidget:
         """Create bottom action bar."""
@@ -2358,7 +2362,7 @@ class GuidedBundleWorkflow(QDialog):
                 "OutputDirectory", "global_custom_path", default=""
             )
             if custom_path and os.path.isdir(custom_path):
-                return custom_path
+                return cast(str, custom_path)
             # Fall through to default if custom path not set or invalid
 
         elif strategy == "same_as_source":
@@ -2366,8 +2370,11 @@ class GuidedBundleWorkflow(QDialog):
             if bundle.get("file_paths"):
                 first_file = bundle["file_paths"][0]
                 source_dir = os.path.dirname(first_file)
-                subdirectory = self.config_manager.get_setting(
-                    "OutputDirectory", "subdirectory_name", default="ORGANIZED"
+                subdirectory = cast(
+                    str,
+                    self.config_manager.get_setting(
+                        "OutputDirectory", "subdirectory_name", default="ORGANIZED"
+                    ),
                 )
                 return os.path.join(source_dir, subdirectory)
 
@@ -2937,7 +2944,10 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             Tuple of (r, g, b) values
         """
         hex_color = hex_color.lstrip("#")
-        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        return (r, g, b)
 
     def _apply_dark_theme(self):
         """Apply dark theme colors."""

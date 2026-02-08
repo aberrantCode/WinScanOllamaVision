@@ -4,9 +4,11 @@ Uses Claude Code CLI tool for vision analysis via subprocess.
 """
 
 import json
+import shlex
 import subprocess
+import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 from .base_provider import BaseLLMProvider
 from .command_builder import CommandBuilder
@@ -64,13 +66,15 @@ class ClaudeCliProvider(BaseLLMProvider):
             print(f"Images: {len(image_paths)}")
             print("=================================\n")
 
-            # Execute command (shell=True required for command templates with pipes/redirects)
+            # Parse command into argument list to avoid shell injection
+            args = shlex.split(command, posix=(sys.platform != "win32"))
+
             result = subprocess.run(
-                command,
-                shell=True,
+                args,
+                shell=False,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout,  # nosec B602
+                timeout=self.timeout,
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -137,7 +141,7 @@ class ClaudeCliProvider(BaseLLMProvider):
         Returns:
             List of model names from config
         """
-        return self.available_models
+        return cast(list[str], self.available_models)
 
     def test_connection(self) -> bool:
         """
@@ -149,7 +153,11 @@ class ClaudeCliProvider(BaseLLMProvider):
         try:
             # Try to run 'claude --version' or similar check
             result = subprocess.run(
-                "claude --version", shell=True, capture_output=True, text=True, timeout=10
+                ["claude", "--version"],
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return result.returncode == 0
         except Exception:

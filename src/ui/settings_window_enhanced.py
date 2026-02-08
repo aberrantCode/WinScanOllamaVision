@@ -1196,7 +1196,9 @@ class EnhancedSettingsWindow(QDialog):
         folder_layout.addWidget(self.scan_folder_edit)
 
         browse_button = QPushButton()
-        browse_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        style = self.style()
+        if style is not None:
+            browse_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         browse_button.setToolTip("Browse for folder")
         browse_button.clicked.connect(self._browse_scan_folder)
         # Make the icon-only browse button compact
@@ -2376,7 +2378,7 @@ Example response:
             painter.end()
 
         # Replace paint event
-        combobox.paintEvent = custom_paint
+        combobox.paintEvent = custom_paint  # type: ignore[method-assign]
 
     def _get_cached_models(self, provider: str) -> list[str] | None:
         """Get cached model list if still valid (< 24 hours old)

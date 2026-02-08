@@ -5,7 +5,7 @@ Wraps the existing OllamaService to conform to BaseLLMProvider interface.
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 # Import the existing OllamaService
 from llm_providers.ollama_service import OllamaService
@@ -103,7 +103,7 @@ class OllamaProvider(BaseLLMProvider):
         Returns:
             Default model name
         """
-        return self.default_model
+        return cast(str, self.default_model)
 
     def get_available_models(self) -> list[str]:
         """
@@ -154,12 +154,12 @@ class OllamaProvider(BaseLLMProvider):
         return True, None
 
     # Convenience methods that wrap existing OllamaService functionality
-    def validate_grouping(self, image_paths: list[str], custom_prompt: str = None) -> bool:
+    def validate_grouping(self, image_paths: list[str], custom_prompt: str | None = None) -> bool:
         """Check if images belong to same document"""
         return self.service.validate_grouping(self.default_model, image_paths, custom_prompt)
 
     def validate_grouping_with_page_number(
-        self, image_paths: list[str], custom_prompt: str = None
+        self, image_paths: list[str], custom_prompt: str | None = None
     ) -> dict[str, Any]:
         """Validate grouping and extract metadata"""
         return self.service.validate_grouping_with_page_number(

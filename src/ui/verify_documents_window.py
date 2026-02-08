@@ -17,6 +17,7 @@ Major improvements:
 
 import html
 from pathlib import Path
+from typing import cast
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPixmap, QTransform
@@ -921,9 +922,9 @@ class BundleReviewWindow(QDialog):
             toggle_indicator.setText("▶" if is_visible else "▼")
 
         # Store header reference for disabling later
-        section.accordion_header = header
+        section.accordion_header = header  # type: ignore[attr-defined]
 
-        header.mousePressEvent = lambda e: toggle()
+        header.mousePressEvent = lambda e: toggle()  # type: ignore[method-assign,assignment]
         section_layout.addWidget(header)
         section_layout.addWidget(content_frame)
 
@@ -959,9 +960,9 @@ class BundleReviewWindow(QDialog):
             return []
 
         if field_name == "document_type":
-            return self.metadata_db.get_unique_titles(use_cache=True)
+            return cast(list[str], self.metadata_db.get_unique_titles(use_cache=True))
         elif field_name == "company":
-            return self.metadata_db.get_unique_companies(use_cache=True)
+            return cast(list[str], self.metadata_db.get_unique_companies(use_cache=True))
 
         return []
 
@@ -1510,13 +1511,14 @@ class BundleReviewWindow(QDialog):
 
         return widget
 
-    def _format_file_size(self, size_bytes: int) -> str:
+    def _format_file_size(self, size_bytes: int | float) -> str:
         """Format file size in human-readable format."""
+        size: float = float(size_bytes)
         for unit in ["B", "KB", "MB", "GB"]:
-            if size_bytes < 1024:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.1f} TB"
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
 
     def _create_analysis_content(self):
         """Create analysis information content (matching file_details_grid.py)."""

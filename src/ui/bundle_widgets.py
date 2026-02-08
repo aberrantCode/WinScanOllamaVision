@@ -5,9 +5,9 @@ Card-based UI for displaying and managing AI-generated document bundle suggestio
 
 import html
 import os
-from typing import Any
+from typing import Any, cast
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -102,7 +102,9 @@ class EnlargedPagesDialog(QDialog):
         zoom_layout.addWidget(self.zoom_out_button)
 
         self.zoom_level_label = QLabel("100%")
-        self.zoom_level_label.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0 8px; min-width: 45px;")
+        self.zoom_level_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold; padding: 0 8px; min-width: 45px;"
+        )
         self.zoom_level_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         zoom_layout.addWidget(self.zoom_level_label)
 
@@ -291,7 +293,8 @@ class EnlargedPagesDialog(QDialog):
 
                 # Scale to fit height, maintaining aspect ratio (with current zoom)
                 scaled_pixmap = pixmap.scaledToHeight(
-                    int(target_height * self.zoom_level / 100), Qt.TransformationMode.SmoothTransformation
+                    int(target_height * self.zoom_level / 100),
+                    Qt.TransformationMode.SmoothTransformation,
                 )
                 image_label.setPixmap(scaled_pixmap)
                 image_label.setFixedSize(scaled_pixmap.size())
@@ -388,7 +391,9 @@ class EnlargedPagesDialog(QDialog):
             base_target_height = 800
 
         # Re-scale all images with new zoom level
-        for i, (pixmap, image_label) in enumerate(zip(self.original_pixmaps, self.image_labels)):
+        for _i, (pixmap, image_label) in enumerate(
+            zip(self.original_pixmaps, self.image_labels, strict=False)
+        ):
             if not pixmap.isNull():
                 target_height = int(base_target_height * self.zoom_level / 100)
                 scaled_pixmap = pixmap.scaledToHeight(
@@ -803,7 +808,9 @@ class BundleSuggestionsView(QWidget):
 
         # Bundle count label
         self.bundle_count_label = QLabel("Loading...")
-        self.bundle_count_label.setStyleSheet("font-size: 14pt; font-weight: bold; color: #666; margin: 0 0 15px 0;")
+        self.bundle_count_label.setStyleSheet(
+            "font-size: 14pt; font-weight: bold; color: #666; margin: 0 0 15px 0;"
+        )
         layout.addWidget(self.bundle_count_label)
 
         # Action buttons
@@ -1037,10 +1044,7 @@ class BundleSuggestionsView(QWidget):
 
         # Update bundle count label
         bundle_count = len(self.bundle_cards)
-        total_pages = sum(
-            len(card.bundle_data.get("file_paths", []))
-            for card in self.bundle_cards
-        )
+        total_pages = sum(len(card.bundle_data.get("file_paths", [])) for card in self.bundle_cards)
         self.bundle_count_label.setText(f"{bundle_count} Bundles containing {total_pages} pages")
 
     def get_bundle_count(self) -> int:
@@ -1057,4 +1061,4 @@ class BundleSuggestionsView(QWidget):
 
     def should_regenerate_on_accept(self) -> bool:
         """Check if suggestions should be regenerated after accepting a bundle"""
-        return self.regenerate_checkbox.isChecked()
+        return cast(bool, self.regenerate_checkbox.isChecked())

@@ -15,7 +15,7 @@ class CommandBuilder:
     VAR_PROMPT = "%PROMPT%"
 
     @staticmethod
-    def build_command(template: str, model: str, image_paths: list[str], prompt: str) -> list[str]:
+    def build_command(template: str, model: str, image_paths: list[str], prompt: str) -> str:
         """
         Build command from template with variable substitution.
 
@@ -26,7 +26,7 @@ class CommandBuilder:
             prompt: Prompt text
 
         Returns:
-            List of command parts (for subprocess)
+            Command string (to be parsed via shlex.split for safe subprocess execution)
         """
         # Check if template is valid
         if not template:
@@ -46,8 +46,6 @@ class CommandBuilder:
         prompt_escaped = prompt.replace('"', '\\"')
         command_str = command_str.replace(CommandBuilder.VAR_PROMPT, f'"{prompt_escaped}"')
 
-        # Split into command parts for subprocess
-        # Use shell=True on Windows, so return as single string
         return command_str
 
     @staticmethod

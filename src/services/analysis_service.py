@@ -388,7 +388,7 @@ class AnalysisService:
                 progress_callback(f"Resetting status for {filename}...")
 
             # Reset status to pending before re-analysis
-            self.analysis_db.update_analysis_status(file_path, "Pending")
+            self.analysis_db.update_analysis_metadata(file_path, {"status": "Pending"})
             self._log(f"[RE-ANALYSIS] Reset status to Pending for: {filename}")
         except Exception as e:
             self._log(f"[RE-ANALYSIS WARNING] Could not reset status: {e}")
@@ -414,18 +414,15 @@ class AnalysisService:
 
 # Example usage
 if __name__ == "__main__":
-    from analysis_db import AnalysisDB
-    from metadata_db import MetadataDB
-
     from config.config_manager import ConfigManager
 
     # Create instances
     config = ConfigManager()
-    analysis_db = AnalysisDB()
-    metadata_db = MetadataDB()
+    analysis_db_instance = AnalysisDB()
+    metadata_db_instance = MetadataDB()
 
     # Create service
-    service = AnalysisService(config, analysis_db, metadata_db)
+    service = AnalysisService(config, analysis_db_instance, metadata_db_instance)
 
     # Test scan (won't actually analyze without valid images)
     def progress(status, current, total):
@@ -436,5 +433,5 @@ if __name__ == "__main__":
     print(f"Analysis complete: {stats}")
 
     # Cleanup
-    analysis_db.close()
-    metadata_db.close()
+    analysis_db_instance.close()
+    metadata_db_instance.close()

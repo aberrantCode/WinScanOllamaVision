@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import ollama
@@ -15,21 +15,17 @@ class OllamaService:
             base_url: Ollama server URL
             timeout: Request timeout in seconds (default: 300 seconds / 5 minutes)
         """
-        # The SDK uses OLLAMA_HOST environment variable or default localhost:11434
-        # We can set the host if needed
-        if base_url != "http://localhost:11434":
-            os.environ["OLLAMA_HOST"] = base_url
         self.base_url = base_url
         self.timeout = timeout
 
-        # Create client with timeout configuration
+        # Create client with explicit host parameter - no global env mutation needed
         self.client = ollama.Client(host=base_url, timeout=httpx.Timeout(timeout))
 
     def list_models(self) -> list[dict[str, Any]]:
         """Lists locally available Ollama models."""
         try:
             response = self.client.list()
-            return response.get("models", [])
+            return cast(list[dict[str, Any]], response.get("models", []))
         except Exception as e:
             raise ConnectionError(
                 f"Failed to connect to Ollama server. Is it running? Error: {e}"
@@ -135,14 +131,14 @@ class OllamaService:
                 chat_params["format"] = "json"
 
             # Use client with configured timeout
-            response = self.client.chat(**chat_params)
+            response = self.client.chat(**chat_params)  # type: ignore[call-overload]
 
             print("SDK Response received successfully")
             print(f"  Message content length: {len(response['message']['content'])} chars")
             print(f"  Timeout setting: {self.timeout} seconds")
             print("==========================================\n")
 
-            return response.get("message", {})
+            return cast(dict[str, Any], response.get("message", {}))
 
         except Exception as e:
             print(f"ERROR in chat_with_vision_model: {e}")
@@ -152,7 +148,7 @@ class OllamaService:
     # --- Specific Application Prompts ---
 
     def validate_grouping(
-        self, model_name: str, image_paths: list[str], custom_prompt: str = None
+        self, model_name: str, image_paths: list[str], custom_prompt: str | None = None
     ) -> bool:
         """
         Uses Ollama to determine if a list of images likely belongs to the same document.
@@ -180,10 +176,10 @@ class OllamaService:
         print(f"Contains 'YES': {'YES' in response_message.upper()}")
         print("=================================\n")
 
-        return response_message.upper() == "YES"
+        return cast(bool, response_message.upper() == "YES")
 
     def validate_grouping_with_page_number(
-        self, model_name: str, image_paths: list[str], custom_prompt: str = None
+        self, model_name: str, image_paths: list[str], custom_prompt: str | None = None
     ) -> dict[str, Any]:
         """
         Validates which images belong to same document using improved JSON format.

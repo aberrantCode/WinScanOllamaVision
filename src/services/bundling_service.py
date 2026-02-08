@@ -5,7 +5,7 @@ Generates intelligent document bundling recommendations based on analysis result
 
 import os
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 from db.analysis_db import AnalysisDB
 
@@ -47,7 +47,7 @@ class BundlingService:
                 if analysis:
                     analyses.append(analysis)
         else:
-            analyses = self.analysis_db.get_analyzed_pages(directory=directory)
+            analyses = self.analysis_db.get_analyzed_pages(directory_filter=directory)
 
         if not analyses:
             return []
@@ -270,7 +270,7 @@ class BundlingService:
         confidence += avg_analysis_confidence * 0.1
 
         # Normalize to 0.0-1.0 range
-        return min(max(confidence, 0.0), max_confidence)
+        return cast(float, min(max(confidence, 0.0), max_confidence))
 
     def get_bundle_by_id(self, bundle_id: int) -> dict[str, Any] | None:
         """
@@ -454,15 +454,15 @@ class BundlingService:
 
                 # Apply rotation if needed
                 if rotation_angle != 0:
-                    img = img.rotate(-rotation_angle, expand=True)
+                    img = img.rotate(-rotation_angle, expand=True)  # type: ignore[assignment]
 
                 # Convert to RGB if needed (PDF requirement)
                 if img.mode != "RGB":
-                    img = img.convert("RGB")
+                    img = img.convert("RGB")  # type: ignore[assignment]
 
                 images.append(img)
             except Exception as e:
-                raise Exception(f"Failed to load image {file_path}: {str(e)}")
+                raise Exception(f"Failed to load image {file_path}: {str(e)}") from e
 
         # Save as PDF
         if images:
@@ -476,7 +476,7 @@ class BundlingService:
                     quality=95,
                 )
             except Exception as e:
-                raise Exception(f"Failed to save PDF: {str(e)}")
+                raise Exception(f"Failed to save PDF: {str(e)}") from e
         else:
             raise Exception("No images to convert")
 

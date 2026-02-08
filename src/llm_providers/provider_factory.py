@@ -44,7 +44,7 @@ class ProviderFactory:
                 f"Unknown provider type: '{provider_type}'. Available providers: {available}"
             )
 
-        return provider_class(config)
+        return provider_class(config)  # type: ignore[abstract]
 
     @staticmethod
     def create_from_config_manager(

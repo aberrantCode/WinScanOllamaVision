@@ -16,7 +16,7 @@ class AppDataManager:
 
     APP_NAME = "WinScanLLM"
 
-    def __init__(self, solution_data_dir: str = None):
+    def __init__(self, solution_data_dir: str | None = None):
         """
         Initialize AppData manager
 

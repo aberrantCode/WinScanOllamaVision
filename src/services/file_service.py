@@ -56,7 +56,7 @@ class FileService:
             return []
 
         # Get file stats including creation/modification time
-        file_data = []
+        file_data: list[dict[str, str | float]] = []
         for f in files:
             try:
                 # Use st_mtime as it's often more reliable for 'last modified' by scanner
@@ -67,7 +67,7 @@ class FileService:
                 continue
 
         # Sort files by modification time
-        file_data.sort(key=lambda x: x["mtime"])
+        file_data.sort(key=lambda x: float(x["mtime"]))
 
         grouped_files: list[list[str]] = []
         current_group: list[str] = []
@@ -75,15 +75,15 @@ class FileService:
 
         for item in file_data:
             if not current_group:
-                current_group.append(item["path"])
-                last_mtime = item["mtime"]
+                current_group.append(str(item["path"]))
+                last_mtime = float(item["mtime"])
             else:
-                if (item["mtime"] - last_mtime) < time_delta_seconds:
-                    current_group.append(item["path"])
+                if (float(item["mtime"]) - last_mtime) < time_delta_seconds:  # type: ignore[operator]
+                    current_group.append(str(item["path"]))
                 else:
                     grouped_files.append(current_group)
-                    current_group = [item["path"]]
-                last_mtime = item["mtime"]
+                    current_group = [str(item["path"])]
+                last_mtime = float(item["mtime"])
 
         if current_group:
             grouped_files.append(current_group)
@@ -96,7 +96,7 @@ class FileService:
         output_filename: str,
         extracted_text_coords: dict[str, Any],
         is_searchable: bool = True,
-        rotation_map: dict[str, int] = None,
+        rotation_map: dict[str, int] | None = None,
     ) -> str | None:
         """
         Creates a PDF from a list of image paths, optionally adding a text layer for searchability.
@@ -124,11 +124,11 @@ class FileService:
                         # PIL rotation: positive = counter-clockwise, negative = clockwise
                         # For 90° CW, we rotate -90° (or 270° CCW)
                         if rotation_degrees == 90:
-                            img = img.rotate(-90, expand=True)
+                            img = img.rotate(-90, expand=True)  # type: ignore[assignment]
                         elif rotation_degrees == 180:
-                            img = img.rotate(180, expand=True)
+                            img = img.rotate(180, expand=True)  # type: ignore[assignment]
                         elif rotation_degrees == 270:
-                            img = img.rotate(90, expand=True)  # 270° CW = 90° CCW
+                            img = img.rotate(90, expand=True)  # type: ignore[assignment]  # 270° CW = 90° CCW
 
                     img_rect = fitz.Rect(0, 0, img.width, img.height)
 
