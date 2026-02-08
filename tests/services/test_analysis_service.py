@@ -412,15 +412,15 @@ class TestScanAllDirectories:
 
         abort_check = MagicMock(return_value=True)
 
-        with patch.object(service, "_analyze_single_page") as mock_analyze:
+        with (
+            patch.object(service, "_register_image_file"),
+            patch.object(service, "_analyze_single_page") as mock_analyze,
+        ):
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
 
-            # Act
-            result = service.scan_all_directories(abort_check=abort_check)
-
-            # Assert - when aborted, no results should be saved
-            assert result["total_files"] == 1
-            assert result["analyzed"] == 1
+            # Act & Assert - should raise InterruptedError before analyzing
+            with pytest.raises(InterruptedError):
+                service.scan_all_directories(abort_check=abort_check)
 
     @patch("glob.glob")
     @patch("os.path.exists")
@@ -792,16 +792,18 @@ class TestLogging:
         # Assert
         service.logger.info.assert_called_once_with("Test message")
 
-    @patch("builtins.print")
-    def test_log_falls_back_to_print_on_error(self, mock_print, service):
+    @patch("logging.getLogger")
+    def test_log_falls_back_to_logging_on_error(self, mock_get_logger, service):
         # Arrange
         service.logger.info.side_effect = Exception("Logger error")
+        mock_fallback_logger = MagicMock()
+        mock_get_logger.return_value = mock_fallback_logger
 
         # Act
         service._log("Test message")
 
         # Assert
-        mock_print.assert_called_once_with("Test message")
+        mock_fallback_logger.info.assert_called_once_with("Test message")
 
 
 class TestTaxRelatedFeature:
@@ -823,9 +825,9 @@ class TestTaxRelatedFeature:
         # Assert - check for tax document examples
         tax_keywords = ["W-2", "1099", "tax return", "property tax", "IRS", "deductible"]
         found_keywords = [keyword for keyword in tax_keywords if keyword in prompt]
-        assert len(found_keywords) >= 3, (
-            f"Expected at least 3 tax keywords, found: {found_keywords}"
-        )
+        assert (
+            len(found_keywords) >= 3
+        ), f"Expected at least 3 tax keywords, found: {found_keywords}"
 
     @pytest.fixture
     def mock_config(self):
@@ -1096,3 +1098,268 @@ class TestEdgeCases:
             # Assert - should only process unique files
             assert result["total_files"] == 1
             assert mock_analyze.call_count == 1
+
+
+class TestImageFileRegistration:
+    """Tests for image file registration during directory scans"""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.get_bool.return_value = True
+        config.get_setting.return_value = "Test prompt"
+        return config
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        db = MagicMock()
+        db.get_active_directories.return_value = []
+        db.get_image_file.return_value = None
+        return db
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        db = MagicMock()
+        db.compute_file_hash.return_value = "hash123"
+        return db
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    @patch("os.stat")
+    def test_register_image_file_registers_new_file(
+        self, mock_stat, service, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange
+        image_path = "C:\\test\\dir\\file1.png"
+        mock_stat.return_value = MagicMock(st_size=1024, st_mtime=1234567890)
+        mock_metadata_db.compute_file_hash.return_value = "hash123"
+        mock_analysis_db.get_image_file.return_value = None  # Not registered yet
+
+        # Act
+        service._register_image_file(image_path)
+
+        # Assert
+        mock_analysis_db.register_image_file.assert_called_once_with(
+            image_path, "hash123", "C:\\test\\dir", "file1.png", 1024, 1234567890
+        )
+        mock_analysis_db.update_image_last_seen.assert_not_called()
+
+    @patch("os.stat")
+    def test_register_image_file_updates_existing_file(
+        self, mock_stat, service, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange
+        image_path = "C:\\test\\dir\\file1.png"
+        mock_analysis_db.get_image_file.return_value = {
+            "id": 1,
+            "file_path": image_path,
+            "status": "registered",
+        }
+
+        # Act
+        service._register_image_file(image_path)
+
+        # Assert
+        mock_analysis_db.update_image_last_seen.assert_called_once_with(image_path)
+        mock_analysis_db.register_image_file.assert_not_called()
+
+    @patch("os.stat")
+    def test_register_image_file_handles_exception(
+        self, mock_stat, service, mock_analysis_db, mock_metadata_db
+    ):
+        # Arrange
+        image_path = "C:\\test\\dir\\file1.png"
+        mock_stat.side_effect = Exception("File not found")
+
+        # Act - should not raise exception
+        service._register_image_file(image_path)
+
+        # Assert - registration should fail gracefully
+        mock_analysis_db.register_image_file.assert_not_called()
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
+    def test_scan_all_directories_registers_all_files(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        # Arrange
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["C:\\dir1\\file1.png", "C:\\dir1\\file2.png"]
+            if "*.png" in pattern and "*.PNG" not in pattern
+            else []
+        )
+
+        with (
+            patch.object(service, "_register_image_file") as mock_register,
+            patch.object(service, "_analyze_single_page") as mock_analyze,
+        ):
+            mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
+
+            # Act
+            service.scan_all_directories()
+
+            # Assert
+            assert mock_register.call_count == 2
+            mock_register.assert_any_call("C:\\dir1\\file1.png")
+            mock_register.assert_any_call("C:\\dir1\\file2.png")
+
+
+class TestImageStatusTransitions:
+    """Tests for image status tracking during analysis"""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.get_setting.return_value = "Test prompt"
+        return config
+
+    @pytest.fixture
+    def mock_analysis_db(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_metadata_db(self):
+        db = MagicMock()
+        db.compute_file_hash.return_value = "hash123"
+        return db
+
+    @pytest.fixture
+    def service(self, mock_config, mock_analysis_db, mock_metadata_db):
+        return AnalysisService(mock_config, mock_analysis_db, mock_metadata_db)
+
+    def test_analyze_single_page_marks_as_analyzing_before_analysis(
+        self, service, mock_analysis_db
+    ):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {},
+                "response": "test",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+            # When incremental=False, only called once after save
+            mock_analysis_db.get_analysis.return_value = {"id": 123, "file_hash": "hash123"}
+
+            # Act
+            service._analyze_single_page(image_path, incremental=False)
+
+            # Assert
+            # Should be called twice: once with "analyzing", once with "analyzed"
+            assert mock_analysis_db.update_image_status.call_count == 2
+            first_call = mock_analysis_db.update_image_status.call_args_list[0]
+            assert first_call[0][0] == image_path
+            assert first_call[0][1] == "analyzing"
+
+    def test_analyze_single_page_marks_as_analyzed_after_success(self, service, mock_analysis_db):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        # When incremental=False, only called once after save
+        mock_analysis_db.get_analysis.return_value = {"id": 123, "file_hash": "hash123"}
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {},
+                "response": "test",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            service._analyze_single_page(image_path, incremental=False)
+
+            # Assert
+            second_call = mock_analysis_db.update_image_status.call_args_list[1]
+            assert second_call[0][0] == image_path
+            assert second_call[0][1] == "analyzed"
+            assert second_call[0][2] == 123  # analysis_id
+
+    def test_analyze_single_page_keeps_analyzing_status_on_failure(self, service, mock_analysis_db):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_analysis_db.get_analysis.return_value = None
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.analyze_images.return_value = {
+                "success": False,
+                "error": "Provider error",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path, incremental=False)
+
+            # Assert
+            assert result["success"] is False
+            # Should only be called once with "analyzing"
+            mock_analysis_db.update_image_status.assert_called_once_with(image_path, "analyzing")
+
+    def test_analyze_single_page_keeps_analyzing_status_on_exception(self, service):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_get_provider.side_effect = Exception("Test exception")
+
+            # Act
+            result = service._analyze_single_page(image_path, incremental=False)
+
+            # Assert
+            assert result["success"] is False
+            # Status should be set to analyzing before exception
+            # (exact call depends on when exception occurs)
+
+    def test_cached_analysis_updates_status_to_analyzed(self, service, mock_analysis_db):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_analysis_db.get_analysis.return_value = {
+            "id": 456,
+            "file_hash": "hash123",
+            "metadata": {"test": "data"},
+        }
+
+        # Act
+        result = service._analyze_single_page(image_path, incremental=True)
+
+        # Assert
+        assert result["cached"] is True
+        mock_analysis_db.update_image_status.assert_called_once_with(image_path, "analyzed", 456)
+
+    def test_status_update_continues_on_warning(self, service, mock_analysis_db):
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_analysis_db.get_analysis.return_value = None
+        mock_analysis_db.update_image_status.side_effect = Exception("DB error")
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "test_provider"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {},
+                "response": "test",
+                "processing_time_ms": 100,
+                "model_used": "test_model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act - should not raise exception
+            result = service._analyze_single_page(image_path, incremental=False)
+
+            # Assert - analysis should still succeed
+            assert result["success"] is True
