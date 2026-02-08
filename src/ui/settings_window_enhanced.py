@@ -198,11 +198,14 @@ class PromptComparisonDialog(QDialog):
 class EnhancedSettingsWindow(QDialog):
     """Enhanced Settings Window with 5-tab interface"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, analysis_db=None, metadata_db=None):
         super().__init__(parent)
         self.config_manager = ConfigManager()
-        self.metadata_db = MetadataDB()
-        self.analysis_db = AnalysisDB()
+        # Use shared database instances when provided (no ownership)
+        self._owns_metadata_db = metadata_db is None
+        self._owns_analysis_db = analysis_db is None
+        self.metadata_db = metadata_db if metadata_db is not None else MetadataDB()
+        self.analysis_db = analysis_db if analysis_db is not None else AnalysisDB()
 
         # Track optimization thread
         self.optimization_thread = None
@@ -232,10 +235,20 @@ class EnhancedSettingsWindow(QDialog):
             if self.optimization_thread.isRunning():
                 self.optimization_thread.terminate()
 
-        # Close database connections
-        if hasattr(self, "metadata_db") and self.metadata_db:
+        # Close database connections only if we own them (not injected)
+        if (
+            hasattr(self, "_owns_metadata_db")
+            and self._owns_metadata_db
+            and hasattr(self, "metadata_db")
+            and self.metadata_db
+        ):
             self.metadata_db.close()
-        if hasattr(self, "analysis_db") and self.analysis_db:
+        if (
+            hasattr(self, "_owns_analysis_db")
+            and self._owns_analysis_db
+            and hasattr(self, "analysis_db")
+            and self.analysis_db
+        ):
             self.analysis_db.close()
 
         event.accept()
