@@ -6,8 +6,6 @@ from PyQt6.QtWidgets import QApplication
 
 from config.appdata_manager import initialize_appdata
 from config.config_manager import ConfigManager
-from db.analysis_db import AnalysisDB
-from db.metadata_db import MetadataDB
 from services.analysis_service import AnalysisService
 from services.logging_service import LoggingService, get_logger
 from ui.gui import StartupWindow
@@ -72,10 +70,12 @@ if __name__ == "__main__":
         startup_window = StartupWindow()
         logger.info("StartupWindow instance created.")
 
-        # Initialize analysis service
+        # Use the shared database instances from StartupWindow
+        analysis_db = startup_window.analysis_db
+        metadata_db = startup_window.metadata_db
+
+        # Initialize analysis service using shared DB instances
         logger.info("Initializing AnalysisService...")
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
         logger.info("AnalysisService initialized.")
 

@@ -1636,18 +1636,19 @@ class MetadataDisplayWidget(QWidget):
 class ConvertImagesWindow(QMainWindow):
     processing_finished = pyqtSignal()
 
-    def __init__(self):
-        super().__init__()
-        self.config_manager = ConfigManager()
+    def __init__(self, parent=None, config_manager=None, analysis_db=None, metadata_db=None):
+        super().__init__(parent)
+        self.config_manager = config_manager if config_manager is not None else ConfigManager()
         timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
         self.ollama_service = OllamaService(
             base_url=self.config_manager.get_setting("Ollama", "base_url"), timeout=timeout
         )
         self.file_service = FileService(self.config_manager)
-        self.metadata_db = MetadataDB()  # Initialize metadata database for caching
+        # Use shared database instances when provided (no ownership)
+        self.metadata_db = metadata_db if metadata_db is not None else MetadataDB()
+        self.analysis_db = analysis_db if analysis_db is not None else AnalysisDB()
 
         # Phase 7: Bundle suggestion services
-        self.analysis_db = AnalysisDB()
         self.bundling_service = BundlingService(self.analysis_db)
 
         # Analysis service for pre-processing files
@@ -1782,7 +1783,7 @@ class ConvertImagesWindow(QMainWindow):
         self.main_layout.addWidget(self.thumbnail_scroll)
 
         # ===== PHASE 7: Bundle Suggestions View =====
-        self.bundle_suggestions_view = BundleSuggestionsView()
+        self.bundle_suggestions_view = BundleSuggestionsView(analysis_db=self.analysis_db)
         self.bundle_suggestions_view.bundle_accepted.connect(self._on_bundle_accepted)
         self.bundle_suggestions_view.bundle_modified.connect(self._on_bundle_modified)
         self.bundle_suggestions_view.bundle_rejected.connect(self._on_bundle_rejected)
@@ -6119,7 +6120,9 @@ class StartupWindow(QWidget):
         self.analysis_service = None
         self.analysis_worker = None
         self.analysis_start_time = None
-        self.analysis_db = AnalysisDB()  # Initialize database for stats
+        # Shared database instances - created once, passed to all child windows
+        self.analysis_db = AnalysisDB()
+        self.metadata_db = MetadataDB()
         self._init_ui()
 
     def _init_ui(self):
@@ -6335,15 +6338,12 @@ class StartupWindow(QWidget):
         """Launch workflow immediately with cached results, analyze new files in workflow."""
         from PyQt6.QtWidgets import QMessageBox
 
-        from config.config_manager import ConfigManager
-        from db.analysis_db import AnalysisDB
-        from db.metadata_db import MetadataDB
         from services.bundling_service import BundlingService
 
-        # Initialize services
-        config_manager = ConfigManager()
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
+        # Use shared database instances
+        analysis_db = self.analysis_db
+        metadata_db = self.metadata_db
+        config_manager = self.config_manager
         bundling_service = BundlingService(analysis_db)
 
         try:
@@ -6411,26 +6411,18 @@ class StartupWindow(QWidget):
             QMessageBox.critical(self, "Workflow Failed", f"Failed to launch workflow:\n\n{str(e)}")
             self.show()
 
-        finally:
-            # Clean up
-            analysis_db.close()
-            metadata_db.close()
-
     def _run_full_analysis_then_launch(self):
         """Run full analysis with progress dialog, then launch workflow."""
         from PyQt6.QtCore import QApplication
         from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 
-        from config.config_manager import ConfigManager
-        from db.analysis_db import AnalysisDB
-        from db.metadata_db import MetadataDB
         from services.analysis_service import AnalysisService
         from services.bundling_service import BundlingService
 
-        # Initialize services
-        config_manager = ConfigManager()
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
+        # Use shared database instances
+        config_manager = self.config_manager
+        analysis_db = self.analysis_db
+        metadata_db = self.metadata_db
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
         bundling_service = BundlingService(analysis_db)
 
@@ -6537,11 +6529,6 @@ class StartupWindow(QWidget):
             )
             self.show()
 
-        finally:
-            # Clean up
-            analysis_db.close()
-            metadata_db.close()
-
     def _prepare_workflow_bundles(self, bundles, analysis_db):
         """Prepare bundles for guided workflow."""
         workflow_bundles = []
@@ -6591,7 +6578,9 @@ class StartupWindow(QWidget):
         )
 
     def show_settings_window(self):
-        settings_window = EnhancedSettingsWindow(self)
+        settings_window = EnhancedSettingsWindow(
+            self, analysis_db=self.analysis_db, metadata_db=self.metadata_db
+        )
         settings_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         settings_window.setWindowModality(Qt.WindowModality.ApplicationModal)
         settings_window.show()
@@ -6603,27 +6592,11 @@ class StartupWindow(QWidget):
         """Manually trigger document analysis - opens status window with auto-start"""
         # Initialize analysis service if not already done
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from config.config_manager import ConfigManager
-            from db.analysis_db import AnalysisDB
-            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
-            config_manager = ConfigManager()
-            self.analysis_db = AnalysisDB()
-            self.metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(
-                config_manager, self.analysis_db, self.metadata_db
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-        # Ensure database instances exist
-        if not hasattr(self, "analysis_db") or self.analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        if not hasattr(self, "metadata_db") or self.metadata_db is None:
-            from db.metadata_db import MetadataDB
-
-            self.metadata_db = MetadataDB()
 
         # Open status window with auto-start based on config
         auto_start = self.config_manager.get_bool("GUI", "auto_start_analysis", False)
@@ -6646,27 +6619,11 @@ class StartupWindow(QWidget):
         """Show the Analysis Status window"""
         # Initialize analysis service if needed
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from config.config_manager import ConfigManager
-            from db.analysis_db import AnalysisDB
-            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
-            config_manager = ConfigManager()
-            self.analysis_db = AnalysisDB()
-            self.metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(
-                config_manager, self.analysis_db, self.metadata_db
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-        # Ensure database instances exist
-        if not hasattr(self, "analysis_db") or self.analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        if not hasattr(self, "metadata_db") or self.metadata_db is None:
-            from db.metadata_db import MetadataDB
-
-            self.metadata_db = MetadataDB()
 
         status_window = AnalysisStatusWindow(
             parent=self,
@@ -6749,19 +6706,18 @@ class StartupWindow(QWidget):
         """Check for unanalyzed files and show welcome dialog if needed"""
         import glob
 
-        from db.analysis_db import AnalysisDB
         from services.logging_service import get_logger
 
         logger = get_logger()
 
-        analysis_db = AnalysisDB()
+        # Use shared analysis_db instance
+        analysis_db = self.analysis_db
 
         # Get scan folder
         scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
         logger.debug(f"Scan folder: {scan_folder}")
         if not scan_folder or not os.path.exists(scan_folder):
             logger.debug("Scan folder doesn't exist or not set")
-            analysis_db.close()
             return
 
         # Count PNG/JPG files (use set to avoid duplicates)
@@ -6774,7 +6730,6 @@ class StartupWindow(QWidget):
         logger.debug(f"Total files found: {total_files}")
         if total_files == 0:
             logger.debug("No files found, returning")
-            analysis_db.close()
             return
 
         # Count analyzed files
@@ -6782,8 +6737,6 @@ class StartupWindow(QWidget):
         for image_path in image_files:
             if analysis_db.get_analysis(image_path):
                 analyzed_count += 1
-
-        analysis_db.close()
 
         unanalyzed_count = total_files - analyzed_count
         logger.debug(f"Analyzed: {analyzed_count}, Unanalyzed: {unanalyzed_count}")
@@ -6824,16 +6777,11 @@ class StartupWindow(QWidget):
 
                 if reply == QMessageBox.StandardButton.Yes:
                     logger.info(f"User chose to analyze {unanalyzed_count} documents")
-                    # Open status window with auto-start
-                    from db.metadata_db import MetadataDB
-
-                    status_analysis_db = AnalysisDB()
-                    status_metadata_db = MetadataDB()
-
+                    # Open status window with auto-start using shared DB instances
                     status_window = AnalysisStatusWindow(
                         parent=self,
-                        analysis_db=status_analysis_db,
-                        metadata_db=status_metadata_db,
+                        analysis_db=self.analysis_db,
+                        metadata_db=self.metadata_db,
                         analysis_service=analysis_service,
                         config_manager=self.config_manager,
                         auto_start_analysis=True,
@@ -6873,11 +6821,24 @@ class StartupWindow(QWidget):
             )
 
             if reply == QMessageBox.StandardButton.Yes:
+                self._cleanup_shared_db()
                 event.accept()
             else:
                 event.ignore()
         else:
+            self._cleanup_shared_db()
             event.accept()
+
+    def _cleanup_shared_db(self):
+        """Close shared database connections on application exit."""
+        import contextlib
+
+        if hasattr(self, "analysis_db") and self.analysis_db:
+            with contextlib.suppress(Exception):
+                self.analysis_db.close()
+        if hasattr(self, "metadata_db") and self.metadata_db:
+            with contextlib.suppress(Exception):
+                self.metadata_db.close()
 
 
 class AnalysisWorker(QThread):
@@ -6897,9 +6858,9 @@ class AnalysisWorker(QThread):
         """Run analysis in background thread"""
         try:
             # Create new database connections in this thread to avoid SQLite thread errors
-            from analysis_db import AnalysisDB
-            from analysis_service import AnalysisService
-            from metadata_db import MetadataDB
+            from db.analysis_db import AnalysisDB
+            from db.metadata_db import MetadataDB
+            from services.analysis_service import AnalysisService
 
             analysis_db = AnalysisDB()
             metadata_db = MetadataDB()
