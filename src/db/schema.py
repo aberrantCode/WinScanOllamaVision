@@ -213,6 +213,9 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
             -- Bundle status
             status TEXT DEFAULT 'suggested',
 
+            -- PDF generation tracking
+            pdf_path TEXT,
+
             -- User action tracking
             user_action TEXT,
             action_timestamp TIMESTAMP,
@@ -442,6 +445,23 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         """)
         conn.commit()
         current_version = 4
+
+    # Migration 5: Add pdf_path column to document_bundles
+    if current_version < 5:
+        # Check if column exists
+        cursor.execute("PRAGMA table_info(document_bundles)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if "pdf_path" not in columns:
+            cursor.execute("""
+                ALTER TABLE document_bundles
+                ADD COLUMN pdf_path TEXT
+            """)
+        cursor.execute("""
+            INSERT INTO schema_version (version, description)
+            VALUES (5, 'Add pdf_path column to track generated PDF locations')
+        """)
+        conn.commit()
+        current_version = 5
 
 
 def get_schema_version(conn: DatabaseConnection) -> int:
