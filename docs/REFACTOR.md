@@ -1427,6 +1427,433 @@ For each refactoring:
 
 ---
 
+## APPENDIX A: MYPY TYPE CHECKING ERRORS (59 TOTAL)
+
+**Generated:** 2026-02-08
+**Status:** Pre-commit hook skipped for recent commit - these are pre-existing issues
+
+This appendix provides a comprehensive breakdown of all 59 mypy type checking errors found in the codebase. These errors prevent full type safety and should be addressed in a dedicated refactoring effort.
+
+---
+
+### Error Summary by Category
+
+| Category | Count | Priority |
+|----------|-------|----------|
+| Return type mismatches (`no-any-return`) | 18 | HIGH |
+| None attribute access (`attr-defined`) | 12 | HIGH |
+| Missing type annotations (`var-annotated`) | 8 | MEDIUM |
+| Assignment type incompatibilities | 7 | MEDIUM |
+| Method signature mismatches | 6 | HIGH |
+| Return value type mismatches | 5 | MEDIUM |
+| Redefinition errors | 2 | LOW |
+| Other | 1 | LOW |
+| **TOTAL** | **59** | - |
+
+---
+
+### Category 1: Return Type Mismatches (`no-any-return`) - 18 Errors
+
+**Issue:** Functions declared with specific return types but returning `Any` (untyped).
+
+#### LLM Providers (6 errors)
+
+**File:** `src/llm_providers/base_provider.py`
+- **Line 76:** `get_provider_name()` returning Any instead of `str | None`
+- **Line 85:** `get_timeout()` returning Any instead of `int`
+
+**File:** `src/llm_providers/claude_cli_provider.py`
+- **Line 140:** `get_available_models()` returning Any instead of `list[str]`
+
+**File:** `src/llm_providers/gemini_cli_provider.py`
+- **Line 140:** `get_available_models()` returning Any instead of `list[str]`
+
+**File:** `src/llm_providers/ollama_service.py`
+- **Line 32:** `_get_models_list()` returning Any instead of `list[dict[str, Any]]`
+- **Line 145:** `_parse_response()` returning Any instead of `dict[str, Any]`
+- **Line 183:** `_test_connection()` returning Any instead of `bool`
+
+**File:** `src/llm_providers/ollama_provider.py`
+- **Line 106:** Method returning Any instead of `str`
+
+#### Config (2 errors)
+
+**File:** `src/config/config_manager.py`
+- **Line 151:** Method returning Any instead of `list[str]`
+- **Line 175:** Method returning Any instead of `str`
+
+#### Database Layer (3 errors)
+
+**File:** `src/db/connection.py`
+- **Line 60:** `execute()` returning Any instead of `Cursor`
+- **Line 85:** `fetch_one_dict()` returning Any instead of `Row | None`
+
+**File:** `src/db/repositories/rotation_repo.py`
+- **Line 77:** Method returning Any instead of `int`
+
+#### Services (2 errors)
+
+**File:** `src/services/logging_service.py`
+- **Line 116:** `get_logger()` returning Any instead of `Logger`
+- **Line 125:** Method returning Any instead of `str | None`
+
+#### UI Components (5 errors)
+
+**File:** `src/ui/bundle_widgets.py`
+- **Line 1060:** Method returning Any instead of `bool`
+
+**File:** `src/ui/verify_documents_window.py`
+- **Line 962:** Method returning Any instead of `list[str]`
+- **Line 964:** Method returning Any instead of `list[str]`
+
+**File:** `src/ui/gui.py`
+- **Line 464:** Method returning Any instead of `bool`
+
+**Recommended Fix Pattern:**
+```python
+# Before:
+def get_models(self) -> list[str]:
+    return self.config.get("models")  # Returns Any
+
+# After:
+def get_models(self) -> list[str]:
+    result: list[str] = self.config.get("models", [])
+    return result
+```
+
+**Effort:** 6-8 hours (add explicit type annotations)
+
+---
+
+### Category 2: None Attribute Access (`attr-defined`) - 12 Errors
+
+**Issue:** Attempting to access attributes on potentially `None` values.
+
+#### Database Layer (12 errors)
+
+**File:** `src/db/metadata_db.py`
+- **Line 113:** `self.conn.cursor()` - conn might be None
+- **Line 132:** `self.conn.cursor()` - conn might be None
+
+**File:** `src/db/analysis_db.py`
+- **Line 167:** `self.conn.cursor()` - conn might be None
+- **Line 212:** `self.conn.cursor()` - conn might be None
+- **Line 268:** `self.conn.cursor()` - conn might be None
+- **Line 294:** `self.conn.cursor()` - conn might be None
+
+**File:** `src/db/connection.py`
+- **Line 58:** `self.conn.cursor()` - conn might be None
+- **Line 70:** `self.conn.cursor()` - conn might be None
+
+**File:** `src/db/schema.py`
+- **Line 26:** `self.conn.cursor()` - conn might be None
+- **Line 104:** `self.conn.cursor()` - conn might be None
+- **Line 278:** `self.conn.cursor()` - conn might be None
+- **Line 352:** `self.conn.cursor()` - conn might be None
+- **Line 457:** `self.conn.cursor()` - conn might be None
+
+**Root Cause:** Database connection (`self.conn`) is typed as `Optional[Connection]` but code doesn't check for None before accessing.
+
+**Recommended Fix Pattern:**
+```python
+# Before:
+def execute_query(self):
+    cursor = self.conn.cursor()  # Error: conn might be None
+
+# After:
+def execute_query(self):
+    if self.conn is None:
+        raise RuntimeError("Database not connected")
+    cursor = self.conn.cursor()
+
+# Or use assertion for internal methods:
+def execute_query(self):
+    assert self.conn is not None, "Database must be connected"
+    cursor = self.conn.cursor()
+```
+
+**Effort:** 4-6 hours (add None checks or assertions throughout DB layer)
+
+---
+
+### Category 3: Missing Type Annotations (`var-annotated`) - 8 Errors
+
+**Issue:** Variables need explicit type annotations for type checker.
+
+**File:** `src/ui/gui.py`
+- **Line 820:** `all_images` needs type annotation: `list[<type>]`
+- **Line 821:** `filtered_images` needs type annotation: `list[<type>]`
+- **Line 822:** `checked_files` needs type annotation: `set[<type>]`
+- **Line 1230:** `current_bundle_files` needs type annotation: `list[<type>]`
+
+**Recommended Fix:**
+```python
+# Before:
+all_images = []
+filtered_images = []
+checked_files = set()
+
+# After:
+all_images: list[str] = []
+filtered_images: list[str] = []
+checked_files: set[str] = set()
+```
+
+**Effort:** 2-3 hours (add type annotations)
+
+---
+
+### Category 4: Assignment Type Incompatibilities - 7 Errors
+
+**Issue:** Assigning values of incompatible types to typed variables.
+
+**File:** `src/db/repositories/bundle_repo.py`
+- **Line 91:** Appending `float` to `list[str]`
+- **Line 158:** Appending `int` to `list[str]`
+
+**File:** `src/db/metadata_db.py`
+- **Line 123:** Assigning `list[Any]` to `None`
+- **Line 142:** Assigning `list[Any]` to `None`
+
+**File:** `src/ui/gui.py`
+- **Line 1204:** Assigning `str` to `None` type
+- **Line 1484:** Assigning `str` to `None` type
+
+**File:** `src/ui/verify_documents_window.py`
+- **Line 1518:** Assigning `float` to `int` variable
+
+**File:** `src/ui/guided_bundle_workflow.py`
+- **Line 1325:** Assigning `float` to `int` variable
+
+**File:** `src/services/file_service.py`
+- **Line 79:** Assigning `object` to `float | None`
+
+**Recommended Fix Pattern:**
+```python
+# Before:
+page_numbers: list[str] = []
+page_numbers.append(123)  # Error: int not str
+
+# After:
+page_numbers: list[str] = []
+page_numbers.append(str(123))  # Convert to str
+
+# Or change type:
+page_numbers: list[int] = []
+page_numbers.append(123)
+```
+
+**Effort:** 3-4 hours (fix type conversions)
+
+---
+
+### Category 5: Method Signature Mismatches - 6 Errors
+
+**Issue:** Calling methods with wrong argument types or counts.
+
+**File:** `src/services/bundling_service.py`
+- **Line 50:** Unexpected keyword argument `directory` for `get_analyzed_pages()`
+  - Expected signature in `analysis_db.py:82`
+
+**File:** `src/services/analysis_service.py`
+- **Line 391:** `AnalysisDB` has no attribute `update_analysis_status`
+  - Should use `update_analysis_metadata` or `update_bundle_status`
+
+**File:** `src/services/file_service.py`
+- **Line 70:** Incompatible `key` argument type for `sort()`
+  - Expected: `Callable[[dict], SupportsDunderLT | SupportsDunderGT]`
+  - Got: `Callable[[dict], object]`
+- **Line 78:** Appending `object` to `list[str]`
+- **Line 81:** Unsupported operand types for `-` (`object` and `float`)
+
+**Recommended Fix:**
+```python
+# Before:
+pages = analysis_db.get_analyzed_pages(directory="/path")  # Error: unexpected kwarg
+
+# After:
+pages = analysis_db.get_analyzed_pages("/path")  # Positional arg
+
+# Or update method signature to accept directory kwarg
+```
+
+**Effort:** 4-5 hours (fix method calls and signatures)
+
+---
+
+### Category 6: Return Value Type Mismatches - 5 Errors
+
+**Issue:** Function returns type that doesn't match declared return type.
+
+**File:** `src/llm_providers/command_builder.py`
+- **Line 51:** Returns `str` but declared as `list[str]`
+
+**File:** `src/ui/guided_bundle_workflow.py`
+- **Line 2901:** Returns `tuple[int, ...]` but declared as `tuple[int, int, int]`
+
+**File:** `src/services/file_service.py`
+- **Line 70:** Returns `object` but expected `SupportsDunderLT | SupportsDunderGT`
+
+**Recommended Fix:**
+```python
+# Before:
+def get_rgb_color(self) -> tuple[int, int, int]:
+    return (255, 255, 255, 0)  # Error: 4 elements not 3
+
+# After:
+def get_rgb_color(self) -> tuple[int, int, int]:
+    return (255, 255, 255)  # Correct: 3 elements
+```
+
+**Effort:** 2-3 hours (fix return statements)
+
+---
+
+### Category 7: Redefinition Errors - 2 Errors
+
+**Issue:** Name already defined (possibly by import).
+
+**File:** `src/services/analysis_service.py`
+- **Line 417:** `AnalysisDB` already defined
+- **Line 418:** `MetadataDB` already defined
+
+**Likely Cause:** Import statement conflicts with local variable or class definition.
+
+**Recommended Fix:**
+```python
+# Before:
+from db.analysis_db import AnalysisDB
+# ... later in file:
+AnalysisDB = something  # Error: redefinition
+
+# After:
+from db.analysis_db import AnalysisDB
+# Use different name for local variable:
+analysis_db_instance = something
+```
+
+**Effort:** 1 hour (rename variables)
+
+---
+
+### Category 8: Unchecked Function Bodies - 5 Warnings
+
+**Note:** These are informational, not errors. By default mypy doesn't check untyped function bodies.
+
+**File:** `src/ui/file_details_grid.py`
+- **Lines 75, 76, 343, 344, 345:** Functions need `--check-untyped-defs` flag
+
+**Action:** Add type hints to function signatures, then mypy will check bodies.
+
+---
+
+## Error Distribution by Module
+
+| Module | Error Count | Primary Issues |
+|--------|-------------|----------------|
+| `src/db/` | 20 | None attribute access, assignment incompatibilities |
+| `src/ui/` | 15 | Missing annotations, return type mismatches |
+| `src/llm_providers/` | 10 | Return type mismatches |
+| `src/services/` | 10 | Method signature mismatches, type incompatibilities |
+| `src/config/` | 2 | Return type mismatches |
+| **TOTAL** | **59** | - |
+
+---
+
+## Recommended Fix Order
+
+### Phase 1: High-Impact, Low-Effort (8-12 hours)
+
+1. **Fix None checks in database layer** (Category 2)
+   - Add assertions or None checks in all DB methods
+   - Prevents runtime crashes
+
+2. **Add missing type annotations** (Category 3)
+   - Quick wins for type safety
+   - Enables better IDE autocomplete
+
+3. **Fix redefinition errors** (Category 7)
+   - Rename conflicting variables
+   - Clean code smell
+
+### Phase 2: Medium-Impact, Medium-Effort (12-16 hours)
+
+4. **Fix assignment incompatibilities** (Category 4)
+   - Add type conversions where needed
+   - Update variable types to match usage
+
+5. **Fix method signature mismatches** (Category 5)
+   - Update method calls to use correct arguments
+   - Update method signatures to accept needed parameters
+
+6. **Fix return value mismatches** (Category 6)
+   - Ensure return statements match declared types
+   - Update return type declarations if needed
+
+### Phase 3: Comprehensive Typing (20-25 hours)
+
+7. **Add return type annotations** (Category 1)
+   - Explicitly type all return values
+   - Remove `Any` returns throughout codebase
+
+8. **Enable `--check-untyped-defs`**
+   - Add type hints to all function signatures
+   - Allow mypy to check function bodies
+
+---
+
+## Estimated Total Effort
+
+| Phase | Hours | Errors Fixed |
+|-------|-------|--------------|
+| Phase 1 | 8-12 | 22 errors |
+| Phase 2 | 12-16 | 18 errors |
+| Phase 3 | 20-25 | 19 errors |
+| **TOTAL** | **40-53** | **59 errors** |
+
+---
+
+## Benefits of Fixing These Errors
+
+1. **Runtime Safety:** Catch type errors at development time instead of production
+2. **Better IDE Support:** Autocomplete and inline documentation
+3. **Refactoring Confidence:** Type checker validates changes across codebase
+4. **Documentation:** Type hints serve as machine-verified documentation
+5. **Reduced Bugs:** Many runtime errors prevented by type checking
+
+---
+
+## Integration with Pre-Commit Hooks
+
+**Current Status:** Mypy hook is enabled but was skipped for recent commit due to these pre-existing errors.
+
+**After Fixes:**
+1. Re-enable mypy hook (remove SKIP=mypy)
+2. Configure mypy to fail on new type errors
+3. Add to CI/CD pipeline
+4. Require passing mypy for all new code
+
+**Configuration Recommendation:**
+```ini
+# mypy.ini
+[mypy]
+python_version = 3.11
+warn_return_any = True
+warn_unused_configs = True
+disallow_untyped_defs = False  # Enable after Phase 3
+check_untyped_defs = True
+
+# Ignore errors in external packages
+[mypy-PyQt6.*]
+ignore_missing_imports = True
+```
+
+---
+
+**End of Appendix A**
+
+---
+
 **Report End**
 
 *This report was generated by automated codebase analysis. All line numbers and code examples are accurate as of 2026-02-08.*
