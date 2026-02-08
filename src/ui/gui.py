@@ -5690,6 +5690,9 @@ Files being sent to Ollama:
                 "date": bundle.get("document_date"),
             }
 
+        # Refresh metrics if analysis status window is open
+        self._refresh_metrics_after_bundle_operation()
+
     def _on_bundle_rejected_from_workflow(self, bundle):
         """Handle bundle rejection from guided workflow."""
         bundle_id = bundle.get("bundle_id")
@@ -5702,6 +5705,15 @@ Files being sent to Ollama:
         # Workflow already showed completion summary, just close this window
         # Note: Don't close here - will be closed after exec() returns
         pass
+
+    def _refresh_metrics_after_bundle_operation(self):
+        """Refresh metrics in analysis status window if it's open."""
+        if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
+            try:
+                self._analysis_status_window._refresh_all()
+                print("[Auto-refresh] Updated metrics after bundle operation")
+            except Exception as e:
+                print(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     # ===== PHASE 7: Bundle Suggestion Handlers =====
 
@@ -6374,10 +6386,11 @@ class StartupWindow(QWidget):
                 parent=None,  # No parent - standalone
             )
 
-            # Connect completion signal
+            # Connect signals
             workflow.workflow_completed.connect(
                 lambda stats: self._on_standalone_workflow_completed(stats)
             )
+            workflow.bundle_accepted.connect(self._refresh_metrics_after_bundle_operation)
 
             # Show workflow IMMEDIATELY - user can start reviewing right away!
             workflow.exec()
@@ -6496,10 +6509,11 @@ class StartupWindow(QWidget):
                 parent=None,
             )
 
-            # Connect completion signal
+            # Connect signals
             workflow.workflow_completed.connect(
                 lambda stats: self._on_standalone_workflow_completed(stats)
             )
+            workflow.bundle_accepted.connect(self._refresh_metrics_after_bundle_operation)
 
             # Show workflow
             workflow.exec()
@@ -6823,6 +6837,19 @@ class StartupWindow(QWidget):
                     logger.info("User chose to skip document analysis")
             except Exception as e:
                 logger.error(f"Exception showing dialog: {e}", exc_info=True)
+
+    def _refresh_metrics_after_bundle_operation(self, bundle_data=None):
+        """Refresh metrics in analysis status window if it's open.
+
+        Args:
+            bundle_data: Optional bundle data from signal (not used, but signal emits it)
+        """
+        if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
+            try:
+                self._analysis_status_window._refresh_all()
+                print("[Auto-refresh] Updated metrics after bundle operation")
+            except Exception as e:
+                print(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     def closeEvent(self, event):  # noqa: N802
         """Handle window close event with optional confirmation"""
