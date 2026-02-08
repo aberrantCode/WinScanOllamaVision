@@ -1,16 +1,22 @@
 """
 Analysis Status Window
-Provides visibility into analysis service status with 2 tabs: Collection Status and File Analysis Grid.
+Provides visibility into analysis service status with 3 tabs: Collection Status, Page Details, and Document Details.
 """
 
+import os
+import subprocess
 import time
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -20,7 +26,7 @@ from db.analysis_db import AnalysisDB
 
 
 class AnalysisStatusWindow(QDialog):
-    """Main Analysis Status Window with 2 tabs: Collection Status and File Analysis Grid"""
+    """Main Analysis Status Window with 3 tabs: Collection Status, Page Details, and Document Details"""
 
     # Signals
     retry_failed_requested = pyqtSignal()
@@ -98,7 +104,7 @@ class AnalysisStatusWindow(QDialog):
 
     def _init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("Analysis Status")
+        self.setWindowTitle("Analytics & Details")
         self.setMinimumSize(1200, 800)
         self.setModal(False)
 
@@ -257,7 +263,8 @@ class AnalysisStatusWindow(QDialog):
             }}
         """)
         self.tabs.addTab(self._create_collection_status_tab(), "Collection Status")
-        self.tabs.addTab(self._create_file_grid_tab(), "File Analysis")
+        self.tabs.addTab(self._create_file_grid_tab(), "Page Details")
+        self.tabs.addTab(self._create_document_details_tab(), "Document Details")
 
         main_layout.addWidget(self.tabs)
 
@@ -501,15 +508,104 @@ class AnalysisStatusWindow(QDialog):
         scroll_area.setWidget(container)
         return scroll_area
 
+    def _create_document_details_tab(self) -> QWidget:
+        """Create the Document Details tab showing generated PDFs"""
+        # Create scroll area wrapper with solid background
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {self.theme_colors["bg_secondary"]};
+                border: none;
+            }}
+        """)
+
+        # Create content widget with matching background
+        container = QWidget()
+        container.setStyleSheet(f"background-color: {self.theme_colors['bg_secondary']};")
+        container.setAutoFillBackground(True)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        # Create table
+        self.document_table = QTableWidget()
+        self.document_table.setColumnCount(6)
+        self.document_table.setHorizontalHeaderLabels(
+            ["PDF Filename", "Company", "Document Type", "Date", "Pages", "Created At"]
+        )
+
+        # Style table with current theme
+        colors = self.theme_colors
+        self.document_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {colors["bg_secondary"]};
+                color: {colors["text_primary"]};
+                border: 1px solid {colors["border"]};
+                gridline-color: {colors["border"]};
+                selection-background-color: #3B82F6;
+                selection-color: white;
+            }}
+            QHeaderView::section {{
+                background-color: {colors["bg_tertiary"]};
+                color: {colors["text_primary"]};
+                padding: 8px;
+                border: 1px solid {colors["border"]};
+                font-weight: 600;
+            }}
+            QTableWidget::item {{
+                padding: 8px;
+                border-bottom: 1px solid {colors["border"]};
+            }}
+            QTableWidget::item:selected {{
+                background-color: #3B82F6;
+                color: white;
+            }}
+        """)
+
+        # Configure table
+        self.document_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.document_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.document_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        # Configure headers (with null checks for mypy)
+        h_header = self.document_table.horizontalHeader()
+        v_header = self.document_table.verticalHeader()
+        if h_header:
+            h_header.setStretchLastSection(True)
+            h_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        if v_header:
+            v_header.setVisible(False)
+
+        # Set column widths
+        self.document_table.setColumnWidth(0, 300)  # PDF Filename
+        self.document_table.setColumnWidth(1, 200)  # Company
+        self.document_table.setColumnWidth(2, 200)  # Document Type
+        self.document_table.setColumnWidth(3, 120)  # Date
+        self.document_table.setColumnWidth(4, 80)  # Pages
+        self.document_table.setColumnWidth(5, 180)  # Created At
+
+        # Connect double-click handler
+        self.document_table.itemDoubleClicked.connect(self._on_document_table_double_click)
+
+        layout.addWidget(self.document_table)
+
+        # Set container as scroll area widget
+        scroll_area.setWidget(container)
+        return scroll_area
+
     def _load_all_data(self):
         """Load data for all tabs"""
         self._refresh_collection_status()
         self._refresh_file_grid()
+        self._refresh_document_details()
 
     def _refresh_all(self):
         """Refresh all tabs"""
         self._refresh_collection_status()
         self._refresh_file_grid()
+        self._refresh_document_details()
 
     def _on_analysis_progress(self, status_text, current, total):
         """Handle progress updates from background analysis thread"""
@@ -1456,6 +1552,119 @@ class AnalysisStatusWindow(QDialog):
             transformed.append(transformed_row)
 
         return transformed
+
+    def _refresh_document_details(self):
+        """Refresh Document Details tab with generated PDFs"""
+        # Check if database connection is still valid
+        if (
+            not self.analysis_db
+            or not hasattr(self.analysis_db, "connection")
+            or not self.analysis_db.connection
+        ):
+            return  # Database is closed, skip refresh
+
+        if not hasattr(self, "document_table"):
+            return  # Tab not yet created
+
+        try:
+            from datetime import datetime
+
+            # Query document_bundles table for completed bundles with PDFs
+            cursor = self.analysis_db.connection.connection.cursor()
+            cursor.execute("""
+                SELECT
+                    id,
+                    pdf_path,
+                    company,
+                    document_type,
+                    document_date,
+                    file_paths,
+                    created_at
+                FROM document_bundles
+                WHERE status = 'completed' AND pdf_path IS NOT NULL
+                ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+
+            # Clear existing rows
+            self.document_table.setRowCount(0)
+
+            # Populate table
+            for row in rows:
+                bundle_id, pdf_path, company, doc_type, doc_date, file_paths_json, created_at = row
+
+                # Parse file_paths to get page count
+                import json
+
+                file_paths = json.loads(file_paths_json) if file_paths_json else []
+                page_count = len(file_paths)
+
+                # Format created_at timestamp
+                try:
+                    created_dt = datetime.fromisoformat(created_at)
+                    created_str = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    created_str = created_at
+
+                # Add row to table
+                row_position = self.document_table.rowCount()
+                self.document_table.insertRow(row_position)
+
+                # PDF Filename
+                pdf_filename = os.path.basename(pdf_path) if pdf_path else ""
+                filename_item = QTableWidgetItem(pdf_filename)
+                filename_item.setData(Qt.ItemDataRole.UserRole, pdf_path)  # Store full path
+                self.document_table.setItem(row_position, 0, filename_item)
+
+                # Company
+                company_item = QTableWidgetItem(company or "")
+                self.document_table.setItem(row_position, 1, company_item)
+
+                # Document Type
+                type_item = QTableWidgetItem(doc_type or "")
+                self.document_table.setItem(row_position, 2, type_item)
+
+                # Date
+                date_item = QTableWidgetItem(doc_date or "")
+                self.document_table.setItem(row_position, 3, date_item)
+
+                # Pages
+                pages_item = QTableWidgetItem(str(page_count))
+                self.document_table.setItem(row_position, 4, pages_item)
+
+                # Created At
+                created_item = QTableWidgetItem(created_str)
+                self.document_table.setItem(row_position, 5, created_item)
+
+        except Exception:
+            # Silently ignore errors during shutdown
+            pass
+
+    def _on_document_table_double_click(self, item):
+        """Handle double-click on document table to open PDF"""
+        # Get PDF path from first column (stored in UserRole data)
+        row = item.row()
+        filename_item = self.document_table.item(row, 0)
+        if not filename_item:
+            return
+
+        pdf_path = filename_item.data(Qt.ItemDataRole.UserRole)
+        if not pdf_path or not os.path.exists(pdf_path):
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(self, "File Not Found", f"PDF file not found:\n{pdf_path}")
+            return
+
+        # Open PDF in default viewer
+        try:
+            if os.name == "nt":  # Windows
+                os.startfile(pdf_path)
+            elif os.name == "posix":  # macOS and Linux
+                subprocess.run(["open" if os.uname().sysname == "Darwin" else "xdg-open", pdf_path])
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(self, "Error Opening PDF", f"Failed to open PDF:\n{str(e)}")
 
     def closeEvent(self, event):  # noqa: N802
         """Handle window close"""
