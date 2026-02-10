@@ -14,7 +14,10 @@ from db.repositories import (
     AnalysisRepository,
     AuditRepository,
     BundleRepository,
+    BundleImagesRepository,
     DirectoryRepository,
+    ImageFilesRepository,
+    PdfImagePagesRepository,
 )
 
 
@@ -208,13 +211,38 @@ class TestBundleRepository:
     def repo(self, conn):
         return BundleRepository(conn)
 
-    def test_save_and_get_suggestions(self, repo):
+    @pytest.fixture
+    def image_repo(self, conn):
+        return ImageFilesRepository(conn)
+
+    @pytest.fixture
+    def bundle_images_repo(self, conn):
+        return BundleImagesRepository(conn)
+
+    def _create_test_images(self, image_repo, file_paths):
+        """Helper to create test image records and return their IDs."""
+        image_ids = []
+        for path in file_paths:
+            img_id = image_repo.register(
+                file_path=path,
+                file_hash=f"hash_{path}",
+                directory_path=os.path.dirname(path),
+                filename=os.path.basename(path),
+                file_size=1024,
+                file_mtime=1234567890.0,
+            )
+            image_ids.append(img_id)
+        return image_ids
+
+    def test_save_and_get_suggestions(self, repo, image_repo, bundle_images_repo):
         # Arrange
         file_paths = ["/p1.jpg", "/p2.jpg"]
         metadata = {"company": "Test Corp", "document_type": "Invoice"}
+        image_ids = self._create_test_images(image_repo, file_paths)
 
         # Act
-        bundle_id = repo.save_suggestion(file_paths, metadata, 0.9)
+        bundle_id = repo.save_suggestion(metadata, 0.9)
+        bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         suggestions = repo.get_suggestions()
 
         # Assert
@@ -223,7 +251,7 @@ class TestBundleRepository:
 
     def test_update_status(self, repo):
         # Arrange
-        bundle_id = repo.save_suggestion(["/p1.jpg"], {"company": "Test"}, 0.9)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9)
 
         # Act
         repo.update_status(bundle_id, "accepted", "user_approved")
@@ -233,8 +261,8 @@ class TestBundleRepository:
 
     def test_get_suggestions_with_filters(self, repo):
         # Arrange
-        repo.save_suggestion(["/p1.jpg"], {"company": "Test"}, 0.9)
-        repo.save_suggestion(["/p2.jpg"], {"company": "Test"}, 0.5)
+        repo.save_suggestion({"company": "Test"}, 0.9)
+        repo.save_suggestion({"company": "Test"}, 0.5, 1)
 
         # Act
         high_confidence = repo.get_suggestions(min_confidence=0.8)
@@ -252,9 +280,12 @@ class TestBundleRepository:
         assert isinstance(bundled_paths, set)
         assert len(bundled_paths) == 0
 
-    def test_get_bundled_file_paths_includes_accepted_bundles(self, repo):
+    def test_get_bundled_file_paths_includes_accepted_bundles(self, repo, image_repo, bundle_images_repo):
         # Arrange
-        bundle_id = repo.save_suggestion(["/p1.jpg", "/p2.jpg"], {"company": "Test"}, 0.9)
+        file_paths = ["/p1.jpg", "/p2.jpg"]
+        image_ids = self._create_test_images(image_repo, file_paths)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         repo.update_status(bundle_id, "accepted")
 
         # Act
@@ -264,9 +295,12 @@ class TestBundleRepository:
         assert "/p1.jpg" in bundled_paths
         assert "/p2.jpg" in bundled_paths
 
-    def test_get_bundled_file_paths_includes_completed_bundles(self, repo):
+    def test_get_bundled_file_paths_includes_completed_bundles(self, repo, image_repo, bundle_images_repo):
         # Arrange
-        bundle_id = repo.save_suggestion(["/p3.jpg", "/p4.jpg"], {"company": "Test"}, 0.9)
+        file_paths = ["/p3.jpg", "/p4.jpg"]
+        image_ids = self._create_test_images(image_repo, file_paths)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         repo.update_status(bundle_id, "completed")
 
         # Act
@@ -276,9 +310,12 @@ class TestBundleRepository:
         assert "/p3.jpg" in bundled_paths
         assert "/p4.jpg" in bundled_paths
 
-    def test_get_bundled_file_paths_excludes_suggested_bundles(self, repo):
+    def test_get_bundled_file_paths_excludes_suggested_bundles(self, repo, image_repo, bundle_images_repo):
         # Arrange
-        repo.save_suggestion(["/p5.jpg"], {"company": "Test"}, 0.9)
+        file_paths = ["/p5.jpg"]
+        image_ids = self._create_test_images(image_repo, file_paths)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_images_repo.add_images_bulk(bundle_id, image_ids)
 
         # Act
         bundled_paths = repo.get_bundled_file_paths()
@@ -286,9 +323,12 @@ class TestBundleRepository:
         # Assert
         assert "/p5.jpg" not in bundled_paths
 
-    def test_get_bundled_file_paths_excludes_rejected_bundles(self, repo):
+    def test_get_bundled_file_paths_excludes_rejected_bundles(self, repo, image_repo, bundle_images_repo):
         # Arrange
-        bundle_id = repo.save_suggestion(["/p6.jpg"], {"company": "Test"}, 0.9)
+        file_paths = ["/p6.jpg"]
+        image_ids = self._create_test_images(image_repo, file_paths)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         repo.update_status(bundle_id, "rejected")
 
         # Act
@@ -297,10 +337,32 @@ class TestBundleRepository:
         # Assert
         assert "/p6.jpg" not in bundled_paths
 
-    def test_get_bundled_file_paths_returns_distinct_paths(self, repo):
+    def test_get_bundled_file_paths_returns_distinct_paths(self, repo, image_repo, bundle_images_repo):
         # Arrange - two bundles with overlapping files
-        bundle_id1 = repo.save_suggestion(["/p7.jpg", "/p8.jpg"], {"company": "Test"}, 0.9)
-        bundle_id2 = repo.save_suggestion(["/p8.jpg", "/p9.jpg"], {"company": "Test"}, 0.9)
+        file_paths1 = ["/p7.jpg", "/p8.jpg"]
+        file_paths2 = ["/p8.jpg", "/p9.jpg"]
+
+        # Create all unique images
+        all_paths = list(set(file_paths1 + file_paths2))
+        path_to_id = {}
+        for path in all_paths:
+            img_id = image_repo.register(
+                file_path=path,
+                file_hash=f"hash_{path}",
+                directory_path=os.path.dirname(path),
+                filename=os.path.basename(path),
+                file_size=1024,
+                file_mtime=1234567890.0,
+            )
+            path_to_id[path] = img_id
+
+        # Create bundles
+        bundle_id1 = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths1))
+        bundle_images_repo.add_images_bulk(bundle_id1, [path_to_id[p] for p in file_paths1])
+
+        bundle_id2 = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths2))
+        bundle_images_repo.add_images_bulk(bundle_id2, [path_to_id[p] for p in file_paths2])
+
         repo.update_status(bundle_id1, "accepted")
         repo.update_status(bundle_id2, "accepted")
 
@@ -315,7 +377,7 @@ class TestBundleRepository:
 
     def test_update_pdf_path(self, repo):
         # Arrange
-        bundle_id = repo.save_suggestion(["/p10.jpg"], {"company": "Test"}, 0.9)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9)
         pdf_path = "/output/test_document.pdf"
 
         # Act
@@ -332,7 +394,7 @@ class TestBundleRepository:
 
     def test_update_pdf_path_updates_timestamp(self, repo):
         # Arrange
-        bundle_id = repo.save_suggestion(["/p11.jpg"], {"company": "Test"}, 0.9)
+        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9)
 
         # Get initial timestamp
         cursor = repo.conn.connection.cursor()
@@ -884,7 +946,6 @@ class TestPdfFilesRepository:
 
         bundle_repo = BundleRepository(conn)
         return bundle_repo.save_suggestion(
-            ["/test/img1.png", "/test/img2.png"],
             {"company": "Test Co", "document_type": "Invoice"},
             0.95,
         )
@@ -895,7 +956,6 @@ class TestPdfFilesRepository:
             pdf_path="/output/test_doc.pdf",
             pdf_filename="test_doc.pdf",
             bundle_id=bundle_id,
-            source_image_ids=[1, 2, 3],
             page_count=3,
             file_hash="hash123",
             file_size=102400,
@@ -907,7 +967,6 @@ class TestPdfFilesRepository:
         assert pdf is not None
         assert pdf["pdf_filename"] == "test_doc.pdf"
         assert pdf["bundle_id"] == bundle_id
-        assert pdf["source_image_ids"] == [1, 2, 3]  # Should be parsed from JSON
         assert pdf["page_count"] == 3
         assert pdf["file_hash"] == "hash123"
         assert pdf["file_size"] == 102400
@@ -915,14 +974,13 @@ class TestPdfFilesRepository:
 
     def test_register_replaces_existing(self, repo, bundle_id):
         # Arrange - register first time
-        repo.register("/output/test.pdf", "test.pdf", bundle_id, [1, 2], 2, "hash1", 1000)
+        repo.register("/output/test.pdf", "test.pdf", bundle_id, 2, "hash1", 1000)
 
         # Act - register again with different data
-        repo.register("/output/test.pdf", "test.pdf", bundle_id, [3, 4, 5], 3, "hash2", 2000)
+        repo.register("/output/test.pdf", "test.pdf", bundle_id, 3, "hash2", 2000)
 
         # Assert - should be replaced
         pdf = repo.get_by_path("/output/test.pdf")
-        assert pdf["source_image_ids"] == [3, 4, 5]
         assert pdf["page_count"] == 3
         assert pdf["file_hash"] == "hash2"
 
@@ -932,7 +990,6 @@ class TestPdfFilesRepository:
             pdf_path="/output/doc.pdf",
             pdf_filename="doc.pdf",
             bundle_id=bundle_id,
-            source_image_ids=[1],
             page_count=1,
         )
 
@@ -951,7 +1008,7 @@ class TestPdfFilesRepository:
 
     def test_get_by_bundle(self, repo, bundle_id):
         # Arrange
-        repo.register("/out/doc.pdf", "doc.pdf", bundle_id, [1, 2], 2)
+        repo.register("/out/doc.pdf", "doc.pdf", bundle_id, 2)
 
         # Act
         pdf = repo.get_by_bundle(bundle_id)
@@ -959,7 +1016,6 @@ class TestPdfFilesRepository:
         # Assert
         assert pdf is not None
         assert pdf["bundle_id"] == bundle_id
-        assert pdf["source_image_ids"] == [1, 2]
 
     def test_get_by_bundle_nonexistent(self, repo):
         # Act
@@ -970,7 +1026,7 @@ class TestPdfFilesRepository:
 
     def test_update_generation_status(self, repo, bundle_id):
         # Arrange
-        repo.register("/out/doc.pdf", "doc.pdf", bundle_id, [1], 1)
+        repo.register("/out/doc.pdf", "doc.pdf", bundle_id, 1)
 
         # Act
         repo.update_generation_status("/out/doc.pdf", "failed")
@@ -984,10 +1040,10 @@ class TestPdfFilesRepository:
         from db.repositories.bundle_repo import BundleRepository
 
         bundle_repo = BundleRepository(conn)
-        bundle_id2 = bundle_repo.save_suggestion(["/test/img3.png"], {"company": "Other Co"}, 0.8)
+        bundle_id2 = bundle_repo.save_suggestion({"company": "Other Co"}, 0.8)
 
-        repo.register("/out/doc1.pdf", "doc1.pdf", bundle_id, [1, 2], 2)
-        repo.register("/out/doc2.pdf", "doc2.pdf", bundle_id2, [3], 1)
+        repo.register("/out/doc1.pdf", "doc1.pdf", bundle_id, 2)
+        repo.register("/out/doc2.pdf", "doc2.pdf", bundle_id2, 1)
 
         # Act
         all_pdfs = repo.get_all()
@@ -995,14 +1051,12 @@ class TestPdfFilesRepository:
         # Assert
         assert len(all_pdfs) == 2
         # Should be ordered by generated_at DESC (most recent first)
-        # Both have source_image_ids parsed from JSON
-        assert all(isinstance(pdf["source_image_ids"], list) for pdf in all_pdfs)
 
     def test_get_stats(self, repo, bundle_id):
         # Arrange
-        repo.register("/out/doc1.pdf", "doc1.pdf", bundle_id, [1], 1)
-        repo.register("/out/doc2.pdf", "doc2.pdf", bundle_id, [2], 1)
-        repo.register("/out/doc3.pdf", "doc3.pdf", bundle_id, [3], 1)
+        repo.register("/out/doc1.pdf", "doc1.pdf", bundle_id, 1)
+        repo.register("/out/doc2.pdf", "doc2.pdf", bundle_id, 1)
+        repo.register("/out/doc3.pdf", "doc3.pdf", bundle_id, 1)
 
         repo.update_generation_status("/out/doc1.pdf", "generating")
         repo.update_generation_status("/out/doc2.pdf", "failed")
@@ -1016,16 +1070,3 @@ class TestPdfFilesRepository:
         assert stats["status_generating"] == 1
         assert stats["status_failed"] == 1
         assert stats["status_completed"] == 1
-
-    def test_source_image_ids_json_handling(self, repo, bundle_id):
-        # Arrange - register with large list
-        large_list = list(range(1, 51))  # 50 image IDs
-        repo.register("/out/big.pdf", "big.pdf", bundle_id, large_list, 50)
-
-        # Act
-        pdf = repo.get_by_path("/out/big.pdf")
-
-        # Assert - should correctly parse JSON back to list
-        assert pdf is not None
-        assert len(pdf["source_image_ids"]) == 50
-        assert pdf["source_image_ids"] == large_list

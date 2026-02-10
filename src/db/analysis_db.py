@@ -243,7 +243,6 @@ class AnalysisDB:
         bundle_id = self._bundles.save_suggestion(
             bundle_metadata=bundle_metadata,
             confidence_score=confidence_score,
-            total_pages=len(file_paths),
         )
 
         if not bundle_id:
@@ -294,14 +293,14 @@ class AnalysisDB:
         self._bundles.update_status(bundle_id, status, user_action)
 
     def update_bundle_metadata(self, bundle_id: int, metadata: dict[str, Any]) -> None:
-        """Update bundle metadata fields."""
-        self._bundles.update_metadata(
-            bundle_id,
-            company=metadata.get("company"),
-            document_type=metadata.get("document_type"),
-            document_date=metadata.get("document_date"),
-            bundle_name=metadata.get("bundle_name"),
-        )
+        """
+        Update bundle name.
+
+        NOTE: Document metadata (company, type, date) should be updated via
+        update_metadata() on the metadata table, not here.
+        """
+        if "bundle_name" in metadata:
+            self._bundles.update_bundle_name(bundle_id, metadata["bundle_name"])
 
     def get_bundled_file_paths(self) -> set[str]:
         """Get all file paths that are part of accepted or completed bundles."""

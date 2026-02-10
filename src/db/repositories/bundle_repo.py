@@ -25,17 +25,16 @@ class BundleRepository:
         self,
         bundle_metadata: dict[str, Any],
         confidence_score: float,
-        total_pages: int,
     ) -> int | None:
         """
         Save a document bundle suggestion.
 
         NOTE: After creating bundle, use BundleImagesRepository to add images via junction table.
+        Document metadata (company, type, date) should be stored in metadata table.
 
         Args:
-            bundle_metadata: Bundle metadata (company, type, date, etc.)
+            bundle_metadata: Bundle metadata (bundle_name, etc.)
             confidence_score: Confidence score (0.0 to 1.0)
-            total_pages: Number of pages in bundle
 
         Returns:
             Bundle ID
@@ -51,16 +50,11 @@ class BundleRepository:
         cursor = self.conn.execute(
             """
             INSERT INTO document_bundles (
-                bundle_name, company, document_type, document_date,
-                total_pages, confidence_score, confidence_level, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'suggested')
+                bundle_name, confidence_score, confidence_level, status
+            ) VALUES (?, ?, ?, 'suggested')
         """,
             (
                 bundle_metadata.get("bundle_name"),
-                bundle_metadata.get("company"),
-                bundle_metadata.get("document_type"),
-                bundle_metadata.get("document_date"),
-                total_pages,
                 confidence_score,
                 confidence_level,
             ),
@@ -115,56 +109,29 @@ class BundleRepository:
         )
         self.conn.commit()
 
-    def update_metadata(
+    def update_bundle_name(
         self,
         bundle_id: int,
-        company: str | None = None,
-        document_type: str | None = None,
-        document_date: str | None = None,
-        bundle_name: str | None = None,
+        bundle_name: str,
     ) -> None:
         """
-        Update bundle metadata fields.
+        Update bundle name.
+
+        NOTE: Document metadata (company, type, date) is stored in the metadata table,
+        not in document_bundles.
 
         Args:
             bundle_id: Bundle ID
-            company: Updated company name
-            document_type: Updated document type
-            document_date: Updated document date
             bundle_name: Updated bundle name
         """
-        updates: list[str] = []
-        params: list[str | int] = []
-
-        if company is not None:
-            updates.append("company = ?")
-            params.append(company)
-
-        if document_type is not None:
-            updates.append("document_type = ?")
-            params.append(document_type)
-
-        if document_date is not None:
-            updates.append("document_date = ?")
-            params.append(document_date)
-
-        if bundle_name is not None:
-            updates.append("bundle_name = ?")
-            params.append(bundle_name)
-
-        if not updates:
-            return
-
-        updates.append("updated_at = CURRENT_TIMESTAMP")
-        params.append(bundle_id)
-
-        query = f"""
+        self.conn.execute(
+            """
             UPDATE document_bundles
-            SET {", ".join(updates)}
+            SET bundle_name = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """
-
-        self.conn.execute(query, tuple(params))
+        """,
+            (bundle_name, bundle_id),
+        )
         self.conn.commit()
 
     def get_bundled_file_paths(self) -> set[str]:
