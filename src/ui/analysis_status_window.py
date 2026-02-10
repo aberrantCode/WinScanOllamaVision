@@ -922,12 +922,14 @@ class AnalysisStatusWindow(QDialog):
         )
         high_confidence = cursor.fetchone()[0]
 
-        # Pages bundled (count distinct file paths in finalized bundles only)
+        # Pages bundled (count distinct images in finalized bundles only)
+        # After Migration 16: use bundle_images junction table
         cursor.execute(
             """
-            SELECT COUNT(DISTINCT json_each.value)
-            FROM document_bundles, json_each(document_bundles.file_paths)
-            WHERE status IN ('accepted', 'completed')
+            SELECT COUNT(DISTINCT bi.image_file_id)
+            FROM bundle_images bi
+            INNER JOIN document_bundles b ON bi.bundle_id = b.id
+            WHERE b.status IN ('accepted', 'completed')
         """
         )
         pages_bundled_result = cursor.fetchone()
@@ -942,11 +944,13 @@ class AnalysisStatusWindow(QDialog):
         )
         documents_archived = cursor.fetchone()[0]
 
-        # PDFs generated (completed bundles with PDF paths)
+        # PDFs generated (count PDFs linked to completed bundles)
+        # After Migration 16: pdf_path moved to pdf_files table
         cursor.execute(
             """
-            SELECT COUNT(*) FROM document_bundles
-            WHERE status = 'completed' AND pdf_path IS NOT NULL
+            SELECT COUNT(*) FROM pdf_files pf
+            INNER JOIN document_bundles b ON pf.bundle_id = b.id
+            WHERE b.status = 'completed'
         """
         )
         pdfs_generated = cursor.fetchone()[0]
@@ -1027,8 +1031,9 @@ class AnalysisStatusWindow(QDialog):
         avg_confidence_result = cursor.fetchone()[0]
         avg_confidence = (avg_confidence_result * 100) if avg_confidence_result else 0
 
-        # Error rate (from analysis_errors table)
-        cursor.execute("SELECT COUNT(*) FROM analysis_errors")
+        # Error rate (from analysis_results table)
+        # After Migration 16: use had_error flag instead of analysis_errors table
+        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE had_error = 1")
         error_count = cursor.fetchone()[0]
         error_rate = (error_count / files_detected * 100) if files_detected > 0 else 0
 
@@ -1093,11 +1098,13 @@ class AnalysisStatusWindow(QDialog):
         company_dist = {row[0]: row[1] for row in cursor.fetchall()}
 
         # Total archived pages (sum of page counts from bundles)
+        # After Migration 16: count from bundle_images junction table
         cursor.execute(
             """
-            SELECT SUM(json_array_length(file_paths))
-            FROM document_bundles
-            WHERE status IN ('accepted', 'completed')
+            SELECT COUNT(bi.image_file_id)
+            FROM bundle_images bi
+            INNER JOIN document_bundles b ON bi.bundle_id = b.id
+            WHERE b.status IN ('accepted', 'completed')
         """
         )
         archived_pages_result = cursor.fetchone()[0]
@@ -1853,18 +1860,19 @@ class AnalysisStatusWindow(QDialog):
             cursor.execute("""
                 SELECT
                     b.id,
-                    b.pdf_path,
+                    pf.pdf_path,
                     b.created_at,
                     COUNT(bi.image_file_id) as page_count,
                     m.company,
                     m.document_type,
                     m.document_date
                 FROM document_bundles b
+                INNER JOIN pdf_files pf ON b.id = pf.bundle_id
                 LEFT JOIN bundle_images bi ON b.id = bi.bundle_id
                 LEFT JOIN image_files img ON bi.image_file_id = img.id AND bi.sequence_order = 1
                 LEFT JOIN metadata m ON img.id = m.image_file_id
-                WHERE b.status = 'completed' AND b.pdf_path IS NOT NULL
-                GROUP BY b.id, b.pdf_path, b.created_at, m.company, m.document_type, m.document_date
+                WHERE b.status = 'completed'
+                GROUP BY b.id, pf.pdf_path, b.created_at, m.company, m.document_type, m.document_date
                 ORDER BY b.created_at DESC
             """)
             rows = cursor.fetchall()
