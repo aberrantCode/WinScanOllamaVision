@@ -105,8 +105,11 @@ def prevent_production_db_access(tmp_path, monkeypatch):
     # Create temp database paths
     test_db_path = str(tmp_path / "test_analysis.db")
 
-    # Patch the main database path function
+    # Patch ALL import sites where get_appdata_db_path is bound
+    # Must patch at every module that imports it, not just the origin module
     monkeypatch.setattr("db.connection.get_appdata_db_path", lambda *args, **kwargs: test_db_path)
+    monkeypatch.setattr("db.analysis_db.get_appdata_db_path", lambda *args, **kwargs: test_db_path)
+    monkeypatch.setattr("db.metadata_db.get_appdata_db_path", lambda *args, **kwargs: test_db_path)
 
     yield
 
