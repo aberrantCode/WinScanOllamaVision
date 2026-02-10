@@ -70,8 +70,8 @@ def create_all_tables(conn: DatabaseConnection, force: bool = False) -> None:
     # Run full schema initialization
     _create_core_tables(conn)
     _create_junction_tables(conn)
-    _create_indices(conn)
-    _run_migrations(conn)
+    _run_migrations(conn)  # Apply migrations BEFORE creating indices
+    _create_indices(conn)  # Create indices AFTER migrations (columns exist)
     conn.commit()
 
     # Cache the schema version to prevent redundant initialization
@@ -125,9 +125,28 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
     )
 
     # Analysis results - LLM analysis audit trail (provenance only, not metadata)
-    _execute_sql(
-        cursor,
-        """
+    # Check if table exists with old schema and drop it if needed
+    result = cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='analysis_results'"
+    ).fetchone()
+
+    if result:
+        # Table exists - check if it has the new schema
+        columns_info = cursor.execute("PRAGMA table_info(analysis_results)").fetchall()
+        columns = [r[1] for r in columns_info]
+
+        if "image_file_id" not in columns:
+            # Old schema detected - drop and recreate
+            logger.warning(
+                f"Dropping analysis_results table with old schema (columns: {columns[:5]}...)"
+            )
+            # Temporarily disable foreign keys to allow dropping table
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("DROP TABLE IF EXISTS analysis_results")
+            cursor.execute("PRAGMA foreign_keys = ON")
+
+    # Create table with new schema
+    create_analysis_sql = """
         CREATE TABLE IF NOT EXISTS analysis_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
@@ -154,8 +173,8 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
 
             FOREIGN KEY (image_file_id) REFERENCES image_files(id) ON DELETE CASCADE
         )
-    """,
-    )
+    """
+    _execute_sql(cursor, create_analysis_sql)
 
     # Metadata - Normalized document metadata (single source of truth)
     _execute_sql(
