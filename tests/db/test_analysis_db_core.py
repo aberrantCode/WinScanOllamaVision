@@ -105,14 +105,6 @@ class TestAnalysisDBCore:
         # Assert
         assert len(pages) >= 1
 
-    @pytest.mark.skip(
-        reason="Provider management removed after schema refactoring - now handled via config"
-    )
-    def test_add_provider(self, db):
-        # Provider management removed in schema refactoring
-        # LLM provider configuration now handled via ConfigManager, not database
-        pass
-
     def test_source_directory_management(self, db):
         # Act
         db.add_source_directory("/test/dir", scan_on_startup=True)
@@ -180,14 +172,6 @@ class TestAnalysisDBCore:
         # Assert
         assert isinstance(stats, dict)
         assert "total_analyzed_pages" in stats
-
-    @pytest.mark.skip(
-        reason="get_failed_analyses() method not implemented after schema refactoring"
-    )
-    def test_get_failed_analyses(self, db):
-        # Error tracking now done via had_error flag in analysis_results
-        # Query: SELECT * FROM analysis_results WHERE had_error = 1
-        pass
 
     def test_get_analysis_statistics(self, db):
         # Arrange
@@ -317,22 +301,6 @@ class TestAnalysisDBCore:
         assert "/completed.jpg" in bundled_paths
         assert "/suggested.jpg" not in bundled_paths
         assert "/rejected.jpg" not in bundled_paths
-
-    @pytest.mark.skip(
-        reason="update_bundle_pdf_path() removed - PDF paths now stored in pdf_files table"
-    )
-    def test_update_bundle_pdf_path_delegates_to_repository(self, db):
-        # PDF path management moved to pdf_files table
-        # Use register_pdf_file() instead
-        pass
-
-    @pytest.mark.skip(
-        reason="update_bundle_pdf_path() removed - PDF paths now stored in pdf_files table"
-    )
-    def test_update_bundle_pdf_path_updates_timestamp(self, db):
-        # PDF path management moved to pdf_files table
-        # Use register_pdf_file() instead
-        pass
 
     # ==================== Image Files Facade Tests ====================
 
