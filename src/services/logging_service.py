@@ -169,7 +169,8 @@ class LoggingService:
         """Clear the current log file"""
         if self.log_file_path and os.path.exists(self.log_file_path):
             try:
-                open(self.log_file_path, "w").close()
+                with open(self.log_file_path, "w"):
+                    pass  # Context manager ensures file is properly closed
                 self.info("Log file cleared")
             except Exception as e:
                 self.error(f"Failed to clear log file: {e}", exc_info=True)
