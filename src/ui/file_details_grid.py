@@ -15,16 +15,18 @@ from typing import Any
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
+    QPoint,
     QSortFilterProxyModel,
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QColor, QFont
+from PyQt6.QtGui import QAction, QColor, QCursor, QFont, QPainter, QPixmap, QTransform
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -33,11 +35,85 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QTableView,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+
+
+class PannableImageLabel(QLabel):
+    """QLabel with click & drag panning support for zoomed images."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_panning = False
+        self.pan_start_pos = QPoint()
+        self.pan_offset = QPoint(0, 0)
+        self.zoom_level = 100
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def set_zoom_level(self, zoom: int):
+        """Update zoom level to control cursor and panning behavior."""
+        self.zoom_level = zoom
+        self._update_cursor()
+
+    def reset_pan(self):
+        """Reset pan offset to center."""
+        self.pan_offset = QPoint(0, 0)
+
+    def get_pan_offset(self) -> QPoint:
+        """Get current pan offset."""
+        return QPoint(self.pan_offset)
+
+    def set_pan_offset(self, offset: QPoint):
+        """Set pan offset."""
+        self.pan_offset = offset
+
+    def mousePressEvent(self, event):  # noqa: N802
+        """Start panning on left click when zoomed."""
+        if self.zoom_level > 100 and event.button() == Qt.MouseButton.LeftButton:
+            self.is_panning = True
+            self.pan_start_pos = event.pos()
+            self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        """Update pan offset while dragging."""
+        if self.is_panning:
+            delta = event.pos() - self.pan_start_pos
+            self.pan_offset += delta
+            self.pan_start_pos = event.pos()
+            # Notify parent to update the image display
+            if self.parent():
+                parent = self.parent()
+                while parent:
+                    if hasattr(parent, "_update_image_preview"):
+                        parent._update_image_preview()
+                        break
+                    parent = parent.parent()
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        """End panning."""
+        if self.is_panning and event.button() == Qt.MouseButton.LeftButton:
+            self.is_panning = False
+            self._update_cursor()
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def _update_cursor(self):
+        """Update cursor based on zoom level."""
+        if self.zoom_level > 100:
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
 
 class FileDetailsTableModel(QAbstractTableModel):
@@ -61,7 +137,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("rotation", "Rotation", True),
         ("file_size", "Size", True),
         ("modified_time", "Modified", True),
-        ("analysis_time", "Analyzed", False),
+        ("analysis_time", "Analyzed", True),
         ("processing_duration", "Duration", False),
         ("model_used", "Model", False),
         ("provider", "Provider", False),
@@ -307,17 +383,10 @@ class FileDetailsTableModel(QAbstractTableModel):
 
     @staticmethod
     def _format_datetime(dt: Any) -> str:
-        """Format datetime for display."""
-        if isinstance(dt, str):
-            try:
-                dt = datetime.fromisoformat(dt)
-            except (ValueError, TypeError):
-                return str(dt)
+        """Format datetime for display (converts UTC to local timezone)."""
+        from ui.datetime_utils import format_datetime_for_display
 
-        if isinstance(dt, datetime):
-            return dt.strftime("%Y-%m-%d %H:%M")
-
-        return str(dt)
+        return format_datetime_for_display(dt, "%Y-%m-%d %I:%M %p")
 
     @staticmethod
     def _format_duration(duration: Any) -> str:
@@ -502,11 +571,17 @@ class FileDetailsDialog(QDialog):
     metadata_saved = pyqtSignal(str)  # Emits file path when metadata is saved
 
     def __init__(
-        self, file_data: dict[str, Any], parent=None, analysis_db=None, config_manager=None
+        self,
+        file_data: dict[str, Any],
+        parent=None,
+        analysis_db=None,
+        metadata_db=None,
+        config_manager=None,
     ):
         super().__init__(parent)
         self.file_data = file_data
         self.analysis_db = analysis_db  # Store database reference
+        self.metadata_db = metadata_db  # Store metadata database reference
         self.setWindowTitle(
             f"File Details - {os.path.basename(file_data.get('filename', 'Unknown'))}"
         )
@@ -518,7 +593,8 @@ class FileDetailsDialog(QDialog):
         logger = get_logger()
         logger.debug(
             f"[DIALOG INIT] FileDetailsDialog opened for {file_data.get('filename')} - "
-            f"rotation_needed in file_data: {file_data.get('rotation_needed')}"
+            f"rotation (image_files): {file_data.get('rotation')}, "
+            f"rotation_needed (analysis_results): {file_data.get('rotation_needed')}"
         )
 
         # Get theme from parent
@@ -547,6 +623,10 @@ class FileDetailsDialog(QDialog):
         else:
             self.default_zoom_mode = "fit_to_width"
             self.default_zoom_percent = 100
+
+        # Zoom and rotation controls
+        self.zoom_level = 100  # Start at 100%
+        self.rotation_angle = 0  # Rotation in degrees (0, 90, 180, 270)
 
         # Correct the file path if it's in a temp folder
         stored_path = self.file_data.get("full_path")
@@ -580,6 +660,135 @@ class FileDetailsDialog(QDialog):
                 "border": "#E5E7EB",
                 "accent": "#3B82F6",
             }
+
+    def _create_overlay_controls(self) -> QWidget:
+        """Create compact overlaid zoom/rotate controls with tooltips."""
+        # Color definitions
+        GRAY_100 = "#F3F4F6"
+        GRAY_300 = "#D1D5DB"
+        GRAY_900 = "#111827"
+        PRIMARY_PALE = "#EFF6FF"
+        PRIMARY = "#3B82F6"
+
+        controls = QWidget()
+        controls.setStyleSheet(f"""
+            QWidget {{
+                background: rgba(255, 255, 255, 0.95);
+                border: 2px solid {GRAY_900};
+                border-radius: 12px;
+                padding: 4px;
+            }}
+        """)
+
+        layout = QHBoxLayout(controls)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetFixedSize)  # Shrink to fit content
+
+        # Button style (doubled size)
+        btn_style = f"""
+            QPushButton {{
+                background: {GRAY_100};
+                color: {GRAY_900};
+                border: 1px solid {GRAY_300};
+                border-radius: 4px;
+                font-size: 20px;
+                font-weight: bold;
+                min-width: 40px;
+                max-width: 40px;
+                min-height: 40px;
+                max-height: 40px;
+            }}
+            QPushButton:hover {{
+                background: {PRIMARY_PALE};
+                border-color: {PRIMARY};
+            }}
+        """
+
+        # Zoom controls
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setStyleSheet(btn_style)
+        zoom_out_btn.setToolTip("Zoom Out (25%)")
+        zoom_out_btn.clicked.connect(self._on_zoom_out)
+        layout.addWidget(zoom_out_btn)
+
+        self.zoom_spinner = QSpinBox()
+        self.zoom_spinner.setRange(25, 400)
+        self.zoom_spinner.setValue(100)
+        self.zoom_spinner.setSuffix("%")
+        self.zoom_spinner.setFixedWidth(110)
+        self.zoom_spinner.setFixedHeight(40)
+        self.zoom_spinner.setToolTip("Zoom Level (25-400%)")
+        self.zoom_spinner.setStyleSheet(f"""
+            QSpinBox {{
+                background: white;
+                color: {GRAY_900};
+                border: 1px solid {GRAY_300};
+                border-radius: 4px;
+                padding: 2px;
+                font-size: 20px;
+            }}
+        """)
+        self.zoom_spinner.valueChanged.connect(self._on_zoom_percent_changed)
+        layout.addWidget(self.zoom_spinner)
+
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setStyleSheet(btn_style)
+        zoom_in_btn.setToolTip("Zoom In (25%)")
+        zoom_in_btn.clicked.connect(self._on_zoom_in)
+        layout.addWidget(zoom_in_btn)
+
+        # Fit buttons
+        fit_width_btn = QPushButton("W")
+        fit_width_btn.setStyleSheet(btn_style)
+        fit_width_btn.setToolTip("Fit to Width")
+        fit_width_btn.clicked.connect(self._on_fit_width)
+        layout.addWidget(fit_width_btn)
+
+        fit_height_btn = QPushButton("H")
+        fit_height_btn.setStyleSheet(btn_style)
+        fit_height_btn.setToolTip("Fit to Height")
+        fit_height_btn.clicked.connect(self._on_fit_height)
+        layout.addWidget(fit_height_btn)
+
+        fit_btn = QPushButton("F")
+        fit_btn.setStyleSheet(btn_style)
+        fit_btn.setToolTip("Fit to Window")
+        fit_btn.clicked.connect(self._on_fit_window)
+        layout.addWidget(fit_btn)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet(f"background: {GRAY_300};")
+        sep.setFixedWidth(2)
+        sep.setFixedHeight(40)
+        layout.addWidget(sep)
+
+        # Rotation controls (only CW and CCW)
+        rotate_ccw_btn = QPushButton("↺")
+        rotate_ccw_btn.setStyleSheet(btn_style)
+        rotate_ccw_btn.setToolTip("Rotate Counter-Clockwise (90°)")
+        rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
+        layout.addWidget(rotate_ccw_btn)
+
+        rotate_cw_btn = QPushButton("↻")
+        rotate_cw_btn.setStyleSheet(btn_style)
+        rotate_cw_btn.setToolTip("Rotate Clockwise (90°)")
+        rotate_cw_btn.clicked.connect(self._on_rotate_cw)
+        layout.addWidget(rotate_cw_btn)
+
+        return controls
+
+    def _position_overlay_controls(self):
+        """Position overlay controls at bottom-center of image area."""
+        if not hasattr(self, "overlay_controls") or not hasattr(self, "image_area"):
+            return
+
+        # Center horizontally, position at bottom
+        x = (self.image_area.width() - self.overlay_controls.width()) // 2
+        y = self.image_area.height() - self.overlay_controls.height() - 10
+        self.overlay_controls.move(x, y)
 
     def _init_ui(self):
         """Initialize the user interface with image preview and accordion sections."""
@@ -619,9 +828,16 @@ class FileDetailsDialog(QDialog):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(15, 15, 15, 15)
 
-        # Image preview label
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Image display area (with overlay controls)
+        image_area = QWidget()
+        image_area.setMinimumSize(400, 400)  # Ensure minimum size for absolute positioning
+        image_layout = QVBoxLayout(image_area)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(0)
+
+        # Image preview label with panning support
+        self.image_label = PannableImageLabel()
+        self.image_label.set_zoom_level(self.zoom_level)  # Initialize zoom level
         self.image_label.setStyleSheet(f"""
             QLabel {{
                 background-color: {self.theme_colors["bg_primary"]};
@@ -630,6 +846,13 @@ class FileDetailsDialog(QDialog):
                 padding: 10px;
             }}
         """)
+        image_layout.addWidget(self.image_label)
+
+        # Overlay controls (positioned absolutely at bottom-left)
+        self.overlay_controls = self._create_overlay_controls()
+        self.overlay_controls.setParent(image_area)
+        self.overlay_controls.raise_()  # Bring controls to front
+        # Position will be set in _apply_initial_zoom after layout is complete
 
         # Load and display image (path already corrected in __init__)
         file_path = self.file_data.get("full_path")
@@ -637,19 +860,13 @@ class FileDetailsDialog(QDialog):
         if file_path and os.path.exists(file_path):
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                # Store base pixmap (never modified) and working pixmap for transformations
+                # Store base pixmap (never modified)
                 self.base_pixmap = pixmap
                 self.original_pixmap = pixmap
                 self.current_rotation = "none"
 
-                # Calculate available dimensions (50% of dialog width minus margins/padding/border)
-                # Dialog width: 1050, 50% = 525, minus margins (15*2) and border/padding (~20) = ~480
-                available_width = 480
-                available_height = 800 - 150  # Dialog height minus margins and bottom section
-
-                # Apply zoom based on configured mode
-                scaled_pixmap = self._scale_image_to_mode(pixmap, available_width, available_height)
-                self.image_label.setPixmap(scaled_pixmap)
+                # Update preview with initial zoom
+                self._update_image_preview()
             else:
                 self.base_pixmap = None
                 self.original_pixmap = None
@@ -663,9 +880,10 @@ class FileDetailsDialog(QDialog):
             self.image_label.setText(f"Image not found\n{file_path or 'No path'}")
             self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
 
-        left_layout.addWidget(self.image_label)
+        left_layout.addWidget(image_area)
 
         # Store references for dynamic resizing
+        self.image_area = image_area  # Store for overlay control repositioning
         self.left_panel = left_panel
         self.splitter = splitter
 
@@ -708,9 +926,15 @@ class FileDetailsDialog(QDialog):
         )
         accordion_layout.addWidget(analysis_section)
 
+        # LLM Prompt Section
+        llm_prompt_section = self._create_accordion_section(
+            "📝 LLM Prompt", self._create_llm_prompt_content()
+        )
+        accordion_layout.addWidget(llm_prompt_section)
+
         # Raw Response Section
         raw_response_section = self._create_accordion_section(
-            "💬 Raw LLM Response", self._create_raw_response_content()
+            "💬 LLM Response", self._create_raw_response_content()
         )
         accordion_layout.addWidget(raw_response_section)
 
@@ -880,17 +1104,10 @@ class FileDetailsDialog(QDialog):
             return str(size) if size else "N/A"
 
     def _format_dt(self, dt: Any) -> str:
-        """Format datetime."""
-        if not dt:
-            return "N/A"
-        if isinstance(dt, str):
-            try:
-                dt = datetime.fromisoformat(dt)
-            except (ValueError, TypeError):
-                return str(dt)
-        if isinstance(dt, datetime):
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        return str(dt)
+        """Format datetime (converts UTC to local timezone)."""
+        from ui.datetime_utils import format_datetime_for_display
+
+        return format_datetime_for_display(dt, "%Y-%m-%d %I:%M:%S %p")
 
     def _format_duration(self, duration: Any) -> str:
         """Format duration."""
@@ -1065,6 +1282,24 @@ class FileDetailsDialog(QDialog):
         Raises:
             ValueError: If field_name is not in the allowed whitelist.
         """
+        if not self.metadata_db:
+            return []
+
+        # Use MetadataDB methods for known fields
+        try:
+            if field_name == "company":
+                return self.metadata_db.get_unique_companies()
+            elif field_name == "document_type":
+                return self.metadata_db.get_unique_titles()
+            elif field_name == "document_category":
+                return self.metadata_db.get_unique_categories()
+        except Exception as e:
+            from services.logging_service import get_logger
+
+            get_logger().error(f"Error getting distinct values for {field_name}: {e}")
+            return []
+
+        # Fallback for other fields (use analysis_db for historical data)
         if not self.analysis_db:
             return []
 
@@ -1084,6 +1319,19 @@ class FileDetailsDialog(QDialog):
             from services.logging_service import get_logger
 
             get_logger().error(f"Error getting distinct values for {field_name}: {e}")
+            return []
+
+    def _get_distinct_categories(self):
+        """Get distinct document categories from metadata table."""
+        if not self.metadata_db:
+            return []
+
+        try:
+            return self.metadata_db.get_unique_categories()
+        except Exception as e:
+            from services.logging_service import get_logger
+
+            get_logger().error(f"Error getting distinct categories: {e}")
             return []
 
     def _create_metadata_content(self):
@@ -1112,12 +1360,14 @@ class FileDetailsDialog(QDialog):
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
 
-            # Label
+            # Label (fixed width for perfect alignment)
             lbl = QLabel(f"<b>{label}:</b>")
             lbl.setStyleSheet(
                 f"color: {self.theme_colors['text_secondary']}; background: transparent; border: none;"
             )
-            lbl.setMinimumWidth(130)
+            lbl.setFixedWidth(
+                160
+            )  # Fixed width ensures perfect alignment (increased for "Document Category")
             row_layout.addWidget(lbl)
 
             # Input field (text, dropdown, or checkbox)
@@ -1237,43 +1487,28 @@ class FileDetailsDialog(QDialog):
             # Store reference for later access
             self.metadata_inputs[field_name] = input_widget
 
-        # Extract rotation from metadata or raw response if available
-        rotation_value = self.file_data.get("rotation_needed", "")
-
-        # Debug logging
+        # Extract rotation - prioritize user-saved rotation from image_files table
         from services.logging_service import get_logger
 
         logger = get_logger()
-        logger.debug(
-            f"[METADATA CONTENT] Extracting rotation - "
-            f"rotation_needed from file_data: '{rotation_value}'"
-        )
 
-        if not rotation_value:
-            raw_response = str(self.file_data.get("raw_response", ""))
-            if "rotation" in raw_response.lower() or "rotate" in raw_response.lower():
-                import re
-
-                rotation_match = re.search(
-                    r'"rotation[^"]*":\s*"?([^",}]+)"?', raw_response, re.IGNORECASE
+        # ALWAYS get rotation from image_files table (authoritative source via MetadataDB)
+        # Never use analysis_results.rotation_needed as it's just for historical reference
+        rotation_value = "none"  # Default
+        if self.metadata_db:
+            file_path = self.file_data.get("full_path")
+            if file_path:
+                rotation_degrees = self.metadata_db.get_image_rotation(file_path)
+                # Convert degrees back to rotation_needed format
+                rotation_value = {
+                    0: "none",
+                    90: "90_cw",
+                    270: "90_ccw",
+                    180: "180",
+                }.get(rotation_degrees, "none")  # Default to "none" if unexpected value
+                logger.debug(
+                    f"[METADATA CONTENT] Loaded rotation from image_files: {rotation_degrees}° = '{rotation_value}'"
                 )
-                if rotation_match:
-                    rotation_value = rotation_match.group(1).strip()
-                    logger.debug(
-                        f"[METADATA CONTENT] Extracted rotation from raw response: '{rotation_value}'"
-                    )
-
-        # Normalize rotation value
-        if rotation_value and rotation_value not in ["none", "90_cw", "90_ccw", "180"]:
-            logger.debug(
-                f"[METADATA CONTENT] Normalizing invalid rotation '{rotation_value}' to 'none'"
-            )
-            rotation_value = "none"
-
-        # Ensure rotation_value is never empty - default to "none"
-        if not rotation_value:
-            rotation_value = "none"
-            logger.debug("[METADATA CONTENT] Empty rotation value, defaulting to 'none'")
 
         # Store initial rotation for later application
         self.initial_rotation = rotation_value
@@ -1284,8 +1519,19 @@ class FileDetailsDialog(QDialog):
         # Get distinct values from database
         distinct_document_types = self._get_distinct_values("document_type")
         distinct_companies = self._get_distinct_values("company")
+        distinct_categories = self._get_distinct_categories()
 
         # Add all metadata fields (always show all fields, even if empty)
+        # Document Category FIRST (user's top priority field)
+        add_editable_row(
+            "Document Category",
+            "document_category",
+            self.file_data.get("document_category"),
+            "Category (optional)",
+            widget_type="editable_dropdown",
+            distinct_values=distinct_categories,
+        )
+
         add_editable_row(
             "Document Type",
             "document_type",
@@ -1355,6 +1601,14 @@ class FileDetailsDialog(QDialog):
             "tax_related",
             self.file_data.get("tax_related", False),
             widget_type="checkbox",
+        )
+
+        # Output filename field (user's desired PDF filename)
+        add_editable_row(
+            "Output Filename",
+            "output_filename",
+            self.file_data.get("output_filename"),
+            "Desired PDF filename (optional)",
         )
 
         # Store original values and connect change tracking
@@ -1427,9 +1681,85 @@ class FileDetailsDialog(QDialog):
 
         return widget
 
+    def _create_llm_prompt_content(self):
+        """Create LLM prompt content widget with copy button."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Header with copy button
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        header_layout.addStretch()
+
+        # Copy button (icon only)
+        copy_btn = QPushButton("📋")
+        copy_btn.setToolTip("Copy prompt to clipboard")
+        copy_btn.setFixedSize(32, 32)
+        copy_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.theme_colors["bg_secondary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
+                border-radius: 4px;
+                font-size: 16px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.theme_colors["accent"]};
+                color: {self.theme_colors["bg_primary"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.theme_colors["border"]};
+            }}
+        """)
+        copy_btn.clicked.connect(self._copy_prompt_to_clipboard)
+        header_layout.addWidget(copy_btn)
+        layout.addWidget(header)
+
+        # Text edit for prompt
+        prompt_text = self.file_data.get("prompt_text", "No prompt available")
+
+        self.prompt_text_edit = QTextEdit()
+        self.prompt_text_edit.setPlainText(str(prompt_text))
+        self.prompt_text_edit.setReadOnly(True)
+        self.prompt_text_edit.setFont(QFont("Consolas", 9))
+        self.prompt_text_edit.setMinimumHeight(150)
+        self.prompt_text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {self.theme_colors["bg_primary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
+                border-radius: 4px;
+                padding: 8px;
+            }}
+        """)
+        layout.addWidget(self.prompt_text_edit)
+
+        return container
+
+    def _copy_prompt_to_clipboard(self):
+        """Copy LLM prompt text to clipboard."""
+        if hasattr(self, "prompt_text_edit"):
+            prompt_text = self.prompt_text_edit.toPlainText()
+            clipboard = QApplication.clipboard()
+            clipboard.setText(prompt_text)
+            # Show brief feedback
+            if hasattr(self, "status_label"):
+                self.status_label.setText("✓ Prompt copied to clipboard")
+                self.status_label.show()
+                QTimer.singleShot(2000, self.status_label.hide)
+
     def _create_raw_response_content(self):
         """Create raw LLM response content widget."""
-        raw_response = self.file_data.get("raw_response", "No raw response available")
+        # Migration 16: raw_response renamed to response_text
+        raw_response = self.file_data.get("response_text") or self.file_data.get(
+            "raw_response", "No raw response available"
+        )
+
         text_edit = QTextEdit()
         text_edit.setPlainText(str(raw_response))
         text_edit.setReadOnly(True)
@@ -1475,29 +1805,167 @@ class FileDetailsDialog(QDialog):
             # Fallback to fit width
             return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
 
+    def _update_image_preview(self):
+        """Update preview with zoom, rotation, and pan transformations."""
+        if not self.base_pixmap:
+            return
+
+        # Start with base pixmap
+        pixmap = self.base_pixmap
+
+        # Apply rotation
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Apply zoom
+        zoom_factor = self.zoom_level / 100.0
+        if zoom_factor != 1.0:
+            new_width = int(pixmap.width() * zoom_factor)
+            new_height = int(pixmap.height() * zoom_factor)
+            pixmap = pixmap.scaled(
+                new_width,
+                new_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+        # Apply pan
+        pan_offset = self.image_label.get_pan_offset()
+        if self.zoom_level > 100 and not pan_offset.isNull():
+            canvas = QPixmap(pixmap.size())
+            canvas.fill(Qt.GlobalColor.white)
+            painter = QPainter(canvas)
+            painter.drawPixmap(pan_offset, pixmap)
+            painter.end()
+            pixmap = canvas
+
+        self.image_label.setPixmap(pixmap)
+
+    def _on_zoom_in(self):
+        """Zoom in by 25%."""
+        new_zoom = min(400, self.zoom_level + 25)
+        self.zoom_spinner.setValue(new_zoom)
+
+    def _on_zoom_out(self):
+        """Zoom out by 25%."""
+        new_zoom = max(25, self.zoom_level - 25)
+        self.zoom_spinner.setValue(new_zoom)
+
+    def _on_zoom_percent_changed(self, value: int):
+        """Handle zoom percentage change."""
+        self.zoom_level = value
+        self.image_label.set_zoom_level(value)
+        self._update_image_preview()
+
+    def _on_rotate_ccw(self):
+        """Rotate counter-clockwise by 90 degrees."""
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.image_label.reset_pan()  # Reset pan when rotating
+        self._update_image_preview()
+
+    def _on_rotate_cw(self):
+        """Rotate clockwise by 90 degrees."""
+        self.rotation_angle = (self.rotation_angle + 90) % 360
+        self.image_label.reset_pan()  # Reset pan when rotating
+        self._update_image_preview()
+
+    def _on_fit_width(self):
+        """Fit image to width of preview area."""
+        if not self.base_pixmap or not hasattr(self, "image_area"):
+            return
+
+        # Start with base pixmap
+        pixmap = self.base_pixmap
+
+        # Apply rotation to get actual display dimensions
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Get available width from image_area (subtract margins and padding)
+        available_width = self.image_area.width() - 40
+
+        # Ensure we have valid dimensions
+        if available_width <= 0 or pixmap.width() <= 0:
+            return
+
+        # Calculate zoom to fit width
+        zoom_percent = int((available_width / pixmap.width()) * 100)
+        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
+
+        self.zoom_spinner.setValue(zoom_percent)
+
+    def _on_fit_height(self):
+        """Fit image to height of preview area."""
+        if not self.base_pixmap or not hasattr(self, "image_area"):
+            return
+
+        # Start with base pixmap
+        pixmap = self.base_pixmap
+
+        # Apply rotation to get actual display dimensions
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Get available height from image_area (subtract margins, padding, and overlay controls)
+        available_height = self.image_area.height() - 80  # Extra space for overlay controls
+
+        # Ensure we have valid dimensions
+        if available_height <= 0 or pixmap.height() <= 0:
+            return
+
+        # Calculate zoom to fit height
+        zoom_percent = int((available_height / pixmap.height()) * 100)
+        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
+
+        self.zoom_spinner.setValue(zoom_percent)
+
+    def _on_fit_window(self):
+        """Fit image to window (both width and height)."""
+        if not self.base_pixmap or not hasattr(self, "image_area"):
+            return
+
+        # Start with base pixmap
+        pixmap = self.base_pixmap
+
+        # Apply rotation to get actual display dimensions
+        if self.rotation_angle != 0:
+            transform = QTransform()
+            transform.rotate(self.rotation_angle)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+
+        # Get available dimensions from image_area (subtract margins and overlay controls space)
+        available_width = self.image_area.width() - 40
+        available_height = self.image_area.height() - 80  # Extra space for overlay controls
+
+        # Ensure we have valid dimensions
+        if (
+            available_width <= 0
+            or available_height <= 0
+            or pixmap.width() <= 0
+            or pixmap.height() <= 0
+        ):
+            return
+
+        # Calculate zoom to fit both dimensions (use smaller ratio)
+        width_ratio = available_width / pixmap.width()
+        height_ratio = available_height / pixmap.height()
+        zoom_ratio = min(width_ratio, height_ratio)
+        zoom_percent = int(zoom_ratio * 100)
+        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
+
+        self.zoom_spinner.setValue(zoom_percent)
+
     def _on_splitter_moved(self, pos, index):
-        """Rescale image when splitter is moved."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
-            return
-
-        # Get current dimensions of left panel
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-
-        # Calculate available dimensions for image (subtract margins and padding)
-        # Margins: 15*2, border/padding: ~20
-        available_width = left_width - 50
-        available_height = left_height - 50
-
-        # Don't scale if dimensions are too small
-        if available_width < 100 or available_height < 100:
-            return
-
-        # Rescale image according to configured mode
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        """Handle splitter movement - no automatic rescaling with manual zoom controls."""
+        # With manual zoom controls, we don't automatically rescale on splitter movement
+        # Users can use fit buttons (W, H, F) if they want to adjust zoom
+        pass
 
     def showEvent(self, event):  # noqa: N802
         """Handle first show to apply initial zoom setting."""
@@ -1507,68 +1975,44 @@ class FileDetailsDialog(QDialog):
         if not hasattr(self, "_first_show_done"):
             self._first_show_done = True
 
-            # Rescale image after window is shown and layout is calculated
-            if hasattr(self, "original_pixmap") and self.original_pixmap is not None:
+            # Apply initial zoom after window is shown and layout is calculated
+            if hasattr(self, "base_pixmap") and self.base_pixmap is not None:
                 # Use QTimer to ensure layout has been fully calculated
                 from PyQt6.QtCore import QTimer
 
-                QTimer.singleShot(10, self._apply_initial_zoom)
+                QTimer.singleShot(100, self._apply_initial_zoom)
 
     def _apply_initial_zoom(self):
         """Apply the configured zoom setting after window is shown."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
+        if not hasattr(self, "base_pixmap") or self.base_pixmap is None:
             return
 
-        if not hasattr(self, "left_panel"):
-            return
+        # Ensure overlay controls are visible and positioned at bottom-left
+        if hasattr(self, "overlay_controls"):
+            self._position_overlay_controls()
+            self.overlay_controls.show()
+            self.overlay_controls.raise_()
 
-        # Get current dimensions of left panel
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-
-        # Calculate available dimensions for image (subtract margins and padding)
-        available_width = left_width - 50
-        available_height = left_height - 50
-
-        # Don't scale if dimensions are too small
-        if available_width < 100 or available_height < 100:
-            return
-
-        # Rescale image according to configured mode
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        # Apply zoom based on default mode
+        if self.default_zoom_mode == "fit_to_width":
+            self._on_fit_width()
+        elif self.default_zoom_mode == "fit_to_height":
+            self._on_fit_height()
+        elif self.default_zoom_mode == "fit_to_window":
+            self._on_fit_window()
+        elif self.default_zoom_mode == "custom_%":
+            # Use configured percentage
+            self.zoom_spinner.setValue(self.default_zoom_percent)
+        else:
+            # Default to fit width
+            self._on_fit_width()
 
     def resizeEvent(self, event):  # noqa: N802
-        """Handle window resize to adjust image scale."""
+        """Handle window resize - reposition overlay controls."""
         super().resizeEvent(event)
-
-        # Only rescale if we have an image loaded
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
-            return
-
-        # Only rescale if left panel exists (dialog fully initialized)
-        if not hasattr(self, "left_panel"):
-            return
-
-        # Get current dimensions of left panel
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-
-        # Calculate available dimensions for image (subtract margins and padding)
-        available_width = left_width - 50
-        available_height = left_height - 50
-
-        # Don't scale if dimensions are too small
-        if available_width < 100 or available_height < 100:
-            return
-
-        # Rescale image according to configured mode
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        # Reposition overlay controls at bottom-left when window is resized
+        if hasattr(self, "overlay_controls") and hasattr(self, "image_area"):
+            self._position_overlay_controls()
 
     def _copy_json(self):
         """Copy JSON data to clipboard."""
@@ -1630,19 +2074,11 @@ class FileDetailsDialog(QDialog):
         # Update file_data dictionary
         self.file_data.update(updated_metadata)
 
-        # Save to database - traverse parent chain to find database instances
+        # Save to database - use both databases
         try:
-            # Find parent widget with database instances
-            parent_widget = self.parent()
-            analysis_db = None
-            metadata_db = None
-
-            while parent_widget:
-                if hasattr(parent_widget, "analysis_db") and hasattr(parent_widget, "metadata_db"):
-                    analysis_db = parent_widget.analysis_db
-                    metadata_db = parent_widget.metadata_db
-                    break
-                parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+            # Use the database instances passed to constructor
+            analysis_db = self.analysis_db
+            metadata_db = self.metadata_db
 
             if analysis_db and metadata_db:
                 file_path = self.file_data.get("full_path")
@@ -1657,6 +2093,8 @@ class FileDetailsDialog(QDialog):
                         "total_pages": updated_metadata.get("total_pages", ""),
                         "rotation_needed": updated_metadata.get("rotation_needed", ""),
                         "tax_related": updated_metadata.get("tax_related", False),
+                        "output_filename": updated_metadata.get("output_filename", ""),
+                        "document_category": updated_metadata.get("document_category", ""),
                     }
 
                     # Debug logging before database save
@@ -1668,22 +2106,55 @@ class FileDetailsDialog(QDialog):
                         f"rotation_needed: '{metadata.get('rotation_needed')}'"
                     )
 
-                    # Update analysis database
+                    # Update analysis database (legacy)
                     analysis_db.update_analysis_metadata(file_path, metadata)
 
-                    # Also update metadata database for backward compatibility
-                    metadata_db.save_metadata(
-                        file_path=file_path,
-                        metadata=metadata,
-                        model_used=self.file_data.get("model_used", "manual_edit"),
-                        processing_time_ms=0,
-                    )
-
-                    # Reload fresh data from database to ensure file_data is up-to-date
+                    # Save rotation to image_files table (via MetadataDB)
+                    rotation_needed = metadata.get("rotation_needed", "none")
+                    rotation_degrees = {
+                        "none": 0,
+                        "90_cw": 90,
+                        "90_ccw": 270,
+                        "180": 180,
+                    }.get(rotation_needed, 0)
                     from services.logging_service import get_logger
 
                     logger = get_logger()
+                    logger.debug(
+                        f"Converted rotation_needed to rotation_degrees: {rotation_degrees}"
+                    )
+                    metadata_db.update_image_rotation(file_path, rotation_degrees)
 
+                    # Update normalized metadata table (user edit) via MetadataDB
+                    try:
+                        image_file = metadata_db.get_image_file(file_path)
+                        if image_file:
+                            metadata_updates = {
+                                "company": metadata.get("company"),
+                                "document_type": metadata.get("document_type"),
+                                "document_date": metadata.get("document_date"),
+                                "page_number": int(metadata["page_number"])
+                                if metadata.get("page_number")
+                                else None,
+                                "total_pages": int(metadata["total_pages"])
+                                if metadata.get("total_pages")
+                                else None,
+                                "rotation": rotation_degrees,
+                                "tax_related": metadata.get("tax_related", False),
+                                "output_filename": metadata.get("output_filename"),
+                                "document_category": metadata.get("document_category"),
+                            }
+                            # Use metadata_db for normalized metadata operations
+                            metadata_db.update_normalized_metadata(
+                                image_file["id"], metadata_updates
+                            )
+                            logger.debug(
+                                "Updated normalized metadata table via MetadataDB (user edit)"
+                            )
+                    except Exception as meta_error:
+                        logger.warning(f"Failed to update normalized metadata: {meta_error}")
+
+                    # Reload fresh data from database to ensure file_data is up-to-date
                     fresh_analysis = analysis_db.get_analysis(file_path)
                     if fresh_analysis:
                         logger.debug(
@@ -1700,6 +2171,8 @@ class FileDetailsDialog(QDialog):
                             "rotation_needed",
                             "tax_related",
                             "confidence",
+                            "output_filename",
+                            "document_category",
                         ]:
                             if key in fresh_analysis:
                                 self.file_data[key] = fresh_analysis[key]
@@ -1707,6 +2180,13 @@ class FileDetailsDialog(QDialog):
                         logger.debug(
                             f"Updated file_data - rotation_needed: {self.file_data.get('rotation_needed')}"
                         )
+
+                    # CRITICAL: Also reload rotation from image_files table (authoritative source via MetadataDB)
+                    fresh_rotation = metadata_db.get_image_rotation(file_path)
+                    self.file_data["rotation"] = fresh_rotation
+                    logger.debug(
+                        f"Reloaded rotation from image_files: {fresh_rotation}° (authoritative source)"
+                    )
 
                     # Emit signal so parent can refresh its data
                     self.metadata_saved.emit(file_path)
@@ -1721,10 +2201,17 @@ class FileDetailsDialog(QDialog):
                         self, "Missing File Path", "Cannot save metadata: file path not found."
                     )
             else:
+                # Determine which database is missing
+                missing_dbs = []
+                if not analysis_db:
+                    missing_dbs.append("analysis_db")
+                if not metadata_db:
+                    missing_dbs.append("metadata_db")
+
                 QMessageBox.warning(
                     self,
                     "Database Not Available",
-                    "Cannot save metadata: database connection not available.",
+                    f"Cannot save metadata: {', '.join(missing_dbs)} not available.",
                 )
 
         except Exception as e:
@@ -1767,141 +2254,19 @@ class FileDetailsDialog(QDialog):
         return None
 
     def _re_analyze(self):
-        """Re-analyze this file with live progress updates."""
-        from PyQt6.QtCore import QThread, pyqtSignal
-
+        """Queue this file for re-analysis and close dialog."""
         file_path = self.file_data.get("full_path") or self.file_data.get("filename")
         if not file_path:
             QMessageBox.warning(self, "No File Path", "Cannot re-analyze: file path not found.")
             return
 
-        # Disable all buttons and edit controls
-        self._set_controls_enabled(False)
+        # Emit signal to parent (AnalysisStatusWindow will queue the job)
+        self.re_analyze_requested.emit(file_path)
 
-        # Show status label
-        self.status_label.setVisible(True)
-        self.status_label.setText("Starting analysis...")
+        # Close the dialog so user can see analysis progress in main window
+        self.accept()
 
-        # Find parent's config manager and database instances
-        parent_widget = self.parent()
-        config_manager = None
-        analysis_db = None
-        metadata_db = None
-
-        while parent_widget:
-            if hasattr(parent_widget, "config_manager"):
-                config_manager = parent_widget.config_manager
-            if hasattr(parent_widget, "analysis_db"):
-                analysis_db = parent_widget.analysis_db
-            if hasattr(parent_widget, "metadata_db"):
-                metadata_db = parent_widget.metadata_db
-            if config_manager and analysis_db and metadata_db:
-                break
-            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
-
-        if not config_manager:
-            QMessageBox.warning(
-                self, "Config Not Available", "Cannot re-analyze: configuration not available."
-            )
-            self._set_controls_enabled(True)
-            self.status_label.setVisible(False)
-            return
-
-        # Create analysis thread
-        class _ReAnalysisThread(QThread):
-            progress = pyqtSignal(str)  # Status text updates
-            finished = pyqtSignal(dict)  # Analysis result
-
-            def __init__(self, file_path, config_manager):
-                super().__init__()
-                self.file_path = file_path
-                self.config_manager = config_manager
-
-            def run(self):
-                from db.analysis_db import AnalysisDB
-                from db.metadata_db import MetadataDB
-                from services.analysis_service import AnalysisService
-
-                try:
-                    # Create thread-local database instances
-                    thread_analysis_db = AnalysisDB()
-                    thread_metadata_db = MetadataDB()
-                    thread_analysis_service = AnalysisService(
-                        self.config_manager, thread_analysis_db, thread_metadata_db
-                    )
-
-                    # Use centralized re-analysis method (resets status and forces fresh analysis)
-                    # Pass progress callback to emit updates
-                    result = thread_analysis_service.re_analyze_file(
-                        self.file_path, progress_callback=self.progress.emit
-                    )
-
-                    # Close thread-local connections
-                    thread_analysis_db.close()
-                    thread_metadata_db.close()
-
-                    self.finished.emit(result)
-
-                except Exception as e:
-                    import traceback
-
-                    self.finished.emit(
-                        {"success": False, "error": str(e), "traceback": traceback.format_exc()}
-                    )
-
-        # Create and start thread
-        self._analysis_thread = _ReAnalysisThread(file_path, config_manager)
-        self._analysis_thread.progress.connect(self._on_analysis_progress)
-        self._analysis_thread.finished.connect(self._on_analysis_finished)
-        self._analysis_thread.start()
-
-    def _on_analysis_progress(self, status_text: str):
-        """Handle progress updates from analysis thread."""
-        self.status_label.setText(status_text)
-
-    def _on_analysis_finished(self, result: dict):
-        """Handle analysis completion."""
-        if result.get("success"):
-            self.status_label.setText("Analysis complete! Updating fields...")
-
-            # Extract metadata from result
-            metadata = result.get("metadata", {})
-
-            # Update file_data
-            self.file_data.update(
-                {
-                    "company": metadata.get("company", ""),
-                    "document_type": metadata.get("document_type", ""),
-                    "document_date": metadata.get("document_date", ""),
-                    "page_number": metadata.get("page_number", ""),
-                    "total_pages": metadata.get("total_pages", ""),
-                    "confidence": result.get("confidence_score", 0) * 100,
-                    "raw_response": result.get("response", ""),
-                }
-            )
-
-            # Update input fields
-            self._update_metadata_fields()
-
-            # Apply rotation if needed
-            rotation = metadata.get("rotation_needed", "none")
-            if rotation and rotation != "none":
-                self._apply_rotation(rotation)
-
-            # Hide status after 2 seconds
-            from PyQt6.QtCore import QTimer
-
-            QTimer.singleShot(2000, lambda: self.status_label.setVisible(False))
-
-        else:
-            error_msg = result.get("error", "Unknown error")
-            self.status_label.setText(f"Analysis failed: {error_msg}")
-            QMessageBox.critical(
-                self, "Analysis Failed", f"Failed to re-analyze file:\n\n{error_msg}"
-            )
-
-        # Re-enable all controls
-        self._set_controls_enabled(True)
+    # Note: Analysis progress/completion handlers removed - now handled by queue system in AnalysisStatusWindow
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable all buttons and edit controls."""
@@ -1936,7 +2301,7 @@ class FileDetailsDialog(QDialog):
                 input_widget.setChecked(bool(value))
 
     def _apply_rotation(self, rotation: str):
-        """Apply rotation to the displayed image."""
+        """Apply metadata rotation to the base image (permanent rotation)."""
         if not hasattr(self, "base_pixmap") or self.base_pixmap is None:
             return
 
@@ -1950,30 +2315,30 @@ class FileDetailsDialog(QDialog):
 
         angle = rotation_map.get(rotation, 0)
 
-        # Always work from the base (unrotated) pixmap
-        if angle == 0:
-            # No rotation - use base pixmap directly
-            self.original_pixmap = self.base_pixmap
-        else:
-            # Create rotation transform
-            transform = QTransform()
-            transform.rotate(angle)
+        # Load the original unrotated pixmap from file
+        file_path = self.file_data.get("full_path")
+        if file_path and os.path.exists(file_path):
+            from PyQt6.QtGui import QPixmap
 
-            # Apply rotation to base pixmap (never mutate base_pixmap)
-            self.original_pixmap = self.base_pixmap.transformed(
-                transform, Qt.TransformationMode.SmoothTransformation
-            )
+            original = QPixmap(file_path)
 
-        # Scale according to configured zoom mode
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-        available_width = left_width - 50
-        available_height = left_height - 50
+            if angle == 0:
+                # No rotation - use original directly
+                self.base_pixmap = original
+            else:
+                # Apply metadata rotation to create new base pixmap
+                transform = QTransform()
+                transform.rotate(angle)
+                self.base_pixmap = original.transformed(
+                    transform, Qt.TransformationMode.SmoothTransformation
+                )
 
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        # Reset overlay rotation controls when metadata rotation changes
+        self.rotation_angle = 0
+        self.image_label.reset_pan()
+
+        # Update the preview with new base pixmap
+        self._update_image_preview()
 
     def _store_original_metadata_values(self):
         """Store the original values of all metadata fields for change tracking."""
@@ -2125,11 +2490,12 @@ class FileDetailsGrid(QWidget):
 
     re_analyze_requested = pyqtSignal(list)  # Emits list of file paths
 
-    def __init__(self, parent=None, analysis_db=None):
+    def __init__(self, parent=None, analysis_db=None, metadata_db=None):
         super().__init__(parent)
 
-        # Store database reference
+        # Store database references
         self.analysis_db = analysis_db
+        self.metadata_db = metadata_db
 
         # Get theme from parent
         self.is_dark_mode = False
@@ -2850,6 +3216,14 @@ class FileDetailsGrid(QWidget):
         copy_action.triggered.connect(self._copy_to_clipboard)
         menu.addAction(copy_action)
 
+        copy_filename_action = QAction("Copy file name", menu)
+        copy_filename_action.triggered.connect(self._copy_filename_to_clipboard)
+        menu.addAction(copy_filename_action)
+
+        copy_filepath_action = QAction("Copy file path", menu)
+        copy_filepath_action.triggered.connect(self._copy_filepath_to_clipboard)
+        menu.addAction(copy_filepath_action)
+
         menu.addSeparator()
 
         delete_action = QAction("Delete from Database", menu)
@@ -2932,7 +3306,11 @@ class FileDetailsGrid(QWidget):
 
         if row_data:
             dialog = FileDetailsDialog(
-                row_data, self, analysis_db=self.analysis_db, config_manager=self.config_manager
+                row_data,
+                self,
+                analysis_db=self.analysis_db,
+                metadata_db=self.metadata_db,
+                config_manager=self.config_manager,
             )
             dialog.re_analyze_requested.connect(lambda path: self.re_analyze_requested.emit([path]))
             dialog.metadata_saved.connect(self._on_metadata_saved)
@@ -2940,6 +3318,10 @@ class FileDetailsGrid(QWidget):
 
     def _on_metadata_saved(self, file_path: str):
         """Handle metadata saved signal - refresh the row data for the updated file."""
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
         if not self.analysis_db:
             return
 
@@ -2948,16 +3330,38 @@ class FileDetailsGrid(QWidget):
         if not fresh_analysis:
             return
 
+        # Also get the rotation field from image_files table (not in analysis_results) via MetadataDB
+        rotation_degrees = self.metadata_db.get_image_rotation(file_path)
+        fresh_analysis["rotation"] = rotation_degrees
+        logger.debug(
+            f"[GRID UPDATE] Updating row for {file_path} with rotation={rotation_degrees}°"
+        )
+
         # Find and update the row in the model
         for row in range(self.model.rowCount()):
             row_data = self.model.get_row_data(row)
             if row_data and row_data.get("full_path") == file_path:
                 # Update the row data with fresh values
+                old_rotation = row_data.get("rotation")
                 for key, value in fresh_analysis.items():
                     row_data[key] = value
+                logger.debug(
+                    f"[GRID UPDATE] Row {row} updated: rotation changed from {old_rotation}° to {row_data.get('rotation')}°"
+                )
+
                 # Notify model that data changed
                 self.model.dataChanged.emit(
                     self.model.index(row, 0), self.model.index(row, self.model.columnCount() - 1)
+                )
+
+                # Force proxy model to refresh - critical for view to update
+                self.proxy_model.invalidate()
+
+                # Force table view to update display
+                self.table_view.viewport().update()
+
+                logger.debug(
+                    f"[GRID UPDATE] Emitted dataChanged signal for row {row}, invalidated proxy model"
                 )
                 break
 
@@ -3116,6 +3520,46 @@ class FileDetailsGrid(QWidget):
 
         QMessageBox.information(self, "Copied", f"{len(selection)} rows copied to clipboard")
 
+    def _copy_filename_to_clipboard(self):
+        """Copy selected filenames to clipboard."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        filenames = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+
+            if row_data:
+                filename = row_data.get("filename", "")
+                if filename:
+                    filenames.append(os.path.basename(filename))
+
+        if filenames:
+            clipboard_text = ", ".join(filenames)
+            QApplication.clipboard().setText(clipboard_text)
+
+    def _copy_filepath_to_clipboard(self):
+        """Copy selected file paths to clipboard."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        file_paths = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+
+            if row_data:
+                file_path = row_data.get("full_path", "")
+                if file_path:
+                    file_paths.append(file_path)
+
+        if file_paths:
+            clipboard_text = ", ".join(file_paths)
+            QApplication.clipboard().setText(clipboard_text)
+
     def _delete_selected(self):
         """Delete selected rows from database."""
         selection = self.table_view.selectionModel().selectedRows()
@@ -3134,16 +3578,14 @@ class FileDetailsGrid(QWidget):
             # Get database instances from parent chain
             parent_widget = self.parent()
             analysis_db = None
-            metadata_db = None
 
             while parent_widget:
-                if hasattr(parent_widget, "analysis_db") and hasattr(parent_widget, "metadata_db"):
+                if hasattr(parent_widget, "analysis_db"):
                     analysis_db = parent_widget.analysis_db
-                    metadata_db = parent_widget.metadata_db
                     break
                 parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
 
-            if not analysis_db or not metadata_db:
+            if not analysis_db:
                 QMessageBox.warning(
                     self,
                     "Database Not Available",
@@ -3165,25 +3607,22 @@ class FileDetailsGrid(QWidget):
                 QMessageBox.warning(self, "No Records", "No valid records found to delete.")
                 return
 
-            # Delete from both databases
+            # Delete from all databases
             deleted_count = 0
             errors = []
 
             for file_path in file_paths:
                 try:
-                    # Delete from analysis_db using direct SQL
+                    # 1. Delete from analysis_results table
                     cursor = analysis_db.connection.connection.cursor()
                     cursor.execute("DELETE FROM analysis_results WHERE file_path = ?", (file_path,))
                     analysis_db.connection.commit()
 
-                    # Delete from metadata_db
-                    if hasattr(metadata_db, "delete_metadata"):
-                        metadata_db.delete_metadata(file_path)
-                    else:
-                        # Fallback: direct SQL deletion
-                        cursor = metadata_db.connection.cursor()
-                        cursor.execute("DELETE FROM metadata WHERE file_path = ?", (file_path,))
-                        metadata_db.connection.commit()
+                    # 2. Mark image as deleted in image_files table (soft delete)
+                    analysis_db.mark_image_deleted(file_path)
+
+                    # 3. Delete from metadata table (using AnalysisDB facade)
+                    analysis_db.delete_metadata_by_path(file_path)
 
                     deleted_count += 1
                 except Exception as e:

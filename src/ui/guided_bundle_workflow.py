@@ -1185,7 +1185,7 @@ class GuidedBundleWorkflow(QDialog):
                     file_size_str = self._format_file_size(file_size)
                     modified_time = os.path.getmtime(file_path)
                     modified_str = datetime.fromtimestamp(modified_time).strftime(
-                        "%Y-%m-%d %H:%M:%S"
+                        "%Y-%m-%d %I:%M:%S %p"
                     )
                 else:
                     file_size_str = "Unknown"

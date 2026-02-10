@@ -2199,7 +2199,7 @@ Example response:
                         # Use cached download status
                         downloaded_model_names = set(json.loads(cached_downloaded))
                         logger.debug(
-                            f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %H:%M')})"
+                            f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                         )
                 except (ValueError, json.JSONDecodeError):
                     pass  # Cache invalid, will refresh
@@ -2429,7 +2429,7 @@ Example response:
                 models = json.loads(cached_json)
                 if isinstance(models, list) and len(models) > 0:
                     logger.debug(
-                        f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %H:%M')})"
+                        f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                     )
                     return models
 

@@ -1150,10 +1150,26 @@ class BundleReviewWindow(QDialog):
         add_editable_row(
             "Total Pages", "total_pages", analysis.get("total_pages"), "Total number of pages"
         )
+        # Get rotation - prioritize user-saved rotation from image_files table
+        rotation_value = "none"
+        file_path = analysis.get("file_path")
+        if file_path:
+            rotation_degrees = self.analysis_db.get_image_rotation(file_path)
+            # Convert degrees to rotation_needed format
+            rotation_value = {
+                0: "none",
+                90: "90_cw",
+                270: "90_ccw",
+                180: "180",
+            }.get(rotation_degrees, "none")
+            # Fall back to analysis_results if not set in image_files
+            if rotation_degrees == 0 and analysis.get("rotation_needed"):
+                rotation_value = analysis.get("rotation_needed", "none")
+
         add_editable_row(
             "Rotation Needed",
             "rotation_needed",
-            analysis.get("rotation_needed", "none"),
+            rotation_value,
             "none, 90_cw, 90_ccw, 180",
             widget_type="dropdown",
         )
@@ -1289,8 +1305,8 @@ class BundleReviewWindow(QDialog):
 
     def _on_save_metadata_changes(self):
         """Save metadata changes and exit edit mode."""
-        # Check if bundle-level fields (company, document_type, document_date) changed
-        bundle_level_fields = ["company", "document_type", "document_date"]
+        # Check if bundle-level fields (company, document_type, document_date, document_category) changed
+        bundle_level_fields = ["company", "document_type", "document_date", "document_category"]
         changed_bundle_fields = {}
 
         for field_name in bundle_level_fields:
@@ -1457,7 +1473,9 @@ class BundleReviewWindow(QDialog):
                 file_size_str = self._format_file_size(file_size)
 
                 modified_time = os.path.getmtime(file_path)
-                modified_str = datetime.fromtimestamp(modified_time).strftime("%Y-%m-%d %H:%M:%S")
+                modified_str = datetime.fromtimestamp(modified_time).strftime(
+                    "%Y-%m-%d %I:%M:%S %p"
+                )
 
                 # Get file hash from analysis
                 if self.analysis_db:
@@ -1567,18 +1585,12 @@ class BundleReviewWindow(QDialog):
 
         # Get timestamps from analysis
         if not self.prototype_mode and analysis:
-            from datetime import datetime
+            from ui.datetime_utils import format_db_timestamp
 
             analyzed_timestamp = analysis.get("analyzed_at", "N/A")
-            if analyzed_timestamp and analyzed_timestamp != "N/A":
-                try:
-                    analyzed_str = datetime.fromisoformat(analyzed_timestamp).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                except Exception:
-                    analyzed_str = str(analyzed_timestamp)
-            else:
-                analyzed_str = "N/A"
+            analyzed_str = format_db_timestamp(
+                analyzed_timestamp if analyzed_timestamp != "N/A" else None, "%Y-%m-%d %I:%M:%S %p"
+            )
 
             processing_time = analysis.get("processing_time_ms", 0)
             processing_str = f"{processing_time}ms" if processing_time else "N/A"
@@ -2338,6 +2350,7 @@ class BundleReviewWindow(QDialog):
                     analysis_data=result["metadata"],
                     raw_response=result["response"],
                     processing_time_ms=result["processing_time_ms"],
+                    prompt_text=prompt,  # Save the prompt used for analysis
                 )
 
                 # Update bundle_data immutably
@@ -2404,7 +2417,7 @@ class BundleReviewWindow(QDialog):
                 edits[field_name] = value
 
             # Update all analyses with bundle-level fields (immutable pattern)
-            bundle_level_fields = ["company", "document_type", "document_date"]
+            bundle_level_fields = ["company", "document_type", "document_date", "document_category"]
             new_analyses = []
             for i, analysis in enumerate(self.bundle_data["analyses"]):
                 new_analysis = {**analysis}
@@ -2458,6 +2471,16 @@ class BundleReviewWindow(QDialog):
                     }
 
                     self.analysis_db.update_analysis_metadata(file_path, metadata_updates)
+
+                    # Save rotation to image_files table
+                    rotation_needed = metadata_updates.get("rotation_needed", "none")
+                    rotation_degrees = {
+                        "none": 0,
+                        "90_cw": 90,
+                        "90_ccw": 270,
+                        "180": 180,
+                    }.get(rotation_needed, 0)
+                    self.analysis_db.update_image_rotation(file_path, rotation_degrees)
 
                 # Update bundle status in database
                 bundle_id = self.bundle_data["bundle_id"]

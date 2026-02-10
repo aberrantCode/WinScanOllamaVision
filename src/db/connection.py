@@ -19,6 +19,10 @@ import sqlite3
 import threading
 from typing import Any, cast
 
+from services.logging_service import get_logger
+
+logger = get_logger()
+
 
 class DatabaseConnection:
     """Manages SQLite connection lifecycle with helper methods.
@@ -45,13 +49,15 @@ class DatabaseConnection:
         self._connect()
 
     def _connect(self):
-        """Establish database connection with row factory."""
+        """Establish database connection with row factory and enable foreign keys."""
         self.connection = sqlite3.connect(
             self.db_path,
             check_same_thread=False,
             timeout=30.0,
         )
         self.connection.row_factory = sqlite3.Row
+        # Enable foreign key constraints
+        self.connection.execute("PRAGMA foreign_keys = ON")
 
     @classmethod
     def from_appdata(cls, filename: str = "metadata.db") -> "DatabaseConnection":
@@ -78,6 +84,12 @@ class DatabaseConnection:
         Returns:
             Cursor with results
         """
+        # Log SQL statement at DEBUG level
+        if params:
+            logger.debug(f"SQL: {query} | Params: {params}")
+        else:
+            logger.debug(f"SQL: {query}")
+
         with self._lock:
             if self.connection is None:
                 raise RuntimeError("Database connection not initialized")
@@ -93,6 +105,9 @@ class DatabaseConnection:
             query: SQL query string
             params_list: List of parameter tuples
         """
+        # Log SQL statement at DEBUG level
+        logger.debug(f"SQL (batch): {query} | Batch size: {len(params_list)}")
+
         with self._lock:
             if self.connection is None:
                 raise RuntimeError("Database connection not initialized")

@@ -362,7 +362,7 @@ class BundlingService:
 
         # Register PDF in pdf_files table
         try:
-            self.analysis_db.register_pdf_file(
+            pdf_file_id = self.analysis_db.register_pdf_file(
                 pdf_path=pdf_path,
                 pdf_filename=pdf_filename,
                 bundle_id=bundle_id,
@@ -374,6 +374,15 @@ class BundlingService:
             logger.info(
                 f"Registered PDF: {pdf_filename} with {len(source_image_ids)} source images"
             )
+
+            # NEW: Link metadata to PDF
+            if source_image_ids:
+                try:
+                    self.analysis_db.link_metadata_to_pdf(source_image_ids, pdf_file_id)
+                    logger.info(f"Linked metadata for {len(source_image_ids)} images to PDF")
+                except Exception as link_error:
+                    logger.warning(f"Failed to link metadata to PDF: {link_error}")
+
         except Exception as e:
             logger.error(f"Failed to register PDF file: {str(e)}", exc_info=True)
 
@@ -520,13 +529,14 @@ class BundlingService:
         rotation_angle: int = 0,
     ) -> str:
         """
-        Convert bundle of images to PDF.
+        Convert bundle of images to PDF with per-file rotations.
 
         Args:
             file_paths: List of image file paths in order
             output_path: Output PDF file path
             metadata: Document metadata dict (optional)
-            rotation_angle: Rotation to apply to all pages (0, 90, 180, 270)
+            rotation_angle: Additional rotation to apply to all pages (0, 90, 180, 270)
+                          This is applied AFTER per-file rotations from database
 
         Returns:
             Path to created PDF file
@@ -541,7 +551,13 @@ class BundlingService:
             try:
                 img = Image.open(file_path)
 
-                # Apply rotation if needed
+                # 1. Apply per-file rotation from database (user's saved preference)
+                per_file_rotation = self.analysis_db.get_image_rotation(file_path)
+                if per_file_rotation != 0:
+                    # PIL rotates counter-clockwise, so negate the angle
+                    img = img.rotate(-per_file_rotation, expand=True)  # type: ignore[assignment]
+
+                # 2. Apply bundle-level rotation (from UI rotate buttons)
                 if rotation_angle != 0:
                     img = img.rotate(-rotation_angle, expand=True)  # type: ignore[assignment]
 

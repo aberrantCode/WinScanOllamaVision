@@ -73,9 +73,9 @@ class TestAnalysisStatusWindowEnhancements:
             config_manager=mock_config_manager,
         )
         assert window.tabs.count() == 3
-        assert window.tabs.tabText(0) == "Collection Status"
-        assert window.tabs.tabText(1) == "Page Details"
-        assert window.tabs.tabText(2) == "Document Details"
+        assert window.tabs.tabText(0) == "Analytics"
+        assert window.tabs.tabText(1) == "Image Details"
+        assert window.tabs.tabText(2) == "PDF Details"
 
     def test_create_document_details_tab_creates_table(
         self, qapp, mock_analysis_db, mock_metadata_db, mock_config_manager

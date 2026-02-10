@@ -1,447 +1,497 @@
-"""Tests for database schema creation and migrations."""
+"""
+Tests for unified database schema (Migration 1).
 
-import os
-import tempfile
+Tests the clean schema with 8 core tables and 2 junction tables.
+All legacy migration tests removed.
+"""
 
 import pytest
 
 from db.connection import DatabaseConnection
-from db.schema import create_all_tables, get_schema_version
+from db.schema import clear_schema_cache, create_all_tables, get_schema_version
 
 
 @pytest.fixture
-def temp_db():
+def temp_db(tmp_path):
     """Create a temporary database for testing."""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-
-    conn = DatabaseConnection(path)
+    db_path = str(tmp_path / "test.db")
+    conn = DatabaseConnection(db_path)
+    # Clear cache to ensure fresh schema creation
+    clear_schema_cache(db_path)
     yield conn
-
-    # Cleanup
     conn.close()
-    if os.path.exists(path):
-        os.unlink(path)
 
 
-def test_pdf_path_column_exists(temp_db):
-    """Test that pdf_path column exists in document_bundles table."""
+# ==================== Schema Version Tests ====================
+
+
+def test_schema_version_table_exists(temp_db):
+    """Test that schema_version table is created."""
     create_all_tables(temp_db)
 
-    cursor = temp_db.connection.cursor()
-    cursor.execute("PRAGMA table_info(document_bundles)")
-    columns = {col[1]: col[2] for col in cursor.fetchall()}
-
-    assert "pdf_path" in columns, "pdf_path column should exist"
-    assert columns["pdf_path"] == "TEXT", "pdf_path should be TEXT type"
+    cursor = temp_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+    )
+    assert cursor.fetchone() is not None
 
 
-def test_pdf_path_column_is_nullable(temp_db):
-    """Test that pdf_path column is nullable."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute("PRAGMA table_info(document_bundles)")
-    columns = {col[1]: col[3] for col in cursor.fetchall()}  # col[3] is notnull flag
-
-    # notnull flag should be 0 (nullable)
-    assert columns.get("pdf_path", 1) == 0, "pdf_path should be nullable"
-
-
-def test_existing_records_have_null_pdf_path(temp_db):
-    """Test that existing records have NULL for new pdf_path column."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-
-    # Insert a test bundle without pdf_path
-    cursor.execute("""
-        INSERT INTO document_bundles (bundle_name, file_paths, status)
-        VALUES ('Test Bundle', '["file1.png", "file2.png"]', 'suggested')
-    """)
-    temp_db.commit()
-
-    # Verify pdf_path is NULL
-    cursor.execute("SELECT pdf_path FROM document_bundles WHERE bundle_name = 'Test Bundle'")
-    result = cursor.fetchone()
-
-    assert result is not None, "Bundle should exist"
-    assert result[0] is None, "pdf_path should be NULL for existing records"
-
-
-def test_migration_version_5_applied(temp_db):
-    """Test that migration version 5 is applied correctly."""
+def test_migration_1_applied(temp_db):
+    """Test that Migration 1 is applied."""
     create_all_tables(temp_db)
 
     version = get_schema_version(temp_db)
-    assert version >= 5, "Schema version should be at least 5 after migrations"
+    assert version == 1
 
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT description FROM schema_version WHERE version = 5")
-    result = cursor.fetchone()
-
-    assert result is not None, "Migration 5 should exist"
-    assert "pdf_path" in result[0].lower(), "Migration 5 should mention pdf_path"
-
-
-def test_pdf_path_can_be_set_and_retrieved(temp_db):
-    """Test that pdf_path can be set and retrieved correctly."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-
-    # Insert bundle with pdf_path
-    pdf_path = "C:/output/test_document.pdf"
-    cursor.execute(
-        """
-        INSERT INTO document_bundles (bundle_name, file_paths, status, pdf_path)
-        VALUES ('PDF Bundle', '["page1.png"]', 'completed', ?)
-    """,
-        (pdf_path,),
-    )
-    temp_db.commit()
-
-    # Retrieve and verify
-    cursor.execute("SELECT pdf_path FROM document_bundles WHERE bundle_name = 'PDF Bundle'")
-    result = cursor.fetchone()
-
-    assert result is not None, "Bundle should exist"
-    assert result[0] == pdf_path, "pdf_path should match inserted value"
+    # Check migration record
+    cursor = temp_db.execute("SELECT version, description FROM schema_version WHERE version = 1")
+    row = cursor.fetchone()
+    assert row is not None
+    assert row[0] == 1
+    assert "Unified schema" in row[1]
 
 
-def test_bundles_index_on_status_exists(temp_db):
-    """Test that index on status column exists."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bundles_status'"
-    )
-    result = cursor.fetchone()
-
-    assert result is not None, "idx_bundles_status index should exist"
+# ==================== Core Tables Tests ====================
 
 
 def test_image_files_table_exists(temp_db):
-    """Test that image_files table is created."""
+    """Test that image_files table is created with correct schema."""
     create_all_tables(temp_db)
 
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='image_files'")
-    result = cursor.fetchone()
+    # Check table exists
+    cursor = temp_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='image_files'"
+    )
+    assert cursor.fetchone() is not None
 
-    assert result is not None, "image_files table should exist"
-
-
-def test_image_files_columns(temp_db):
-    """Test that image_files table has all required columns."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute("PRAGMA table_info(image_files)")
-    columns = {col[1]: col[2] for col in cursor.fetchall()}
+    # Check columns
+    cursor = temp_db.execute("PRAGMA table_info(image_files)")
+    columns = {row[1] for row in cursor.fetchall()}
 
     expected_columns = {
-        "id": "INTEGER",
-        "file_path": "TEXT",
-        "file_hash": "TEXT",
-        "directory_path": "TEXT",
-        "filename": "TEXT",
-        "file_size": "INTEGER",
-        "file_mtime": "REAL",
-        "status": "TEXT",
-        "discovered_at": "TIMESTAMP",
-        "last_seen_at": "TIMESTAMP",
-        "deleted_at": "TIMESTAMP",
-        "analysis_id": "INTEGER",
-        "output_filename": "TEXT",
+        "id",
+        "file_path",
+        "file_hash",
+        "directory_path",
+        "filename",
+        "file_size",
+        "file_mtime",
+        "status",
+        "discovered_at",
+        "last_seen_at",
+        "deleted_at",
     }
+    assert expected_columns.issubset(columns)
 
-    for col_name, col_type in expected_columns.items():
-        assert col_name in columns, f"Column {col_name} should exist"
-        assert columns[col_name] == col_type, f"Column {col_name} should be {col_type}"
+    # Verify removed columns are NOT present
+    removed_columns = {"analysis_id", "rotation", "output_filename"}
+    assert not removed_columns.intersection(columns), "Legacy columns should be removed"
 
 
-def test_image_files_indices(temp_db):
-    """Test that all image_files indices are created."""
+def test_analysis_results_table_exists(temp_db):
+    """Test that analysis_results table is created with correct schema."""
     create_all_tables(temp_db)
 
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='image_files'")
-    indices = {row[0] for row in cursor.fetchall()}
+    cursor = temp_db.execute("PRAGMA table_info(analysis_results)")
+    columns = {row[1] for row in cursor.fetchall()}
 
-    expected_indices = {
-        "idx_image_files_path",
-        "idx_image_files_status",
-        "idx_image_files_directory",
-        "idx_image_files_hash",
+    expected_columns = {
+        "id",
+        "image_file_id",
+        "provider_name",
+        "model_name",
+        "model_options",
+        "prompt_text",
+        "response_text",
+        "extracted_metadata",
+        "confidence_score",
+        "had_error",
+        "analyzed_at",
+        "processing_time_ms",
     }
+    assert expected_columns.issubset(columns)
 
-    for idx in expected_indices:
-        assert idx in indices, f"Index {idx} should exist"
+    # Verify legacy columns are NOT present
+    removed_columns = {
+        "file_path",
+        "file_hash",
+        "company",
+        "document_type",
+        "raw_response",
+        "is_cached",
+    }
+    assert not removed_columns.intersection(columns), "Legacy metadata columns should be removed"
+
+
+def test_metadata_table_exists(temp_db):
+    """Test that metadata table is created with correct schema."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("PRAGMA table_info(metadata)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    expected_columns = {
+        "id",
+        "image_file_id",
+        "analysis_result_id",
+        "company",
+        "document_type",
+        "document_date",
+        "page_number",
+        "total_pages",
+        "belongs_to_same_doc",
+        "confidence_score",
+        "tax_related",
+        "document_category",
+        "rotation",
+        "output_filename",
+        "user_verified",
+        "auto_approved",
+        "last_edited_by",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_columns.issubset(columns)
+
+    # Verify removed column is NOT present
+    assert "pdf_file_id" not in columns, "pdf_file_id should be removed (use junction table)"
+
+
+def test_document_bundles_table_exists(temp_db):
+    """Test that document_bundles table is created with correct schema."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("PRAGMA table_info(document_bundles)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    expected_columns = {
+        "id",
+        "bundle_name",
+        "confidence_score",
+        "confidence_level",
+        "status",
+        "user_action",
+        "action_timestamp",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_columns.issubset(columns)
+
+    # Verify removed columns are NOT present
+    removed_columns = {"company", "document_type", "file_paths", "pdf_path", "total_pages"}
+    assert not removed_columns.intersection(
+        columns
+    ), "Duplicate metadata and JSON columns should be removed"
 
 
 def test_pdf_files_table_exists(temp_db):
-    """Test that pdf_files table is created."""
+    """Test that pdf_files table is created with correct schema."""
     create_all_tables(temp_db)
 
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pdf_files'")
-    result = cursor.fetchone()
-
-    assert result is not None, "pdf_files table should exist"
-
-
-def test_pdf_files_columns(temp_db):
-    """Test that pdf_files table has all required columns."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute("PRAGMA table_info(pdf_files)")
-    columns = {col[1]: col[2] for col in cursor.fetchall()}
+    cursor = temp_db.execute("PRAGMA table_info(pdf_files)")
+    columns = {row[1] for row in cursor.fetchall()}
 
     expected_columns = {
-        "id": "INTEGER",
-        "pdf_path": "TEXT",
-        "pdf_filename": "TEXT",
-        "file_hash": "TEXT",
-        "file_size": "INTEGER",
-        "page_count": "INTEGER",
-        "bundle_id": "INTEGER",
-        "generation_status": "TEXT",
-        "source_image_ids": "TEXT",
-        "generated_at": "TIMESTAMP",
+        "id",
+        "pdf_path",
+        "pdf_filename",
+        "file_hash",
+        "file_size",
+        "page_count",
+        "bundle_id",
+        "generation_status",
+        "generated_at",
     }
+    assert expected_columns.issubset(columns)
 
-    for col_name, col_type in expected_columns.items():
-        assert col_name in columns, f"Column {col_name} should exist"
-        assert columns[col_name] == col_type, f"Column {col_name} should be {col_type}"
+    # Verify removed column is NOT present
+    assert (
+        "source_image_ids" not in columns
+    ), "source_image_ids JSON should be removed (use junction table)"
 
 
-def test_pdf_files_indices(temp_db):
-    """Test that all pdf_files indices are created."""
+def test_source_directories_table_exists(temp_db):
+    """Test that source_directories table is created."""
     create_all_tables(temp_db)
 
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='pdf_files'")
+    cursor = temp_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='source_directories'"
+    )
+    assert cursor.fetchone() is not None
+
+
+def test_audit_trail_table_exists(temp_db):
+    """Test that audit_trail table is created."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_trail'"
+    )
+    assert cursor.fetchone() is not None
+
+
+# ==================== Junction Tables Tests ====================
+
+
+def test_pdf_image_pages_table_exists(temp_db):
+    """Test that pdf_image_pages junction table is created."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("PRAGMA table_info(pdf_image_pages)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    expected_columns = {"id", "pdf_file_id", "image_file_id", "page_number"}
+    assert expected_columns == columns
+
+
+def test_bundle_images_table_exists(temp_db):
+    """Test that bundle_images junction table is created."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("PRAGMA table_info(bundle_images)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    expected_columns = {"id", "bundle_id", "image_file_id", "sequence_order"}
+    assert expected_columns == columns
+
+
+# ==================== Legacy Tables Removed Tests ====================
+
+
+def test_legacy_tables_not_created(temp_db):
+    """Test that legacy tables are NOT created."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    tables = {row[0] for row in cursor.fetchall()}
+
+    # Legacy tables that should NOT exist
+    legacy_tables = {
+        "llm_providers",
+        "rotation_preferences",
+        "analysis_errors",
+        "archived_metadata",
+    }
+    assert not legacy_tables.intersection(tables), "Legacy tables should not be created"
+
+
+# ==================== Foreign Keys Tests ====================
+
+
+def test_foreign_keys_enabled(temp_db):
+    """Test that foreign key constraints are enabled."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("PRAGMA foreign_keys")
+    # Note: Foreign keys are enabled by default in our connection class
+    assert cursor.fetchone()[0] == 1
+
+
+def test_analysis_results_foreign_key(temp_db):
+    """Test that analysis_results has correct foreign key to image_files."""
+    create_all_tables(temp_db)
+
+    # Insert image file
+    temp_db.execute("""
+        INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+        VALUES ('/test.png', 'hash123', '/test', 'test.png', 1000, 123.456)
+    """)
+    temp_db.commit()
+
+    image_id = temp_db.execute(
+        "SELECT id FROM image_files WHERE file_path = '/test.png'"
+    ).fetchone()[0]
+
+    # Insert analysis result
+    temp_db.execute(
+        """
+        INSERT INTO analysis_results (image_file_id, provider_name, model_name, response_text)
+        VALUES (?, 'ollama', 'llama2', 'test response')
+    """,
+        (image_id,),
+    )
+    temp_db.commit()
+
+    # Verify it was inserted
+    cursor = temp_db.execute(
+        "SELECT COUNT(*) FROM analysis_results WHERE image_file_id = ?", (image_id,)
+    )
+    assert cursor.fetchone()[0] == 1
+
+    # Test CASCADE delete
+    temp_db.execute("DELETE FROM image_files WHERE id = ?", (image_id,))
+    temp_db.commit()
+
+    # Analysis should also be deleted
+    cursor = temp_db.execute(
+        "SELECT COUNT(*) FROM analysis_results WHERE image_file_id = ?", (image_id,)
+    )
+    assert cursor.fetchone()[0] == 0
+
+
+def test_metadata_foreign_keys(temp_db):
+    """Test that metadata has correct foreign keys."""
+    create_all_tables(temp_db)
+
+    # Insert image file
+    temp_db.execute("""
+        INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+        VALUES ('/test.png', 'hash123', '/test', 'test.png', 1000, 123.456)
+    """)
+    temp_db.commit()
+
+    image_id = temp_db.execute(
+        "SELECT id FROM image_files WHERE file_path = '/test.png'"
+    ).fetchone()[0]
+
+    # Insert metadata
+    temp_db.execute(
+        """
+        INSERT INTO metadata (image_file_id, company, document_type)
+        VALUES (?, 'Acme Inc', 'Invoice')
+    """,
+        (image_id,),
+    )
+    temp_db.commit()
+
+    # Verify it was inserted
+    cursor = temp_db.execute("SELECT COUNT(*) FROM metadata WHERE image_file_id = ?", (image_id,))
+    assert cursor.fetchone()[0] == 1
+
+
+# ==================== Indices Tests ====================
+
+
+def test_indices_created(temp_db):
+    """Test that all necessary indices are created."""
+    create_all_tables(temp_db)
+
+    cursor = temp_db.execute("SELECT name FROM sqlite_master WHERE type='index'")
     indices = {row[0] for row in cursor.fetchall()}
 
+    # Sample of expected indices
     expected_indices = {
-        "idx_pdf_files_path",
-        "idx_pdf_files_bundle",
+        "idx_image_files_path",
+        "idx_image_files_status",
+        "idx_analysis_image_file",
+        "idx_analysis_errors",
+        "idx_metadata_image_file",
+        "idx_bundles_status",
+        "idx_pdf_pages_pdf",
+        "idx_bundle_images_bundle",
     }
 
-    for idx in expected_indices:
-        assert idx in indices, f"Index {idx} should exist"
+    assert expected_indices.issubset(indices), f"Missing indices: {expected_indices - indices}"
 
 
-def test_migration_version_6_applied(temp_db):
-    """Test that migration version 6 is applied correctly."""
-    create_all_tables(temp_db)
-
-    version = get_schema_version(temp_db)
-    assert version >= 6, "Schema version should be at least 6 after migrations"
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT description FROM schema_version WHERE version = 6")
-    result = cursor.fetchone()
-
-    assert result is not None, "Migration 6 should exist"
-    assert "image_files" in result[0].lower(), "Migration 6 should mention image_files"
+# ==================== Idempotency Tests ====================
 
 
-def test_migration_version_7_applied(temp_db):
-    """Test that migration version 7 is applied correctly."""
-    create_all_tables(temp_db)
-
-    version = get_schema_version(temp_db)
-    assert version >= 7, "Schema version should be at least 7 after migrations"
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT description FROM schema_version WHERE version = 7")
-    result = cursor.fetchone()
-
-    assert result is not None, "Migration 7 should exist"
-    assert "pdf_files" in result[0].lower(), "Migration 7 should mention pdf_files"
-
-
-def test_migration_version_8_applied(temp_db):
-    """Test that migration version 8 is applied correctly."""
-    create_all_tables(temp_db)
-
-    version = get_schema_version(temp_db)
-    assert version >= 8, "Schema version should be at least 8 after migrations"
-
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT description FROM schema_version WHERE version = 8")
-    result = cursor.fetchone()
-
-    assert result is not None, "Migration 8 should exist"
-    assert (
-        "back-fill" in result[0].lower() or "backfill" in result[0].lower()
-    ), "Migration 8 should mention back-fill"
-
-
-def test_backfill_populates_image_files(temp_db):
-    """Test that back-fill migration populates image_files from analysis_results."""
-    from db.schema import _create_analysis_tables, _create_indices, _create_metadata_tables
-
-    # Create tables without running migrations
-    _create_metadata_tables(temp_db)
-    _create_analysis_tables(temp_db)
-    _create_indices(temp_db)
-
-    cursor = temp_db.connection.cursor()
-
-    # Insert initial schema version
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (1, 'Initial schema')
-    """)
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (2, 'Migration 2')
-    """)
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (3, 'Migration 3')
-    """)
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (4, 'Migration 4')
-    """)
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (5, 'Migration 5')
-    """)
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (6, 'Migration 6')
-    """)
-    cursor.execute("""
-        INSERT INTO schema_version (version, description)
-        VALUES (7, 'Migration 7')
-    """)
-    temp_db.commit()
-
-    # Insert test analysis results BEFORE migration 8 runs
-    test_data = [
-        ("/path/to/file1.png", "hash1", "provider1", "model1"),
-        ("/path/to/file2.png", "hash2", "provider2", "model2"),
-        ("C:\\Windows\\path\\file3.png", "hash3", "provider3", "model3"),
-    ]
-
-    for file_path, file_hash, provider, model in test_data:
-        cursor.execute(
-            """
-            INSERT INTO analysis_results (file_path, file_hash, provider_name, model_name)
-            VALUES (?, ?, ?, ?)
-        """,
-            (file_path, file_hash, provider, model),
-        )
-    temp_db.commit()
-
-    # Now run migrations (which will execute migration 8)
-    create_all_tables(temp_db)
-
-    # Verify image_files are populated
-    cursor.execute("SELECT COUNT(*) FROM image_files")
-    count = cursor.fetchone()[0]
-    assert count == len(test_data), f"Should have {len(test_data)} image_files entries"
-
-    # Verify status is 'analyzed'
-    cursor.execute("SELECT status FROM image_files")
-    statuses = [row[0] for row in cursor.fetchall()]
-    assert all(
-        s == "analyzed" for s in statuses
-    ), "All back-filled images should have status='analyzed'"
-
-    # Verify analysis_id references are correct
-    cursor.execute("""
-        SELECT if1.file_path, if1.analysis_id, ar.id
-        FROM image_files if1
-        JOIN analysis_results ar ON if1.file_path = ar.file_path
-    """)
-    for row in cursor.fetchall():
-        assert row[1] == row[2], "analysis_id should match analysis_results.id"
-
-
-def test_image_files_unique_constraint(temp_db):
-    """Test that file_path has UNIQUE constraint."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-
-    # Insert first record
-    cursor.execute(
-        """
-        INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """,
-        ("/test/file.png", "hash1", "/test", "file.png", 1024, 1234567890.0),
-    )
-    temp_db.commit()
-
-    # Attempt to insert duplicate
-    with pytest.raises(Exception) as exc_info:
-        cursor.execute(
-            """
-            INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            ("/test/file.png", "hash2", "/test", "file.png", 2048, 1234567891.0),
-        )
-        temp_db.commit()
-
-    assert "UNIQUE constraint failed" in str(exc_info.value), "Should raise UNIQUE constraint error"
-
-
-def test_pdf_files_unique_constraint(temp_db):
-    """Test that pdf_path has UNIQUE constraint."""
-    create_all_tables(temp_db)
-
-    cursor = temp_db.connection.cursor()
-
-    # Insert first record
-    cursor.execute(
-        """
-        INSERT INTO pdf_files (pdf_path, pdf_filename, source_image_ids)
-        VALUES (?, ?, ?)
-    """,
-        ("/output/doc.pdf", "doc.pdf", "[1, 2, 3]"),
-    )
-    temp_db.commit()
-
-    # Attempt to insert duplicate
-    with pytest.raises(Exception) as exc_info:
-        cursor.execute(
-            """
-            INSERT INTO pdf_files (pdf_path, pdf_filename, source_image_ids)
-            VALUES (?, ?, ?)
-        """,
-            ("/output/doc.pdf", "doc.pdf", "[4, 5, 6]"),
-        )
-        temp_db.commit()
-
-    assert "UNIQUE constraint failed" in str(exc_info.value), "Should raise UNIQUE constraint error"
-
-
-def test_migrations_are_idempotent(temp_db):
-    """Test that running migrations multiple times is safe."""
-    # Run migrations first time
+def test_create_tables_idempotent(temp_db):
+    """Test that create_all_tables can be called multiple times safely."""
     create_all_tables(temp_db)
     version1 = get_schema_version(temp_db)
 
-    # Run migrations again
+    # Call again
     create_all_tables(temp_db)
     version2 = get_schema_version(temp_db)
 
-    assert version1 == version2, "Running migrations multiple times should not change version"
+    assert version1 == version2 == 1
 
-    # Verify tables still exist
-    cursor = temp_db.connection.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    tables = {row[0] for row in cursor.fetchall()}
 
-    assert "image_files" in tables, "image_files table should still exist"
-    assert "pdf_files" in tables, "pdf_files table should still exist"
+# ==================== Data Integrity Tests ====================
+
+
+def test_image_file_unique_path(temp_db):
+    """Test that file_path is unique in image_files."""
+    create_all_tables(temp_db)
+
+    # Insert first record
+    temp_db.execute("""
+        INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+        VALUES ('/test.png', 'hash123', '/test', 'test.png', 1000, 123.456)
+    """)
+    temp_db.commit()
+
+    # Try to insert duplicate - should fail
+    with pytest.raises(Exception):  # sqlite3.IntegrityError
+        temp_db.execute("""
+            INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+            VALUES ('/test.png', 'hash456', '/test', 'test.png', 2000, 456.789)
+        """)
+        temp_db.commit()
+
+
+def test_metadata_unique_per_image(temp_db):
+    """Test that each image can have only one metadata record."""
+    create_all_tables(temp_db)
+
+    # Insert image file
+    temp_db.execute("""
+        INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+        VALUES ('/test.png', 'hash123', '/test', 'test.png', 1000, 123.456)
+    """)
+    temp_db.commit()
+
+    image_id = temp_db.execute(
+        "SELECT id FROM image_files WHERE file_path = '/test.png'"
+    ).fetchone()[0]
+
+    # Insert first metadata record
+    temp_db.execute(
+        """
+        INSERT INTO metadata (image_file_id, company)
+        VALUES (?, 'Acme Inc')
+    """,
+        (image_id,),
+    )
+    temp_db.commit()
+
+    # Try to insert duplicate - should fail due to UNIQUE constraint
+    with pytest.raises(Exception):  # sqlite3.IntegrityError
+        temp_db.execute(
+            """
+            INSERT INTO metadata (image_file_id, company)
+            VALUES (?, 'Another Company')
+        """,
+            (image_id,),
+        )
+        temp_db.commit()
+
+
+def test_junction_table_constraints(temp_db):
+    """Test that junction tables enforce uniqueness constraints."""
+    create_all_tables(temp_db)
+
+    # Create test data
+    temp_db.execute("""
+        INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+        VALUES ('/test.png', 'hash123', '/test', 'test.png', 1000, 123.456)
+    """)
+    temp_db.execute("""
+        INSERT INTO document_bundles (bundle_name) VALUES ('Test Bundle')
+    """)
+    temp_db.commit()
+
+    image_id = temp_db.execute("SELECT id FROM image_files").fetchone()[0]
+    bundle_id = temp_db.execute("SELECT id FROM document_bundles").fetchone()[0]
+
+    # Insert into junction table
+    temp_db.execute(
+        """
+        INSERT INTO bundle_images (bundle_id, image_file_id, sequence_order)
+        VALUES (?, ?, 1)
+    """,
+        (bundle_id, image_id),
+    )
+    temp_db.commit()
+
+    # Try to insert same image in same bundle - should fail
+    with pytest.raises(Exception):  # sqlite3.IntegrityError
+        temp_db.execute(
+            """
+            INSERT INTO bundle_images (bundle_id, image_file_id, sequence_order)
+            VALUES (?, ?, 2)
+        """,
+            (bundle_id, image_id),
+        )
+        temp_db.commit()

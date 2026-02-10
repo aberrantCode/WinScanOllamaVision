@@ -4,7 +4,6 @@ PDF files repository for tracking generated PDFs.
 Manages PDF file registration, generation status, and metadata.
 """
 
-import json
 from typing import Any
 
 from db.connection import DatabaseConnection
@@ -27,7 +26,6 @@ class PdfFilesRepository:
         pdf_path: str,
         pdf_filename: str,
         bundle_id: int,
-        source_image_ids: list[int],
         page_count: int,
         file_hash: str | None = None,
         file_size: int | None = None,
@@ -35,11 +33,12 @@ class PdfFilesRepository:
         """
         Register a generated PDF.
 
+        NOTE: After creating PDF, use PdfImagePagesRepository to link images via junction table.
+
         Args:
             pdf_path: Full path to PDF file
             pdf_filename: PDF filename without path
             bundle_id: Reference to document bundle
-            source_image_ids: List of image_files.id values
             page_count: Number of pages in PDF
             file_hash: Optional SHA-256 hash of PDF
             file_size: Optional file size in bytes
@@ -47,21 +46,18 @@ class PdfFilesRepository:
         Returns:
             ID of registered PDF file
         """
-        source_ids_json = json.dumps(source_image_ids)
-
         self.conn.execute(
             """
             INSERT OR REPLACE INTO pdf_files (
-                pdf_path, pdf_filename, bundle_id, source_image_ids,
+                pdf_path, pdf_filename, bundle_id,
                 page_count, file_hash, file_size, generation_status, generated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, 'completed', CURRENT_TIMESTAMP)
         """,
             (
                 pdf_path,
                 pdf_filename,
                 bundle_id,
-                source_ids_json,
                 page_count,
                 file_hash,
                 file_size,
@@ -79,23 +75,21 @@ class PdfFilesRepository:
         """
         Get PDF record by path.
 
+        NOTE: Does not include source images - use PdfImagePagesRepository to fetch them.
+
         Args:
             pdf_path: Path to PDF file
 
         Returns:
-            PDF file dict if found, None otherwise (with source_image_ids parsed from JSON)
+            PDF file dict if found, None otherwise
         """
-        result = self.conn.fetch_one_dict("SELECT * FROM pdf_files WHERE pdf_path = ?", (pdf_path,))
-
-        if result and "source_image_ids" in result:
-            # Parse source_image_ids JSON
-            result["source_image_ids"] = json.loads(result["source_image_ids"])
-
-        return result
+        return self.conn.fetch_one_dict("SELECT * FROM pdf_files WHERE pdf_path = ?", (pdf_path,))
 
     def get_by_bundle(self, bundle_id: int) -> dict[str, Any] | None:
         """
         Get PDF by bundle ID.
+
+        NOTE: Does not include source images - use PdfImagePagesRepository to fetch them.
 
         Args:
             bundle_id: Bundle ID to look up
@@ -103,15 +97,7 @@ class PdfFilesRepository:
         Returns:
             PDF file dict if found, None otherwise
         """
-        result = self.conn.fetch_one_dict(
-            "SELECT * FROM pdf_files WHERE bundle_id = ?", (bundle_id,)
-        )
-
-        if result and "source_image_ids" in result:
-            # Parse source_image_ids JSON
-            result["source_image_ids"] = json.loads(result["source_image_ids"])
-
-        return result
+        return self.conn.fetch_one_dict("SELECT * FROM pdf_files WHERE bundle_id = ?", (bundle_id,))
 
     def update_generation_status(self, pdf_path: str, status: str) -> None:
         """
@@ -159,17 +145,12 @@ class PdfFilesRepository:
         """
         Get all generated PDFs.
 
+        NOTE: Does not include source images - use PdfImagePagesRepository to fetch them.
+
         Returns:
             List of PDF file dicts
         """
-        results = self.conn.fetch_all_dicts("SELECT * FROM pdf_files ORDER BY generated_at DESC")
-
-        # Parse source_image_ids JSON for all results
-        for result in results:
-            if "source_image_ids" in result:
-                result["source_image_ids"] = json.loads(result["source_image_ids"])
-
-        return results
+        return self.conn.fetch_all_dicts("SELECT * FROM pdf_files ORDER BY generated_at DESC")
 
     def get_stats(self) -> dict[str, int]:
         """

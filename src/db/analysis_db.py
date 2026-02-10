@@ -11,14 +11,14 @@ from db.connection import DatabaseConnection, get_appdata_db_path
 from db.repositories import (
     AnalysisRepository,
     AuditRepository,
+    BundleImagesRepository,
     BundleRepository,
     DirectoryRepository,
-    ErrorRepository,
     ImageFilesRepository,
     PdfFilesRepository,
-    ProviderRepository,
-    RotationRepository,
+    PdfImagePagesRepository,
 )
+from db.repositories.metadata_repo import MetadataRepository
 from db.schema import create_all_tables
 
 
@@ -43,14 +43,14 @@ class AnalysisDB:
 
         # Initialize repositories
         self._analysis = AnalysisRepository(self.connection)
-        self._providers = ProviderRepository(self.connection)
         self._directories = DirectoryRepository(self.connection)
         self._bundles = BundleRepository(self.connection)
-        self._errors = ErrorRepository(self.connection)
-        self._rotation = RotationRepository(self.connection)
+        self._bundle_images = BundleImagesRepository(self.connection)
         self._audit = AuditRepository(self.connection)
         self._image_files = ImageFilesRepository(self.connection)
         self._pdf_files = PdfFilesRepository(self.connection)
+        self._pdf_image_pages = PdfImagePagesRepository(self.connection)
+        self._metadata = MetadataRepository(self.connection)
 
     # ==================== Analysis Results Methods ====================
 
@@ -63,52 +63,145 @@ class AnalysisDB:
         analysis_data: dict[str, Any],
         raw_response: str,
         processing_time_ms: int,
-    ) -> None:
-        """Save comprehensive page analysis results."""
-        self._analysis.save(
-            file_path,
-            file_hash,
-            provider_name,
-            model_name,
-            analysis_data,
-            raw_response,
-            processing_time_ms,
+        prompt_text: str | None = None,
+        had_error: bool = False,
+        model_options: dict[str, Any] | None = None,
+    ) -> int:
+        """
+        Save comprehensive page analysis results.
+
+        After Migration 16, this saves analysis provenance to analysis_results table.
+        Metadata should be saved separately to metadata table via create_metadata_from_analysis().
+
+        Args:
+            file_path: Path to analyzed file
+            file_hash: SHA-256 hash of file
+            provider_name: Name of LLM provider used
+            model_name: Model name/identifier
+            analysis_data: Extracted metadata dict
+            raw_response: Full LLM response text
+            processing_time_ms: Processing time in milliseconds
+            prompt_text: The actual prompt text sent to the LLM (optional)
+            had_error: Whether the analysis encountered an error
+            model_options: Model parameters (temperature, top_p, etc.)
+
+        Returns:
+            The analysis_id of the saved analysis
+        """
+        import os
+
+        # Ensure image is registered in image_files table first
+        # This is critical because get_analyzed_pages() queries from image_files
+        existing = self._image_files.get_by_path(file_path)
+        if not existing:
+            # Register with basic info - get actual file stats if file exists
+            directory_path = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            file_size = 0
+            file_mtime = 0.0
+
+            if os.path.exists(file_path):
+                try:
+                    stats = os.stat(file_path)
+                    file_size = stats.st_size
+                    file_mtime = stats.st_mtime
+                except OSError:
+                    pass  # Use defaults if stat fails
+
+            self._image_files.register(
+                file_path=file_path,
+                file_hash=file_hash,
+                directory_path=directory_path,
+                filename=filename,
+                file_size=file_size,
+                file_mtime=file_mtime,
+            )
+            existing = self._image_files.get_by_path(file_path)
+
+        if not existing:
+            raise RuntimeError(f"Failed to register image file: {file_path}")
+
+        image_file_id = existing["id"]
+
+        # Save analysis results using new schema
+        analysis_id = self._analysis.save(
+            image_file_id=image_file_id,
+            provider_name=provider_name,
+            model_name=model_name,
+            prompt_text=prompt_text or "",
+            response_text=raw_response,
+            confidence_score=analysis_data.get("confidence_score"),
+            processing_time_ms=processing_time_ms,
+            had_error=had_error,
+            extracted_metadata=analysis_data if analysis_data else None,
+            model_options=model_options,
         )
 
+        # Update image file status to 'analyzed'
+        if analysis_id:
+            self._image_files.update_status(file_path, "analyzed")
+
+        # Update rotation from analysis data (only if not an error)
+        if not had_error and analysis_data:
+            rotation_needed = analysis_data.get("rotation_needed", "none")
+            rotation_degrees = {
+                "none": 0,
+                "90_cw": 90,
+                "90_ccw": 270,
+                "180": 180,
+            }.get(rotation_needed, 0)
+            self.update_image_rotation(file_path, rotation_degrees)
+
+        return analysis_id
+
     def get_analysis(self, file_path: str) -> dict[str, Any] | None:
-        """Retrieve analysis results for a file."""
-        return self._analysis.get_by_path(file_path)
+        """
+        Retrieve the latest analysis results for a file.
+
+        Note: After Migration 16, this returns analysis provenance only.
+        For document metadata, use get_metadata() instead.
+        """
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            return None
+
+        return self._analysis.get_latest_by_image_file_id(image_file["id"])
+
+    def get_analysis_by_image_file_id(self, image_file_id: int) -> dict[str, Any] | None:
+        """Retrieve the latest analysis results for an image file."""
+        return self._analysis.get_latest_by_image_file_id(image_file_id)
 
     def update_analysis_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
-        """Update metadata fields for an existing analysis."""
-        self._analysis.update_metadata(file_path, metadata)
+        """
+        DEPRECATED: Use update_metadata() to update the metadata table instead.
+
+        This method is kept for backward compatibility but does nothing after Migration 16.
+        """
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+        logger.warning(
+            "update_analysis_metadata() is deprecated after Migration 16. "
+            "Use update_metadata() to update the metadata table instead."
+        )
 
     def get_analyzed_pages(
         self, directory_filter: str | None = None, provider_filter: str | None = None
     ) -> list[dict[str, Any]]:
-        """Get list of analyzed pages with optional filters."""
-        return self._analysis.get_all(directory_filter, provider_filter)
+        """
+        Get list of all image files with their analysis data (if available).
 
-    # ==================== Provider Methods ====================
+        Uses image_files as primary table with LEFT JOIN to analysis_results,
+        so unanalyzed images are included in the results.
 
-    def add_provider(
-        self,
-        provider_name: str,
-        provider_type: str,
-        config: dict[str, Any],
-        default_model: str | None = None,
-        available_models: list[str] | None = None,
-    ) -> None:
-        """Add or update LLM provider configuration."""
-        self._providers.add(provider_name, provider_type, config, default_model, available_models)
+        Args:
+            directory_filter: Optional directory path to filter by
+            provider_filter: Optional provider name to filter by
 
-    def get_active_provider(self) -> dict[str, Any] | None:
-        """Get currently active LLM provider."""
-        return self._providers.get_active()
-
-    def set_active_provider(self, provider_name: str) -> None:
-        """Set active LLM provider."""
-        self._providers.set_active(provider_name)
+        Returns:
+            List of image file dicts with analysis data merged in
+        """
+        return self._image_files.get_all_with_analysis(directory_filter, provider_filter)
 
     # ==================== Directory Methods ====================
 
@@ -133,14 +226,66 @@ class AnalysisDB:
     def save_bundle_suggestion(
         self, file_paths: list[str], bundle_metadata: dict[str, Any], confidence_score: float
     ) -> int | None:
-        """Save a document bundle suggestion."""
-        return self._bundles.save_suggestion(file_paths, bundle_metadata, confidence_score)
+        """
+        Save a document bundle suggestion.
+
+        Creates bundle and links images via bundle_images junction table.
+
+        Args:
+            file_paths: List of image file paths in bundle
+            bundle_metadata: Bundle metadata dict
+            confidence_score: Confidence score (0.0-1.0)
+
+        Returns:
+            Bundle ID
+        """
+        # Create bundle record
+        bundle_id = self._bundles.save_suggestion(
+            bundle_metadata=bundle_metadata,
+            confidence_score=confidence_score,
+            total_pages=len(file_paths),
+        )
+
+        if not bundle_id:
+            return None
+
+        # Get image file IDs for the paths
+        image_file_ids: list[int] = []
+        for file_path in file_paths:
+            img = self._image_files.get_by_path(file_path)
+            if img:
+                image_file_ids.append(img["id"])
+
+        # Add images to bundle via junction table
+        if image_file_ids:
+            self._bundle_images.add_images_bulk(bundle_id, image_file_ids)
+
+        return bundle_id
 
     def get_bundle_suggestions(
         self, status_filter: str = "suggested", min_confidence: float | None = None
     ) -> list[dict[str, Any]]:
-        """Get bundle suggestions with optional filters."""
-        return self._bundles.get_suggestions(status_filter, min_confidence)
+        """
+        Get bundle suggestions with optional filters.
+
+        Enriches results with file_paths from bundle_images junction table.
+
+        Args:
+            status_filter: Bundle status filter
+            min_confidence: Optional minimum confidence score
+
+        Returns:
+            List of bundle dicts with file_paths added
+        """
+        bundles = self._bundles.get_suggestions(status_filter, min_confidence)
+
+        # Enrich each bundle with file_paths from junction table
+        for bundle in bundles:
+            bundle_id = bundle["id"]
+            images = self._bundle_images.get_images_for_bundle(bundle_id)
+            bundle["file_paths"] = [img["file_path"] for img in images]
+
+        return bundles
 
     def update_bundle_status(
         self, bundle_id: int, status: str, user_action: str | None = None
@@ -166,23 +311,6 @@ class AnalysisDB:
         """Update bundle with generated PDF path."""
         self._bundles.update_pdf_path(bundle_id, pdf_path)
 
-    # ==================== Rotation Methods ====================
-
-    def save_rotation_preference(
-        self, file_path: str, rotation_degrees: int, rotation_source: str
-    ) -> None:
-        """Save rotation preference for a file."""
-        self._rotation.save_preference(file_path, rotation_degrees, rotation_source)
-
-    def get_rotation_preference(self, file_path: str) -> dict[str, Any] | None:
-        """Get rotation preference for a file."""
-        if self.connection.connection is None:
-            raise RuntimeError("Database connection not initialized")
-        cursor = self.connection.connection.cursor()
-        cursor.execute("SELECT * FROM rotation_preferences WHERE file_path = ?", (file_path,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-
     # ==================== Audit Trail Methods ====================
 
     def log_action(
@@ -194,30 +322,6 @@ class AnalysisDB:
     ) -> None:
         """Log user action to audit trail."""
         self._audit.log_action(action_type, action_details, file_path, bundle_id)
-
-    # ==================== Error Management Methods ====================
-
-    def get_failed_analyses(self) -> list[dict[str, Any]]:
-        """Get list of failed analyses."""
-        return self._errors.get_all_errors()
-
-    def save_error(
-        self, file_path: str, error_message: str, error_type: str = "analysis_failed"
-    ) -> None:
-        """Save an analysis error record."""
-        self._errors.save_error(file_path, error_message, error_type)
-
-    def get_all_errors(self) -> list[dict[str, Any]]:
-        """Get all error records."""
-        return self._errors.get_all_errors()
-
-    def get_error_count(self) -> int:
-        """Get total count of errors."""
-        return self._errors.get_error_count()
-
-    def clear_error(self, file_path: str) -> None:
-        """Clear error record for a specific file."""
-        self._errors.clear_error(file_path)
 
     # ==================== Statistics Methods ====================
 
@@ -248,13 +352,6 @@ class AnalysisDB:
         cursor.execute("SELECT COUNT(*) FROM document_bundles WHERE status = 'accepted'")
         accepted_bundles = cursor.fetchone()[0]
 
-        # Provider count
-        cursor.execute("SELECT COUNT(*) FROM llm_providers")
-        total_providers = cursor.fetchone()[0]
-
-        # Active provider
-        active_provider = self.get_active_provider()
-
         # Active directories
         cursor.execute("SELECT COUNT(*) FROM source_directories WHERE is_active = 1")
         active_dirs = cursor.fetchone()[0]
@@ -272,8 +369,6 @@ class AnalysisDB:
             "avg_processing_time_ms": avg_time,
             "pending_bundles": pending_bundles,
             "accepted_bundles": accepted_bundles,
-            "total_providers": total_providers,
-            "active_provider": active_provider["provider_name"] if active_provider else None,
             "active_directories": active_dirs,
             "total_actions_logged": audit_count,
             "database_size_bytes": db_size,
@@ -308,15 +403,17 @@ class AnalysisDB:
         }
 
     def get_document_type_breakdown(self) -> dict[str, int]:
-        """Get count of documents by type."""
+        """Get count of documents by type from user-approved metadata."""
         if self.connection.connection is None:
             raise RuntimeError("Database connection not initialized")
         cursor = self.connection.connection.cursor()
         cursor.execute("""
-            SELECT document_type, COUNT(*) as count
-            FROM analysis_results
-            WHERE document_type IS NOT NULL
-            GROUP BY document_type
+            SELECT m.document_type, COUNT(*) as count
+            FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+            AND m.document_type IS NOT NULL
+            GROUP BY m.document_type
         """)
         return {row[0]: row[1] for row in cursor.fetchall()}
 
@@ -359,8 +456,8 @@ class AnalysisDB:
     def update_image_status(
         self, file_path: str, status: str, analysis_id: int | None = None
     ) -> None:
-        """Update image file status."""
-        self._image_files.update_status(file_path, status, analysis_id)
+        """Update image file status. Note: analysis_id parameter is deprecated and ignored."""
+        self._image_files.update_status(file_path, status)
 
     def update_image_last_seen(self, file_path: str) -> None:
         """Update last_seen_at timestamp."""
@@ -382,6 +479,14 @@ class AnalysisDB:
         """Set proposed output filename for image."""
         self._image_files.set_output_filename(file_path, output_filename)
 
+    def update_image_rotation(self, file_path: str, rotation: int) -> None:
+        """Update user-specified rotation for image file."""
+        self._image_files.update_rotation(file_path, rotation)
+
+    def get_image_rotation(self, file_path: str) -> int:
+        """Get user-specified rotation for image file."""
+        return self._image_files.get_rotation(file_path)
+
     def get_image_files_stats(self) -> dict[str, int]:
         """Get image files statistics."""
         return self._image_files.get_stats()
@@ -398,10 +503,33 @@ class AnalysisDB:
         file_hash: str | None = None,
         file_size: int | None = None,
     ) -> int:
-        """Register a generated PDF."""
-        return self._pdf_files.register(
-            pdf_path, pdf_filename, bundle_id, source_image_ids, page_count, file_hash, file_size
+        """
+        Register a generated PDF.
+
+        Creates PDF record and links images via pdf_image_pages junction table.
+
+        Args:
+            pdf_path: Full path to PDF
+            pdf_filename: PDF filename
+            bundle_id: Bundle ID
+            source_image_ids: List of image_file IDs
+            page_count: Number of pages
+            file_hash: Optional SHA-256 hash
+            file_size: Optional file size in bytes
+
+        Returns:
+            PDF file ID
+        """
+        # Register PDF
+        pdf_file_id = self._pdf_files.register(
+            pdf_path, pdf_filename, bundle_id, page_count, file_hash, file_size
         )
+
+        # Link images to PDF via junction table (with page numbers)
+        for page_num, image_file_id in enumerate(source_image_ids, start=1):
+            self._pdf_image_pages.add_page(pdf_file_id, image_file_id, page_num)
+
+        return pdf_file_id
 
     def get_pdf_file(self, pdf_path: str) -> dict[str, Any] | None:
         """Get PDF record by path."""
@@ -426,6 +554,152 @@ class AnalysisDB:
     def get_pdf_files_stats(self) -> dict[str, int]:
         """Get PDF files statistics."""
         return self._pdf_files.get_stats()
+
+    # ==================== Metadata Methods ====================
+
+    def create_metadata_from_analysis(
+        self,
+        image_file_id: int,
+        analysis_id: int,
+        normalized_metadata: dict[str, Any],
+        output_filename: str | None = None,
+        document_category: str | None = None,
+    ) -> int:
+        """
+        Create metadata from normalized analysis.
+
+        Args:
+            image_file_id: Image file ID
+            analysis_id: Analysis result ID
+            normalized_metadata: Normalized metadata dictionary
+            output_filename: Optional desired output filename
+            document_category: Optional document category
+
+        Returns:
+            Created metadata record ID
+        """
+        return self._metadata.create_from_analysis(
+            image_file_id, analysis_id, normalized_metadata, output_filename, document_category
+        )
+
+    def update_metadata(self, image_file_id: int, updates: dict[str, Any]) -> None:
+        """
+        Update metadata (user edit).
+
+        Args:
+            image_file_id: Image file ID
+            updates: Dictionary of fields to update
+        """
+        self._metadata.update_from_user(image_file_id, updates)
+
+    def get_metadata_by_image_id(self, image_file_id: int) -> dict[str, Any] | None:
+        """
+        Get current metadata for image.
+
+        Args:
+            image_file_id: Image file ID
+
+        Returns:
+            Metadata dictionary or None
+        """
+        return self._metadata.get_by_image_file_id(image_file_id)
+
+    def get_metadata_by_path(self, file_path: str) -> dict[str, Any] | None:
+        """
+        Get metadata by image file path.
+
+        Args:
+            file_path: Image file path
+
+        Returns:
+            Metadata dictionary or None
+        """
+        return self._metadata.get_by_image_path(file_path)
+
+    def link_metadata_to_pdf(self, image_file_ids: list[int], pdf_file_id: int) -> None:
+        """
+        Link metadata to PDF after generation.
+
+        Args:
+            image_file_ids: List of image file IDs
+            pdf_file_id: PDF file ID
+        """
+        self._metadata.link_to_pdf(image_file_ids, pdf_file_id)
+
+    def get_metadata_analysis_history(self, image_file_id: int) -> list[dict[str, Any]]:
+        """
+        Get analysis history for comparison.
+
+        Args:
+            image_file_id: Image file ID
+
+        Returns:
+            List of analysis result dictionaries
+        """
+        return self._metadata.get_analysis_history(image_file_id)
+
+    def get_all_metadata(
+        self, status_filter: str | None = None, directory_filter: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Get all metadata records with optional filters.
+
+        Args:
+            status_filter: Optional image status filter
+            directory_filter: Optional directory path filter
+
+        Returns:
+            List of metadata dictionaries
+        """
+        return self._metadata.get_all(status_filter, directory_filter)
+
+    def get_metadata_stats(self) -> dict[str, int]:
+        """
+        Get metadata statistics.
+
+        Returns:
+            Dictionary with statistics
+        """
+        return self._metadata.get_stats()
+
+    def delete_metadata_by_path(self, file_path: str) -> None:
+        """
+        Delete metadata by image file path.
+
+        Args:
+            file_path: Image file path
+        """
+        # Get image file record to find the ID
+        image_file = self._image_files.get_by_path(file_path)
+        if image_file:
+            self._metadata.delete_by_image_file_id(image_file["id"])
+
+    def get_unique_companies(self) -> list[str]:
+        """
+        Get unique company names for autocomplete.
+
+        Returns:
+            List of company names (normalized, title case)
+        """
+        return self._metadata.get_unique_companies()
+
+    def get_unique_document_types(self) -> list[str]:
+        """
+        Get unique document types for autocomplete.
+
+        Returns:
+            List of document types (normalized, title case)
+        """
+        return self._metadata.get_unique_document_types()
+
+    def get_unique_categories(self) -> list[str]:
+        """
+        Get unique document categories for autocomplete.
+
+        Returns:
+            List of document categories
+        """
+        return self._metadata.get_unique_categories()
 
     # ==================== Utility Methods ====================
 

@@ -4,7 +4,6 @@ Bundle repository for managing document bundle suggestions.
 Simplified CRUD operations for AI-generated document bundles.
 """
 
-import json
 from typing import Any
 
 from db.connection import DatabaseConnection
@@ -24,17 +23,19 @@ class BundleRepository:
 
     def save_suggestion(
         self,
-        file_paths: list[str],
         bundle_metadata: dict[str, Any],
         confidence_score: float,
+        total_pages: int,
     ) -> int | None:
         """
         Save a document bundle suggestion.
 
+        NOTE: After creating bundle, use BundleImagesRepository to add images via junction table.
+
         Args:
-            file_paths: List of file paths in bundle
             bundle_metadata: Bundle metadata (company, type, date, etc.)
             confidence_score: Confidence score (0.0 to 1.0)
+            total_pages: Number of pages in bundle
 
         Returns:
             Bundle ID
@@ -51,19 +52,17 @@ class BundleRepository:
             """
             INSERT INTO document_bundles (
                 bundle_name, company, document_type, document_date,
-                total_pages, confidence_score, confidence_level,
-                file_paths, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'suggested')
+                total_pages, confidence_score, confidence_level, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'suggested')
         """,
             (
                 bundle_metadata.get("bundle_name"),
                 bundle_metadata.get("company"),
                 bundle_metadata.get("document_type"),
                 bundle_metadata.get("document_date"),
-                len(file_paths),
+                total_pages,
                 confidence_score,
                 confidence_level,
-                json.dumps(file_paths),
             ),
         )
 
@@ -76,12 +75,14 @@ class BundleRepository:
         """
         Get bundle suggestions with optional filtering.
 
+        NOTE: Does not include file_paths - use BundleImagesRepository to fetch images.
+
         Args:
             status_filter: Bundle status filter (default: 'suggested')
             min_confidence: Minimum confidence score
 
         Returns:
-            List of bundle dicts
+            List of bundle dicts (without file_paths)
         """
         query = "SELECT * FROM document_bundles WHERE status = ?"
         params: list[str | float] = [status_filter]
@@ -92,7 +93,7 @@ class BundleRepository:
 
         query += " ORDER BY confidence_score DESC, created_at DESC"
 
-        return self.conn.fetch_all_dicts(query, params=tuple(params), json_fields=["file_paths"])
+        return self.conn.fetch_all_dicts(query, params=tuple(params))
 
     def update_status(self, bundle_id: int, status: str, user_action: str | None = None) -> None:
         """
@@ -170,13 +171,17 @@ class BundleRepository:
         """
         Get all file paths that are part of accepted or completed bundles.
 
+        Uses bundle_images junction table to find bundled images.
+
         Returns:
             Set of file paths already in processed bundles
         """
         cursor = self.conn.execute("""
-            SELECT DISTINCT json_each.value
-            FROM document_bundles, json_each(document_bundles.file_paths)
-            WHERE status IN ('accepted', 'completed')
+            SELECT DISTINCT img.file_path
+            FROM document_bundles b
+            INNER JOIN bundle_images bi ON b.id = bi.bundle_id
+            INNER JOIN image_files img ON bi.image_file_id = img.id
+            WHERE b.status IN ('accepted', 'completed')
         """)
         return {row[0] for row in cursor.fetchall()}
 

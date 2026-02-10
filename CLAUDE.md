@@ -157,6 +157,29 @@ Follow these strict placement rules:
 - **Images & assets** → `/assets`
 - **Databases & import datasets** → `/data`
 
+### Documentation Creation Policy (MANDATORY)
+
+**DO NOT create summary documents, markdown files, or completion reports unless the user explicitly requests them.**
+
+This includes:
+- ❌ Change summary documents (e.g., `FEATURE_IMPLEMENTATION.md`)
+- ❌ Migration completion reports
+- ❌ Update documentation for code changes
+- ❌ "What was changed" markdown files
+- ❌ Implementation status reports
+
+**Exception:** Only create documentation files when:
+- ✅ User explicitly asks: "create a document describing...", "write up a summary...", "document this change..."
+- ✅ User requests project documentation updates (README, API docs, etc.)
+
+**Why:** The user can see what changed through:
+1. Git commit history and diffs
+2. Conversation transcript with you
+3. Code comments and docstrings
+4. Test files documenting behavior
+
+**Reduce noise, not documentation quality.** When documentation is requested, make it comprehensive and valuable.
+
 ## Essential Commands
 
 ### Running the Application

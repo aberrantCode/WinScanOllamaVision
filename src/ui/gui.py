@@ -2482,13 +2482,13 @@ class ConvertImagesWindow(QMainWindow):
 
         try:
             # Get current rotation from database
-            current_rotation = self.metadata_db.get_rotation(self.current_page_path)
+            current_rotation = self.analysis_db.get_image_rotation(self.current_page_path)
 
             # Calculate new rotation (cumulative)
             new_rotation = (current_rotation + degrees) % 360
 
             # Save rotation to database (NOT to file!)
-            self.metadata_db.save_rotation(self.current_page_path, new_rotation)
+            self.analysis_db.update_image_rotation(self.current_page_path, new_rotation)
 
             # Update in-memory state
             self.rotation_states[self.current_page_path] = new_rotation
@@ -4076,7 +4076,7 @@ Files being sent to Ollama:
         self.last_ollama_response_type = "Page Validation"
 
         # Check metadata cache first (avoid unnecessary Ollama calls)
-        cached_metadata = self.metadata_db.get_metadata(next_file)
+        cached_metadata = self.metadata_db.get_normalized_metadata_by_path(next_file)
 
         if cached_metadata and cached_metadata.get("belongs_to_same_doc") is not None:
             # Use cached metadata instead of calling Ollama
@@ -4185,25 +4185,8 @@ Files being sent to Ollama:
                 response_parts.append(f"Type: {document_type}")
             self.last_ollama_response = "\n".join(response_parts)
 
-        # Save metadata to cache database (for future runs)
-        if not isinstance(result, Exception) and start_time is not None:
-            import time
-
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            selected_model = self.config_manager.get_setting("Ollama", "model")
-
-            try:
-                self.metadata_db.save_metadata(
-                    evaluated_file,
-                    result,
-                    model_used=selected_model,
-                    processing_time_ms=processing_time_ms,
-                )
-                logger.debug(
-                    f"Cached metadata for {os.path.basename(evaluated_file)} ({processing_time_ms}ms)"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to cache metadata: {e}")
+        # REMOVED: No longer saving to active_metadata (legacy cache table)
+        # Metadata caching is now handled by analysis_results table via AnalysisService
 
         # Store page metadata for ordering step
         metadata = {
@@ -4741,7 +4724,7 @@ Files being sent to Ollama:
             return
 
         # Phase 8: Apply rotation from database (display-only, source file unchanged)
-        rotation_degrees = self.metadata_db.get_rotation(image_path)
+        rotation_degrees = self.analysis_db.get_image_rotation(image_path)
         if rotation_degrees != 0:
             # Create transform for rotation
             transform = QTransform()
@@ -4996,7 +4979,7 @@ Files being sent to Ollama:
         pixmap = QPixmap(image_path)
 
         # Phase 8: Apply rotation from database (display-only)
-        rotation_degrees = self.metadata_db.get_rotation(image_path)
+        rotation_degrees = self.analysis_db.get_image_rotation(image_path)
         if rotation_degrees != 0:
             transform = QTransform()
             transform.rotate(rotation_degrees)
@@ -5347,7 +5330,7 @@ Files being sent to Ollama:
             # Phase 8: Build rotation map from database for PDF generation
             rotation_map = {}
             for img_path in self.current_group:
-                rotation_degrees = self.metadata_db.get_rotation(img_path)
+                rotation_degrees = self.analysis_db.get_image_rotation(img_path)
                 if rotation_degrees != 0:
                     rotation_map[img_path] = rotation_degrees
 
@@ -6253,8 +6236,8 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
-        # Analyze Documents button
-        analyze_button = QPushButton("🔍 Analyze Documents")
+        # Analysis button
+        analyze_button = QPushButton("🔍 Analysis")
         analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         analyze_button.setMinimumHeight(60)
         analyze_button.setStyleSheet(primary_button_style)
@@ -6670,20 +6653,25 @@ class StartupWindow(QWidget):
         Format ISO timestamp as relative time (e.g., "2 hours ago").
 
         Args:
-            iso_timestamp: ISO format timestamp string
+            iso_timestamp: ISO format timestamp string (UTC from database)
 
         Returns:
             Relative time string
         """
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            # Parse ISO timestamp
-            dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
-            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            from ui.datetime_utils import utc_to_local
+
+            # Parse ISO timestamp (assume UTC from database)
+            dt_utc = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+
+            # Convert to local timezone
+            dt_local = utc_to_local(dt_utc)
+            now = datetime.now(timezone.utc).astimezone()
 
             # Calculate difference
-            diff = now - dt
+            diff = now - dt_local
 
             # Format based on duration
             if diff.total_seconds() < 60:

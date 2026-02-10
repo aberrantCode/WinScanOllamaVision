@@ -164,15 +164,6 @@ class TestAnalysisDBCore:
         # Simply verify no exception was raised and bundle still exists
         assert bundle_id > 0
 
-    def test_save_rotation_preference(self, db):
-        # Act
-        db.save_rotation_preference("/test/img.jpg", 90, "manual")
-        pref = db.get_rotation_preference("/test/img.jpg")
-
-        # Assert
-        assert pref is not None
-        assert pref["rotation_degrees"] == 90
-
     def test_log_action(self, db):
         # Act
         db.log_action("test_action", "Test details", file_path="/file.jpg")

@@ -1,9 +1,9 @@
 """Tests for GuidedBundleWorkflow UI component."""
 
 import os
-import pytest
-from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
 
 from ui.guided_bundle_workflow import GuidedBundleWorkflow
 

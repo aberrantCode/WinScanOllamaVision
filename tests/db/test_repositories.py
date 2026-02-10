@@ -15,130 +15,7 @@ from db.repositories import (
     AuditRepository,
     BundleRepository,
     DirectoryRepository,
-    ErrorRepository,
-    MetadataRepository,
-    ProviderRepository,
-    RotationRepository,
 )
-
-
-class TestMetadataRepository:
-    """Tests for MetadataRepository"""
-
-    @pytest.fixture
-    def temp_db_path(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
-        yield db_path
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
-    @pytest.fixture
-    def conn(self, temp_db_path):
-        connection = DatabaseConnection(temp_db_path)
-        # Create schema
-        from db.schema import create_all_tables
-
-        create_all_tables(connection)
-        yield connection
-        connection.close()
-
-    @pytest.fixture
-    def repo(self, conn):
-        return MetadataRepository(conn)
-
-    @pytest.fixture
-    def temp_file(self):
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-            f.write(b"test content")
-            file_path = f.name
-        yield file_path
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    def test_save_metadata(self, repo, temp_file):
-        # Arrange
-        metadata = {"company": "Test Corp", "document_type": "Invoice"}
-
-        # Act
-        repo.save_metadata(temp_file, metadata)
-
-        # Assert
-        result = repo.get_metadata(temp_file)
-        assert result["company"] == "Test Corp"
-
-    def test_get_metadata_returns_none_when_not_exists(self, repo):
-        # Act
-        result = repo.get_metadata("/nonexistent.jpg")
-
-        # Assert
-        assert result is None
-
-    def test_delete_metadata(self, repo, temp_file):
-        # Arrange
-        repo.save_metadata(temp_file, {"company": "Test"})
-
-        # Act
-        repo.delete_metadata(temp_file)
-
-        # Assert
-        assert repo.get_metadata(temp_file) is None
-
-    def test_archive_document(self, repo, temp_file):
-        # Arrange
-        pdf_path = "/output/doc.pdf"
-        source_files = [temp_file]
-        doc_metadata = {"company": "Test Corp", "title": "Invoice"}
-
-        # Act
-        repo.archive_document(pdf_path, source_files, doc_metadata)
-
-        # Assert
-        archived = repo.get_archived_document(pdf_path)
-        assert archived is not None
-        assert archived["company"] == "Test Corp"
-
-    def test_get_statistics(self, repo, temp_file):
-        # Arrange
-        repo.save_metadata(temp_file, {"company": "Test"})
-
-        # Act
-        stats = repo.get_statistics()
-
-        # Assert
-        assert stats["active_metadata_count"] >= 1
-        assert "archived_documents_count" in stats
-
-    def test_cleanup_orphaned_metadata(self, repo):
-        # Arrange - save metadata for non-existent file
-        fake_file = "/nonexistent/file.jpg"
-        repo.conn.execute(
-            """INSERT INTO active_metadata
-               (file_path, file_hash, file_size, file_mtime)
-               VALUES (?, ?, ?, ?)""",
-            (fake_file, "hash123", 1000, 123456.0),
-        )
-        repo.conn.commit()
-
-        # Act
-        removed_count = repo.cleanup_orphaned_metadata()
-
-        # Assert
-        assert removed_count >= 1
-
-    def test_create_backup(self, repo, temp_file, temp_db_path):
-        # Arrange
-        repo.save_metadata(temp_file, {"company": "Test"})
-
-        # Act - pass None to generate automatic backup path
-        backup_path = repo.create_backup(None)
-
-        # Assert
-        assert os.path.exists(backup_path)
-        assert backup_path.startswith(temp_db_path)
-        # Cleanup
-        if os.path.exists(backup_path):
-            os.remove(backup_path)
 
 
 class TestAnalysisRepository:
@@ -249,6 +126,49 @@ class TestAnalysisRepository:
         assert result["tax_related"] == 1
         assert result["document_type"] == "Tax Invoice"
         assert result["company"] == "Updated Corp"
+
+    def test_save_with_prompt_text(self, repo):
+        # Arrange
+        analysis_data = {"document_type": "Invoice", "company": "Test Corp"}
+        prompt_text = (
+            "Analyze this document and extract metadata including company name and document type."
+        )
+
+        # Act
+        repo.save(
+            file_path="/test/with_prompt.jpg",
+            file_hash="abc123",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data=analysis_data,
+            raw_response='{"test": "data"}',
+            processing_time_ms=100,
+            prompt_text=prompt_text,
+        )
+        result = repo.get_by_path("/test/with_prompt.jpg")
+
+        # Assert
+        assert result["prompt_text"] == prompt_text
+        assert result["company"] == "Test Corp"
+
+    def test_save_without_prompt_text_defaults_to_none(self, repo):
+        # Arrange - save without prompt_text parameter
+        analysis_data = {"document_type": "Receipt"}
+
+        # Act
+        repo.save(
+            file_path="/test/no_prompt.jpg",
+            file_hash="def456",
+            provider_name="claude",
+            model_name="claude-3",
+            analysis_data=analysis_data,
+            raw_response='{"test": "data"}',
+            processing_time_ms=150,
+        )
+        result = repo.get_by_path("/test/no_prompt.jpg")
+
+        # Assert
+        assert result["prompt_text"] is None
 
     def test_get_all_with_filters(self, repo):
         # Arrange
@@ -434,50 +354,6 @@ class TestBundleRepository:
         assert final_timestamp is not None
 
 
-class TestProviderRepository:
-    """Tests for ProviderRepository"""
-
-    @pytest.fixture
-    def temp_db_path(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
-        yield db_path
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
-    @pytest.fixture
-    def conn(self, temp_db_path):
-        connection = DatabaseConnection(temp_db_path)
-        from db.schema import create_all_tables
-
-        create_all_tables(connection)
-        yield connection
-        connection.close()
-
-    @pytest.fixture
-    def repo(self, conn):
-        return ProviderRepository(conn)
-
-    def test_add_and_get_active(self, repo):
-        # Arrange
-        config = {"base_url": "http://localhost:11434"}
-
-        # Act
-        repo.add("ollama", "ollama", config, "test-model")
-        repo.set_active("ollama")
-        active = repo.get_active()
-
-        # Assert
-        assert active["provider_name"] == "ollama"
-
-    def test_get_active_returns_none_when_no_active(self, repo):
-        # Act
-        active = repo.get_active()
-
-        # Assert
-        assert active is None
-
-
 class TestDirectoryRepository:
     """Tests for DirectoryRepository"""
 
@@ -531,61 +407,6 @@ class TestDirectoryRepository:
         assert "/test/dir" in repo.get_active()
 
 
-class TestRotationRepository:
-    """Tests for RotationRepository"""
-
-    @pytest.fixture
-    def temp_db_path(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
-        yield db_path
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
-    @pytest.fixture
-    def conn(self, temp_db_path):
-        connection = DatabaseConnection(temp_db_path)
-        from db.schema import create_all_tables
-
-        create_all_tables(connection)
-        yield connection
-        connection.close()
-
-    @pytest.fixture
-    def repo(self, conn):
-        return RotationRepository(conn)
-
-    @pytest.fixture
-    def temp_file(self):
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-            f.write(b"test content")
-            file_path = f.name
-        yield file_path
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    def test_save_and_get(self, repo, temp_file):
-        # Act
-        repo.save(temp_file, 90)
-        rotation = repo.get(temp_file)
-
-        # Assert
-        assert rotation == 90
-
-    def test_save_preference(self, repo, temp_file):
-        # Act
-        repo.save_preference(temp_file, 180, "manual")
-
-        # Assert - save_preference stores in rotation_preferences table
-        # Verify it was saved by querying directly
-        cursor = repo.conn.connection.cursor()
-        result = cursor.execute(
-            "SELECT rotation_degrees FROM rotation_preferences WHERE file_path = ?", (temp_file,)
-        ).fetchone()
-        assert result is not None
-        assert result["rotation_degrees"] == 180
-
-
 class TestAuditRepository:
     """Tests for AuditRepository"""
 
@@ -621,95 +442,6 @@ class TestAuditRepository:
             ("test_action",),
         ).fetchone()
         assert result is not None
-
-
-class TestErrorRepository:
-    """Tests for ErrorRepository"""
-
-    @pytest.fixture
-    def temp_db_path(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
-        yield db_path
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
-    @pytest.fixture
-    def conn(self, temp_db_path):
-        connection = DatabaseConnection(temp_db_path)
-        from db.schema import create_all_tables
-
-        create_all_tables(connection)
-        yield connection
-        connection.close()
-
-    @pytest.fixture
-    def repo(self, conn):
-        return ErrorRepository(conn)
-
-    def test_save_error(self, repo):
-        # Act
-        repo.save_error("/test/file.jpg", "Test error message", "analysis_failed")
-
-        # Assert
-        errors = repo.get_all_errors()
-        assert len(errors) == 1
-        assert errors[0]["file_path"] == "/test/file.jpg"
-        assert errors[0]["error_message"] == "Test error message"
-        assert errors[0]["error_type"] == "analysis_failed"
-
-    def test_get_all_errors(self, repo):
-        # Arrange
-        repo.save_error("/file1.jpg", "Error 1", "type1")
-        repo.save_error("/file2.jpg", "Error 2", "type2")
-
-        # Act
-        errors = repo.get_all_errors()
-
-        # Assert
-        assert len(errors) == 2
-        assert any(e["file_path"] == "/file1.jpg" for e in errors)
-        assert any(e["file_path"] == "/file2.jpg" for e in errors)
-
-    def test_get_error_count(self, repo):
-        # Arrange
-        repo.save_error("/file1.jpg", "Error 1", "type1")
-        repo.save_error("/file2.jpg", "Error 2", "type2")
-        repo.save_error("/file3.jpg", "Error 3", "type3")
-
-        # Act
-        count = repo.get_error_count()
-
-        # Assert
-        assert count == 3
-
-    def test_clear_error(self, repo):
-        # Arrange
-        repo.save_error("/file1.jpg", "Error 1", "type1")
-        repo.save_error("/file2.jpg", "Error 2", "type2")
-
-        # Act
-        repo.clear_error("/file1.jpg")
-
-        # Assert
-        errors = repo.get_all_errors()
-        assert len(errors) == 1
-        assert errors[0]["file_path"] == "/file2.jpg"
-
-    def test_get_error_count_empty(self, repo):
-        # Act
-        count = repo.get_error_count()
-
-        # Assert
-        assert count == 0
-
-    def test_clear_error_nonexistent(self, repo):
-        # Act - should not raise exception
-        repo.clear_error("/nonexistent.jpg")
-
-        # Assert
-        count = repo.get_error_count()
-        assert count == 0
 
 
 class TestImageFilesRepository:
@@ -981,6 +713,142 @@ class TestImageFilesRepository:
         img = repo.get_by_path("/test/img1.png")
         assert img["status"] == "deleted"
         assert img["deleted_at"] is not None
+
+    def test_get_all_with_analysis_no_analysis(self, repo):
+        """Test get_all_with_analysis returns images without analysis data."""
+        # Arrange - register images without analysis
+        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
+
+        # Act
+        results = repo.get_all_with_analysis()
+
+        # Assert
+        assert len(results) == 2
+        assert results[0]["file_path"] in ["/test/img1.png", "/test/img2.png"]
+        assert results[0]["status"] == "registered"
+        # Analysis fields should be None
+        assert results[0]["analysis_id"] is None
+        assert results[0]["document_type"] is None
+        assert results[0]["company"] is None
+
+    def test_get_all_with_analysis_with_analysis(self, repo, conn):
+        """Test get_all_with_analysis returns images with joined analysis data."""
+        from db.repositories import AnalysisRepository
+
+        # Arrange - register image and add analysis
+        repo.register("/test/img3.png", "h3", "/test", "img3.png", 100, 123.0)
+
+        # Create analysis entry
+        analysis_repo = AnalysisRepository(conn)
+        analysis_data = {
+            "document_type": "Invoice",
+            "company": "ACME Corp",
+            "document_date": "2024-01-15",
+            "confidence_score": 0.95,
+        }
+        analysis_repo.save(
+            "/test/img3.png",
+            "h3",
+            "test_provider",
+            "test_model",
+            analysis_data,
+            "raw llm response",
+            1500,
+        )
+
+        # Get analysis ID and update image
+        analysis = analysis_repo.get_by_path("/test/img3.png")
+        repo.update_status("/test/img3.png", "analyzed", analysis_id=analysis["id"])
+
+        # Act
+        results = repo.get_all_with_analysis()
+
+        # Assert
+        assert len(results) == 1
+        result = results[0]
+        assert result["file_path"] == "/test/img3.png"
+        assert result["status"] == "analyzed"
+        assert result["analysis_id"] is not None
+        # Joined analysis data should be present
+        assert result["document_type"] == "Invoice"
+        assert result["company"] == "ACME Corp"
+        assert result["document_date"] == "2024-01-15"
+        assert result["confidence_score"] == 0.95
+        assert result["provider_name"] == "test_provider"
+        assert result["model_name"] == "test_model"
+
+    def test_get_all_with_analysis_mixed(self, repo, conn):
+        """Test get_all_with_analysis returns both analyzed and unanalyzed images."""
+        from db.repositories import AnalysisRepository
+
+        # Arrange - register multiple images, analyze only one
+        repo.register("/test/img4.png", "h4", "/test", "img4.png", 100, 123.0)
+        repo.register("/test/img5.png", "h5", "/test", "img5.png", 200, 124.0)
+
+        # Analyze only img4
+        analysis_repo = AnalysisRepository(conn)
+        analysis_data = {"document_type": "Receipt", "company": "Store"}
+        analysis_repo.save(
+            "/test/img4.png", "h4", "test_provider", "test_model", analysis_data, "raw", 1000
+        )
+
+        analysis = analysis_repo.get_by_path("/test/img4.png")
+        repo.update_status("/test/img4.png", "analyzed", analysis_id=analysis["id"])
+
+        # Act
+        results = repo.get_all_with_analysis()
+
+        # Assert
+        assert len(results) == 2
+
+        # Find each result
+        img4 = next((r for r in results if r["file_path"] == "/test/img4.png"), None)
+        img5 = next((r for r in results if r["file_path"] == "/test/img5.png"), None)
+
+        assert img4 is not None
+        assert img5 is not None
+
+        # img4 should have analysis data
+        assert img4["analysis_id"] is not None
+        assert img4["document_type"] == "Receipt"
+        assert img4["company"] == "Store"
+
+        # img5 should NOT have analysis data
+        assert img5["analysis_id"] is None
+        assert img5["document_type"] is None
+        assert img5["company"] is None
+
+    def test_get_all_with_analysis_filters(self, repo, conn):
+        """Test get_all_with_analysis respects directory and provider filters."""
+        from db.repositories import AnalysisRepository
+
+        # Arrange - register images in different directories with different providers
+        repo.register("/test1/img1.png", "h1", "/test1", "img1.png", 100, 123.0)
+        repo.register("/test2/img2.png", "h2", "/test2", "img2.png", 200, 124.0)
+
+        analysis_repo = AnalysisRepository(conn)
+
+        # Analyze both with different providers
+        analysis_repo.save("/test1/img1.png", "h1", "provider_a", "model", {}, "raw", 1000)
+        analysis_repo.save("/test2/img2.png", "h2", "provider_b", "model", {}, "raw", 1000)
+
+        analysis1 = analysis_repo.get_by_path("/test1/img1.png")
+        analysis2 = analysis_repo.get_by_path("/test2/img2.png")
+
+        repo.update_status("/test1/img1.png", "analyzed", analysis_id=analysis1["id"])
+        repo.update_status("/test2/img2.png", "analyzed", analysis_id=analysis2["id"])
+
+        # Act & Assert - filter by directory
+        results_dir1 = repo.get_all_with_analysis(directory_filter="/test1")
+        assert len(results_dir1) == 1
+        assert results_dir1[0]["file_path"] == "/test1/img1.png"
+
+        # Act & Assert - filter by provider
+        results_provider_b = repo.get_all_with_analysis(provider_filter="provider_b")
+        assert len(results_provider_b) == 1
+        assert results_provider_b[0]["file_path"] == "/test2/img2.png"
+        assert results_provider_b[0]["provider_name"] == "provider_b"
 
 
 class TestPdfFilesRepository:

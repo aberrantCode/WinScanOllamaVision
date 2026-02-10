@@ -14,6 +14,7 @@ from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.provider_factory import ProviderFactory
 from services.logging_service import get_logger
+from services.metadata_normalizer import MetadataNormalizer
 
 
 class AnalysisService:
@@ -97,6 +98,23 @@ class AnalysisService:
         except Exception as e:
             self._log(f"[REGISTER ERROR] Failed to register {os.path.basename(image_path)}: {e}")
             # Don't fail the scan if registration fails - continue with analysis
+
+    def analyze_single_file(self, file_path: str, force_reanalysis: bool = False) -> dict[str, Any]:
+        """
+        Analyze a single file (public interface for on-demand re-analysis).
+
+        Args:
+            file_path: Path to image file
+            force_reanalysis: If True, bypass cache and force fresh analysis
+
+        Returns:
+            Dictionary with analysis result
+        """
+        # Register the file first (if not already registered)
+        self._register_image_file(file_path)
+
+        # Analyze the file (incremental=False means bypass cache)
+        return self._analyze_single_page(file_path, incremental=not force_reanalysis)
 
     def scan_all_directories(
         self,
@@ -212,13 +230,7 @@ class AnalysisService:
                     self._log(
                         f"[SCAN] File failed: {os.path.basename(image_path)} - Error: {error_msg}"
                     )
-
-                    # Save error to database
-                    self.analysis_db.save_error(
-                        file_path=image_path,
-                        error_message=error_msg,
-                        error_type="analysis_failed",
-                    )
+                    # Error is logged; had_error flag in analysis_results tracks failures
 
             # Update directory scan info for each directory
             for directory in directories:
@@ -275,12 +287,8 @@ class AnalysisService:
                     "analysis": existing_analysis,
                 }
 
-        # File needs analysis - mark as analyzing
-        try:
-            self.analysis_db.update_image_status(image_path, "analyzing")
-        except Exception as e:
-            self._log(f"[ANALYSIS WARNING] Could not update status to analyzing: {e}")
-            # Continue anyway
+        # File needs analysis - status is already set to "analyzing" by worker thread
+        # (No need to update status here - would be duplicate)
 
         # File needs analysis
         try:
@@ -302,12 +310,31 @@ class AnalysisService:
             if not result["success"]:
                 error_msg = result.get("error", "Unknown error")
                 self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
-                # Keep status as 'analyzing' on failure (or could set to 'error')
+
+                # Save error as analysis record so it appears in UI
+                error_response = f"ERROR: Analysis failed\n\n{error_msg}"
+                analysis_id = self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name=result.get("model_used", "unknown"),
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message in raw response
+                    processing_time_ms=result.get("processing_time_ms", 0),
+                    prompt_text=metadata_prompt,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(
+                    image_path, "analyzed"
+                )  # Status 'analyzed' but with error
+
                 return {"success": False, "cached": False, "skipped": False, "error": error_msg}
 
             # Save analysis to database
             self._log("[ANALYSIS] Saving to database...")
-            self.analysis_db.save_analysis(
+            analysis_id = self.analysis_db.save_analysis(
                 file_path=image_path,
                 file_hash=file_hash,
                 provider_name=provider.provider_name,
@@ -315,23 +342,30 @@ class AnalysisService:
                 analysis_data=result["metadata"],
                 raw_response=result["response"],
                 processing_time_ms=result["processing_time_ms"],
+                prompt_text=metadata_prompt,
+                had_error=False,  # Successful analysis
             )
 
-            # Also save to metadata_db for backward compatibility
-            self.metadata_db.save_metadata(
-                file_path=image_path,
-                metadata=result["metadata"],
-                model_used=result["model_used"],
-                processing_time_ms=result["processing_time_ms"],
-            )
+            self._log(f"[ANALYSIS] Saved analysis with ID: {analysis_id}")
 
-            # Get the analysis ID and update status to 'analyzed'
-            saved_analysis = self.analysis_db.get_analysis(image_path)
-            if saved_analysis:
-                analysis_id = saved_analysis.get("id")
-                if analysis_id:
-                    self.analysis_db.update_image_status(image_path, "analyzed", analysis_id)
-                    self._log(f"[ANALYSIS] Updated status to analyzed with ID: {analysis_id}")
+            # Normalize and save to metadata table
+            try:
+                normalizer = MetadataNormalizer()
+                normalized = normalizer.normalize(result["metadata"])
+
+                image_file = self.analysis_db.get_image_file(image_path)
+                if image_file and analysis_id:
+                    self.analysis_db.create_metadata_from_analysis(
+                        image_file_id=image_file["id"],
+                        analysis_id=analysis_id,
+                        normalized_metadata=normalized,
+                    )
+                    self._log("[ANALYSIS] Created normalized metadata record")
+            except Exception as normalize_error:
+                self._log(
+                    f"[ANALYSIS WARNING] Failed to create normalized metadata: {normalize_error}"
+                )
+                # Don't fail the analysis if normalization fails
 
             self._log("[ANALYSIS] Successfully saved to database")
             return {
@@ -349,7 +383,31 @@ class AnalysisService:
                 f"[ANALYSIS EXCEPTION] Error analyzing {os.path.basename(image_path)}: {str(e)}"
             )
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
-            # Keep status as 'analyzing' on exception
+
+            # Save exception as analysis record so it appears in UI
+            error_response = (
+                f"ERROR: Exception during analysis\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            )
+            try:
+                provider = self._get_provider()
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except Exception:
+                # If saving error also fails, just log and continue
+                pass
+
             return {"success": False, "cached": False, "skipped": False, "error": str(e)}
 
     def _log(self, message: str):

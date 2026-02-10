@@ -1,6 +1,6 @@
 """
 Analysis Status Window
-Provides visibility into analysis service status with 3 tabs: Collection Status, Page Details, and Document Details.
+Provides visibility into analysis service status with 3 tabs: Collection Status, Image Details, and PDF Details.
 """
 
 import os
@@ -23,13 +23,175 @@ from PyQt6.QtWidgets import (
 )
 
 from db.analysis_db import AnalysisDB
+from db.image_status import ImageStatus
+from services.analysis_queue import AnalysisJob, AnalysisQueue, JobPriority, JobType
 from services.logging_service import get_logger
 
 logger = get_logger()
 
 
+class AnalysisWorker(QThread):
+    """Persistent worker thread that processes analysis jobs from queue."""
+
+    # Signals
+    job_started = pyqtSignal(str, str)  # (job_id, description)
+    progress = pyqtSignal(str, int, int)  # (status_text, current, total)
+    job_finished = pyqtSignal(str, dict)  # (job_id, stats)
+    error = pyqtSignal(str, str)  # (job_id, error_message)
+    queue_empty = pyqtSignal()  # All jobs processed
+
+    def __init__(self, config_manager, analysis_queue: AnalysisQueue):
+        super().__init__()
+        self.config_manager = config_manager
+        self.analysis_queue = analysis_queue
+        self._stop_requested = False
+        self._current_job_id = None
+
+    def run(self):
+        """Continuously process jobs from queue until stopped."""
+        while not self._stop_requested:
+            # Get next job (blocking with timeout to allow checking stop flag)
+            job = self.analysis_queue.dequeue(timeout=0.5)
+
+            if job is None:
+                # No job available, check if we should continue waiting
+                if self._stop_requested:
+                    break
+                continue
+
+            # Check if job was cancelled before we started
+            if self.analysis_queue.is_job_cancelled(job.job_id):
+                continue
+
+            self._current_job_id = job.job_id
+
+            try:
+                # Process the job
+                self._process_job(job)
+            except Exception as e:
+                import traceback
+
+                error_msg = f"{str(e)}\n{traceback.format_exc()}"
+                logger.error(f"Error processing job {job.job_id}: {error_msg}")
+                self.error.emit(job.job_id, error_msg)
+                self.analysis_queue.mark_cancelled(job.job_id)
+            finally:
+                self._current_job_id = None
+
+            # Check if queue is empty
+            if self.analysis_queue.get_pending_count() == 0:
+                self.queue_empty.emit()
+
+    def _process_job(self, job: AnalysisJob):
+        """Process a single analysis job."""
+        # Create thread-local database connections
+        from db.analysis_db import AnalysisDB
+        from db.metadata_db import MetadataDB
+        from services.analysis_service import AnalysisService
+
+        thread_analysis_db = None
+        thread_metadata_db = None
+
+        try:
+            # Emit job started
+            if job.job_type == JobType.SCAN_ALL:
+                description = "Scanning all directories"
+            else:
+                description = f"Re-analyzing {len(job.file_paths)} file(s)"
+            self.job_started.emit(job.job_id, description)
+
+            # Create new database instances for this thread
+            thread_analysis_db = AnalysisDB()
+            thread_metadata_db = MetadataDB()
+            thread_analysis_service = AnalysisService(
+                self.config_manager, thread_analysis_db, thread_metadata_db
+            )
+
+            def progress_callback(status_text, current, total):
+                if self.analysis_queue.is_job_cancelled(job.job_id):
+                    raise InterruptedError("Job cancelled by user")
+                self.progress.emit(status_text, current, total)
+
+            def abort_check():
+                return self.analysis_queue.is_job_cancelled(job.job_id)
+
+            # Execute based on job type
+            if job.job_type == JobType.SCAN_ALL:
+                stats = thread_analysis_service.scan_all_directories(
+                    progress_callback=progress_callback,
+                    incremental=not job.force_reanalysis,
+                    abort_check=abort_check,
+                )
+            else:  # JobType.ANALYZE_FILES
+                # Process specific files
+                stats = {
+                    "analyzed": 0,
+                    "cached": 0,
+                    "errors": 0,
+                    "total_files": len(job.file_paths),
+                }
+                for idx, file_path in enumerate(job.file_paths, 1):
+                    if self.analysis_queue.is_job_cancelled(job.job_id):
+                        raise InterruptedError("Job cancelled by user")
+
+                    # Set status to "analyzing" when actually starting to process this file
+                    thread_analysis_db.update_image_status(file_path, ImageStatus.ANALYZING.value)
+
+                    progress_callback(
+                        f"Analyzing {os.path.basename(file_path)}", idx, len(job.file_paths)
+                    )
+
+                    # Re-analyze the file
+                    result = thread_analysis_service.analyze_single_file(
+                        file_path, force_reanalysis=job.force_reanalysis
+                    )
+
+                    if result.get("success"):
+                        stats["analyzed"] += 1
+                        # Set status to "analyzed" after successful processing
+                        thread_analysis_db.update_image_status(
+                            file_path, ImageStatus.ANALYZED.value
+                        )
+                    else:
+                        stats["errors"] += 1
+                        # Keep status as "analyzing" to indicate incomplete processing
+
+            # Mark job complete
+            self.analysis_queue.mark_complete(job.job_id)
+            self.job_finished.emit(job.job_id, stats)
+
+        except InterruptedError:
+            # Job was cancelled
+            self.analysis_queue.mark_cancelled(job.job_id)
+            self.job_finished.emit(
+                job.job_id,
+                {
+                    "total_files": 0,
+                    "analyzed": 0,
+                    "cached": 0,
+                    "errors": 0,
+                    "message": "Job cancelled",
+                },
+            )
+        finally:
+            # Clean up thread-local connections
+            if thread_analysis_db:
+                thread_analysis_db.close()
+            if thread_metadata_db:
+                thread_metadata_db.close()
+
+    def stop(self):
+        """Request worker to stop after current job."""
+        self._stop_requested = True
+
+    def cancel_current_job(self):
+        """Cancel the currently processing job."""
+        if self._current_job_id:
+            self.analysis_queue.mark_cancelled(self._current_job_id)
+
+
 class AnalysisStatusWindow(QDialog):
-    """Main Analysis Status Window with 3 tabs: Collection Status, Page Details, and Document Details"""
+    """Main Analysis Status Window with 3 tabs: Collection Status, Image Details, and PDF Details"""
 
     # Signals
     retry_failed_requested = pyqtSignal()
@@ -67,10 +229,24 @@ class AnalysisStatusWindow(QDialog):
 
         # Initialize attributes referenced in closeEvent
         self.auto_refresh_timer = None
-        self.analysis_worker = None
         self._analysis_thread = None
-        self._analysis_start_time = None
-        self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0}
+        self._analysis_start_time: float | None = None
+        self._analysis_stats: dict[str, int] = {"analyzed": 0, "cached": 0, "errors": 0}
+        self._last_grid_refresh_time: float = 0  # Timestamp of last grid refresh
+        self._first_progress_update: bool = (
+            True  # Track first progress update to show "Analyzing" immediately
+        )
+
+        # Initialize queue-based analysis system
+        self.analysis_queue = AnalysisQueue()
+        self.analysis_worker = AnalysisWorker(self.config_manager, self.analysis_queue)
+
+        # Connect worker signals
+        self.analysis_worker.job_started.connect(self._on_job_started)
+        self.analysis_worker.progress.connect(self._on_analysis_progress_update)
+        self.analysis_worker.job_finished.connect(self._on_job_finished)
+        self.analysis_worker.error.connect(self._on_job_error)
+        self.analysis_worker.queue_empty.connect(self._on_queue_empty)
 
         self._init_ui()
         self._load_all_data()
@@ -269,8 +445,8 @@ class AnalysisStatusWindow(QDialog):
             }}
         """)
         self.tabs.addTab(self._create_collection_status_tab(), "Analytics")
-        self.tabs.addTab(self._create_file_grid_tab(), "Page Details")
-        self.tabs.addTab(self._create_document_details_tab(), "Document Details")
+        self.tabs.addTab(self._create_file_grid_tab(), "Image Details")
+        self.tabs.addTab(self._create_document_details_tab(), "PDF Details")
 
         main_layout.addWidget(self.tabs)
 
@@ -317,29 +493,25 @@ class AnalysisStatusWindow(QDialog):
         metrics_row.setContentsMargins(0, 0, 0, 0)
 
         # Create metric cards with tooltips
-        self.total_files_card = create_metric_card(self.theme_colors, "📄 Total Files", "0")
-        self.total_files_card.setToolTip(
-            "Total number of image files detected in all configured source directories"
-        )
+        self.total_files_card = create_metric_card(self.theme_colors, "📄 Images", "0")
+        self.total_files_card.setToolTip("Total number of unique image files in the database")
 
-        self.analyzed_pages_card = create_metric_card(self.theme_colors, "✅ Analyzed Pages", "0%")
+        self.analyzed_pages_card = create_metric_card(self.theme_colors, "✅ Analyzed", "0%")
         self.analyzed_pages_card.setToolTip(
             "Percentage of files analyzed by the LLM to extract metadata"
         )
 
-        self.documents_card = create_metric_card(self.theme_colors, "📦 Bundled Pages", "0")
+        self.documents_card = create_metric_card(self.theme_colors, "📦 Bundled", "0")
         self.documents_card.setToolTip(
             "Total number of pages that have been bundled into accepted/completed documents"
         )
 
-        self.metadata_quality_card = create_metric_card(
-            self.theme_colors, "📋 Missing Metadata", "0%"
-        )
+        self.metadata_quality_card = create_metric_card(self.theme_colors, "📋 Needs Review", "0%")
         self.metadata_quality_card.setToolTip(
             "Percentage of files missing key metadata (company, document type, or date)"
         )
 
-        self.avg_processing_card = create_metric_card(self.theme_colors, "⏱️ Avg Processing", "--")
+        self.avg_processing_card = create_metric_card(self.theme_colors, "⏱️ Avg Inference", "--")
         self.avg_processing_card.setToolTip(
             "Average time to analyze a file with the LLM (files analyzed from cache show 0ms)"
         )
@@ -347,7 +519,7 @@ class AnalysisStatusWindow(QDialog):
         self.tax_related_card = create_metric_card(self.theme_colors, "💰 Tax Related", "0%")
         self.tax_related_card.setToolTip("Percentage of documents identified as tax-related")
 
-        self.pdfs_generated_card = create_metric_card(self.theme_colors, "📑 PDFs Generated", "0")
+        self.pdfs_generated_card = create_metric_card(self.theme_colors, "📑 PDFs", "0")
         self.pdfs_generated_card.setToolTip("Number of completed bundles with generated PDF files")
 
         self.total_files_card.setMinimumWidth(140)
@@ -363,8 +535,8 @@ class AnalysisStatusWindow(QDialog):
         metrics_row.addWidget(self.documents_card)
         metrics_row.addWidget(self.metadata_quality_card)
         metrics_row.addWidget(self.avg_processing_card)
-        metrics_row.addWidget(self.tax_related_card)
         metrics_row.addWidget(self.pdfs_generated_card)
+        metrics_row.addWidget(self.tax_related_card)
 
         # Create main grid layout
         grid = QGridLayout()
@@ -507,15 +679,20 @@ class AnalysisStatusWindow(QDialog):
         layout.setSpacing(0)
 
         # Add file grid to container
-        self.file_grid = FileDetailsGrid(self)
+        self.file_grid = FileDetailsGrid(
+            self, analysis_db=self.analysis_db, metadata_db=self.metadata_db
+        )
         layout.addWidget(self.file_grid)
+
+        # CRITICAL: Connect re-analysis signal from context menu
+        self.file_grid.re_analyze_requested.connect(self._on_re_analyze_requested)
 
         # Set container as scroll area widget
         scroll_area.setWidget(container)
         return scroll_area
 
     def _create_document_details_tab(self) -> QWidget:
-        """Create the Document Details tab showing generated PDFs"""
+        """Create the PDF Details tab showing generated PDFs"""
         # Create scroll area wrapper with solid background
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -720,18 +897,27 @@ class AnalysisStatusWindow(QDialog):
                             if file.lower().endswith((".png", ".jpg", ".jpeg")):
                                 files_detected += 1
 
-        # Files analyzed (distinct file paths with analysis results, including cached)
-        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM analysis_results")
+        # Files analyzed (distinct images with metadata, excluding deleted)
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT m.image_file_id)
+            FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+        """
+        )
         files_analyzed = cursor.fetchone()[0]
 
         # Cap files_analyzed at files_detected to prevent >100% (handles deleted/moved files)
         files_analyzed = min(files_analyzed, files_detected)
 
-        # High confidence (>= 80%)
+        # High confidence (>= 80%) - from user-approved metadata
         cursor.execute(
             """
-            SELECT COUNT(*) FROM analysis_results
-            WHERE confidence_score >= 0.8
+            SELECT COUNT(*) FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+            AND m.confidence_score >= 0.8
         """
         )
         high_confidence = cursor.fetchone()[0]
@@ -765,22 +951,29 @@ class AnalysisStatusWindow(QDialog):
         )
         pdfs_generated = cursor.fetchone()[0]
 
-        # Cached files count (for stats dictionary)
-        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 1")
+        # Cached files count - files with multiple analyses (re-analyzed)
+        # After Migration 16, cache detection is based on multiple analyses per image_file_id
+        cursor.execute("""
+            SELECT COUNT(DISTINCT image_file_id)
+            FROM (
+                SELECT image_file_id, COUNT(*) as analysis_count
+                FROM analysis_results
+                GROUP BY image_file_id
+                HAVING analysis_count > 1
+            )
+        """)
         cached_count = cursor.fetchone()[0]
 
-        # Missing metadata percentage - only count files where ALL analyses are missing metadata
-        # For multi-page documents, if ANY page has complete metadata, don't count as missing
+        # Missing metadata percentage - count images with incomplete user-approved metadata
         cursor.execute(
             """
-            SELECT COUNT(DISTINCT file_path)
-            FROM analysis_results ar1
-            WHERE NOT EXISTS (
-                SELECT 1 FROM analysis_results ar2
-                WHERE ar2.file_path = ar1.file_path
-                AND ar2.company IS NOT NULL AND ar2.company != '' AND ar2.company != 'N/A'
-                AND ar2.document_type IS NOT NULL AND ar2.document_type != '' AND ar2.document_type != 'N/A'
-                AND ar2.document_date IS NOT NULL AND ar2.document_date != '' AND ar2.document_date != 'N/A'
+            SELECT COUNT(*) FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+            AND (
+                m.company IS NULL OR m.company = '' OR m.company = 'N/A' OR
+                m.document_type IS NULL OR m.document_type = '' OR m.document_type = 'N/A' OR
+                m.document_date IS NULL OR m.document_date = '' OR m.document_date = 'N/A'
             )
         """
         )
@@ -790,12 +983,13 @@ class AnalysisStatusWindow(QDialog):
             (missing_metadata_count / files_analyzed * 100) if files_analyzed > 0 else 0
         )
 
-        # Processing speed (last 100 analyses, non-cached)
+        # Processing speed (last 100 successful analyses)
+        # After Migration 16, use had_error flag instead of is_cached
         cursor.execute(
             """
             SELECT analyzed_at, processing_time_ms
             FROM analysis_results
-            WHERE is_cached = 0 AND processing_time_ms IS NOT NULL
+            WHERE had_error = 0 AND processing_time_ms IS NOT NULL
             ORDER BY analyzed_at DESC
             LIMIT 100
         """
@@ -820,9 +1014,15 @@ class AnalysisStatusWindow(QDialog):
                 if processing_speed > 0 and pending_files > 0:
                     eta_minutes = pending_files / processing_speed
 
-        # Average confidence score
+        # Average confidence score - from user-approved metadata
         cursor.execute(
-            "SELECT AVG(confidence_score) FROM analysis_results WHERE confidence_score IS NOT NULL"
+            """
+            SELECT AVG(m.confidence_score)
+            FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+            AND m.confidence_score IS NOT NULL
+        """
         )
         avg_confidence_result = cursor.fetchone()[0]
         avg_confidence = (avg_confidence_result * 100) if avg_confidence_result else 0
@@ -832,15 +1032,21 @@ class AnalysisStatusWindow(QDialog):
         error_count = cursor.fetchone()[0]
         error_rate = (error_count / files_detected * 100) if files_detected > 0 else 0
 
-        # Metadata completeness
+        # Metadata completeness - from user-approved metadata
         metadata_completeness = {}
         for field in ["company", "document_type", "document_date", "page_number"]:
             # Field names from hardcoded list - safe from injection
             cursor.execute(
                 f"""
-                SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM analysis_results)
-                FROM analysis_results
-                WHERE {field} IS NOT NULL AND {field} != ''
+                SELECT COUNT(*) * 100.0 / (
+                    SELECT COUNT(*) FROM metadata m
+                    INNER JOIN image_files img ON m.image_file_id = img.id
+                    WHERE img.status != 'deleted'
+                )
+                FROM metadata m
+                INNER JOIN image_files img ON m.image_file_id = img.id
+                WHERE img.status != 'deleted'
+                AND m.{field} IS NOT NULL AND m.{field} != ''
             """  # nosec B608
             )
             result = cursor.fetchone()[0]
@@ -871,13 +1077,15 @@ class AnalysisStatusWindow(QDialog):
         # Document type distribution
         type_dist = self.analysis_db.get_document_type_breakdown()
 
-        # Company distribution (top 5)
+        # Company distribution (top 5) - from user-approved metadata
         cursor.execute(
             """
-            SELECT company, COUNT(*) as count
-            FROM analysis_results
-            WHERE company IS NOT NULL AND company != ''
-            GROUP BY company
+            SELECT m.company, COUNT(*) as count
+            FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+            AND m.company IS NOT NULL AND m.company != ''
+            GROUP BY m.company
             ORDER BY count DESC
             LIMIT 5
         """
@@ -895,8 +1103,7 @@ class AnalysisStatusWindow(QDialog):
         archived_pages_result = cursor.fetchone()[0]
         total_archived_pages = archived_pages_result if archived_pages_result else 0
 
-        # Average processing time (prefer non-cached, but include cached if no fresh analyses)
-        # First try non-cached files
+        # Average processing time (EXCLUDE cached analyses - only real LLM inference time)
         cursor.execute(
             """
             SELECT AVG(processing_time_ms)
@@ -907,23 +1114,17 @@ class AnalysisStatusWindow(QDialog):
         """
         )
         avg_processing_result = cursor.fetchone()[0]
-
-        # If no non-cached files with processing times, try ALL files (including cached)
-        if not avg_processing_result or avg_processing_result == 0:
-            cursor.execute(
-                """
-                SELECT AVG(processing_time_ms)
-                FROM analysis_results
-                WHERE processing_time_ms IS NOT NULL
-                  AND processing_time_ms > 0
-            """
-            )
-            avg_processing_result = cursor.fetchone()[0]
-
         avg_processing_time_ms = avg_processing_result if avg_processing_result else 0
 
-        # Tax related count and percentage
-        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE tax_related = 1")
+        # Tax related count and percentage - from user-approved metadata
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM metadata m
+            INNER JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.status != 'deleted'
+            AND m.tax_related = 1
+        """
+        )
         tax_related_count = cursor.fetchone()[0]
         tax_related_pct = (tax_related_count / files_analyzed * 100) if files_analyzed > 0 else 0
 
@@ -955,19 +1156,19 @@ class AnalysisStatusWindow(QDialog):
         }
 
     def _update_metric_cards(self, stats):
-        """Update the 5 metric cards at the top"""
-        # Total Files
-        self.total_files_card.findChild(QLabel, "📄_total_files_value").setText(
+        """Update the metric cards at the top"""
+        # Images
+        self.total_files_card.findChild(QLabel, "📄_images_value").setText(
             str(stats["files_detected"])
         )
 
-        # Analyzed Pages (percentage only, count in tooltip)
+        # Analyzed (percentage only, count in tooltip)
         analyzed_pct = (
             (stats["files_analyzed"] / stats["files_detected"] * 100)
             if stats["files_detected"] > 0
             else 0
         )
-        self.analyzed_pages_card.findChild(QLabel, "✅_analyzed_pages_value").setText(
+        self.analyzed_pages_card.findChild(QLabel, "✅_analyzed_value").setText(
             f"{analyzed_pct:.1f}%"
         )
         # Update tooltip with count
@@ -976,31 +1177,31 @@ class AnalysisStatusWindow(QDialog):
             f"{stats['files_analyzed']:,} of {stats['files_detected']:,} files analyzed"
         )
 
-        # Bundled Pages
-        self.documents_card.findChild(QLabel, "📦_bundled_pages_value").setText(
+        # Bundled
+        self.documents_card.findChild(QLabel, "📦_bundled_value").setText(
             str(stats["total_archived_pages"])
         )
 
-        # Missing Metadata Percentage
-        self.metadata_quality_card.findChild(QLabel, "📋_missing_metadata_value").setText(
+        # Needs Review Percentage
+        self.metadata_quality_card.findChild(QLabel, "📋_needs_review_value").setText(
             f"{stats['missing_metadata_pct']:.1f}%"
         )
 
-        # Average Processing Time
+        # Average Inference Time
         avg_time = stats.get("avg_processing_time_ms", 0)
         if avg_time > 0:
             if avg_time >= 1000:
                 # Show in seconds if >= 1000ms
-                self.avg_processing_card.findChild(QLabel, "⏱️_avg_processing_value").setText(
+                self.avg_processing_card.findChild(QLabel, "⏱️_avg_inference_value").setText(
                     f"{avg_time / 1000:.1f}s"
                 )
             else:
                 # Show in milliseconds
-                self.avg_processing_card.findChild(QLabel, "⏱️_avg_processing_value").setText(
+                self.avg_processing_card.findChild(QLabel, "⏱️_avg_inference_value").setText(
                     f"{avg_time:.0f}ms"
                 )
         else:
-            self.avg_processing_card.findChild(QLabel, "⏱️_avg_processing_value").setText("--")
+            self.avg_processing_card.findChild(QLabel, "⏱️_avg_inference_value").setText("--")
 
         # Tax Related Percentage
         tax_related_pct = stats.get("tax_related_pct", 0)
@@ -1014,11 +1215,9 @@ class AnalysisStatusWindow(QDialog):
             f"{tax_related_count:,} of {stats['files_analyzed']:,} files are tax-related"
         )
 
-        # PDFs Generated
+        # PDFs
         pdfs_generated = stats.get("pdfs_generated", 0)
-        self.pdfs_generated_card.findChild(QLabel, "📑_pdfs_generated_value").setText(
-            str(pdfs_generated)
-        )
+        self.pdfs_generated_card.findChild(QLabel, "📑_pdfs_value").setText(str(pdfs_generated))
 
     def _update_funnel(self, stats):
         """Update analysis completion funnel"""
@@ -1256,122 +1455,58 @@ class AnalysisStatusWindow(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to create bundles: {str(e)}")
 
     def _start_analysis_internal(self):
-        """Start analysis in background thread with real-time progress"""
-        from PyQt6.QtCore import pyqtSignal
-
-        if self._analysis_thread and self._analysis_thread.isRunning():
+        """Start full directory scan via queue."""
+        if self.analysis_worker.isRunning() and self.analysis_queue.get_current_job():
             from PyQt6.QtWidgets import QMessageBox
 
             QMessageBox.warning(self, "Analysis Running", "Analysis is already in progress.")
             return
 
-        # Update toolbar status
-        self._update_toolbar_status("analyzing", "Starting analysis...")
-
         # Initialize analysis tracking
         self._analysis_start_time = time.time()
         self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0}
 
-        # Create analysis thread that creates its own database connections
-        class _AnalysisThread(QThread):
-            progress = pyqtSignal(str, int, int)
-            finished = pyqtSignal(dict)
+        # Create job for full directory scan
+        job = AnalysisJob.create(
+            job_type=JobType.SCAN_ALL,
+            priority=JobPriority.NORMAL,
+            file_paths=[],
+            force_reanalysis=False,
+        )
 
-            def __init__(self, config_manager):
-                super().__init__()
-                self.config_manager = config_manager
-                self._cancelled = False
+        self.analysis_queue.enqueue(job)
+        self._update_toolbar_status("analyzing", "Starting analysis...")
 
-            def run(self):
-                # Create thread-local database connections
-                from db.analysis_db import AnalysisDB
-                from db.metadata_db import MetadataDB
-                from services.analysis_service import AnalysisService
-
-                try:
-                    # Create new database instances for this thread
-                    thread_analysis_db = AnalysisDB()
-                    thread_metadata_db = MetadataDB()
-                    thread_analysis_service = AnalysisService(
-                        self.config_manager, thread_analysis_db, thread_metadata_db
-                    )
-
-                    def progress_callback(status_text, current, total):
-                        if self._cancelled:
-                            raise InterruptedError("Analysis cancelled by user")
-                        self.progress.emit(status_text, current, total)
-
-                    def abort_check():
-                        return self._cancelled
-
-                    stats = thread_analysis_service.scan_all_directories(
-                        progress_callback=progress_callback,
-                        incremental=True,
-                        abort_check=abort_check,
-                    )
-
-                    # Close thread-local connections
-                    thread_analysis_db.close()
-                    thread_metadata_db.close()
-
-                    self.finished.emit(stats)
-                except InterruptedError:
-                    self.finished.emit(
-                        {
-                            "total_files": 0,
-                            "analyzed": 0,
-                            "cached": 0,
-                            "errors": 0,
-                            "message": "Analysis cancelled",
-                        }
-                    )
-                except Exception as e:
-                    import traceback
-
-                    self.finished.emit(
-                        {
-                            "total_files": 0,
-                            "analyzed": 0,
-                            "cached": 0,
-                            "errors": 1,
-                            "message": str(e) + "\n" + traceback.format_exc(),
-                        }
-                    )
-
-            def cancel(self):
-                self._cancelled = True
-
-        # Instantiate and start with config manager (not service)
-        self._analysis_thread = _AnalysisThread(self.config_manager)
-        self._analysis_thread.progress.connect(self._on_analysis_progress_update)
-        self._analysis_thread.finished.connect(self._on_analysis_complete)
-        self._analysis_thread.start()
+        # Start worker if not already running
+        if not self.analysis_worker.isRunning():
+            self.analysis_worker.start()
 
     def _on_stop_analysis(self):
-        """Stop analysis gracefully (saves progress)"""
-        if self._analysis_thread and self._analysis_thread.isRunning():
-            # Immediately update UI to show cancellation is pending
-            self._update_toolbar_status("canceling", "Canceling (waiting for current file)...")
-            # Request cancellation
-            self._analysis_thread.cancel()
+        """Stop current job gracefully, continue with queue."""
+        if self.analysis_worker.isRunning():
+            # Cancel current job only
+            self._update_toolbar_status("canceling", "Canceling current job...")
+            self.analysis_worker.cancel_current_job()
 
     def _on_abort_analysis(self):
-        """Abort analysis without saving"""
+        """Abort all jobs and clear queue."""
         from PyQt6.QtWidgets import QMessageBox
 
-        if self._analysis_thread and self._analysis_thread.isRunning():
+        if self.analysis_worker.isRunning():
             reply = QMessageBox.question(
                 self,
-                "Abort Analysis",
-                "Are you sure you want to abort without saving progress?",
+                "Abort All Jobs",
+                "Are you sure you want to abort all queued jobs?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
 
             if reply == QMessageBox.StandardButton.Yes:
-                # Immediately update UI to show cancellation is pending
-                self._update_toolbar_status("canceling", "Aborting (waiting for current file)...")
-                # Request cancellation
-                self._analysis_thread.cancel()
+                # Clear entire queue
+                self._update_toolbar_status("canceling", "Aborting all jobs...")
+                self.analysis_queue.clear_queue()
+                self.analysis_worker.cancel_current_job()
+                # Reset stats
+                self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0}
 
     def _on_analysis_progress_update(self, status_text: str, current: int, total: int):
         """Handle progress updates from analysis thread"""
@@ -1390,6 +1525,15 @@ class AnalysisStatusWindow(QDialog):
         else:
             # Both fresh analysis and cached results count as "analyzed"
             self._analysis_stats["analyzed"] += 1
+
+        # Refresh grid to show status changes
+        # First progress update: refresh immediately to show "Analyzing" status
+        # Subsequent updates: throttled to max once per second
+        current_time = time.time()
+        if self._first_progress_update or current_time - self._last_grid_refresh_time >= 1.0:
+            self._refresh_file_grid()
+            self._last_grid_refresh_time = current_time
+            self._first_progress_update = False  # Clear flag after first refresh
 
     def _on_analysis_complete(self, stats: dict):
         """Handle analysis completion"""
@@ -1423,6 +1567,109 @@ class AnalysisStatusWindow(QDialog):
                 message += f"\n\n{stats['message']}"
 
             QMessageBox.information(self, "Analysis Complete", message)
+
+    def _on_re_analyze_requested(self, file_paths: list):
+        """Handle re-analysis request from FileDetailsGrid context menu.
+
+        Args:
+            file_paths: List of file paths to re-analyze
+        """
+        if not file_paths:
+            return
+
+        # Update database status to "pending" for all queued files (waiting in queue)
+        for file_path in file_paths:
+            self.analysis_db.update_image_status(file_path, ImageStatus.PENDING.value)
+
+        # Refresh grid to show status change immediately
+        self._refresh_file_grid()
+
+        # Create high-priority job for on-demand re-analysis
+        job = AnalysisJob.create(
+            job_type=JobType.ANALYZE_FILES,
+            priority=JobPriority.HIGH,
+            file_paths=file_paths,
+            force_reanalysis=True,
+        )
+
+        self.analysis_queue.enqueue(job)
+
+        # Update UI immediately
+        self._update_toolbar_status(
+            "analyzing", f"Queued {len(file_paths)} file(s) for re-analysis"
+        )
+
+        # Defer worker start by 100ms to give UI time to render the "pending" status
+        # This ensures users see the status transition: pending → analyzing → analyzed
+        from PyQt6.QtCore import QTimer
+
+        def start_worker_if_needed():
+            if not self.analysis_worker.isRunning():
+                self.analysis_worker.start()
+
+        QTimer.singleShot(100, start_worker_if_needed)
+
+    def _on_job_started(self, job_id: str, description: str):
+        """Worker started processing a job.
+
+        Args:
+            job_id: Unique job identifier
+            description: Human-readable description
+        """
+        self._analysis_start_time = time.time()
+        self._update_toolbar_status("analyzing", description)
+        # Mark that we need to refresh on first progress update (to show "Analyzing" status)
+        self._first_progress_update = True
+        # Refresh grid immediately to show status change from "pending" to "analyzing"
+        self._refresh_file_grid()
+        self._last_grid_refresh_time = time.time()
+
+    def _on_job_finished(self, job_id: str, stats: dict):
+        """Worker finished a job.
+
+        Args:
+            job_id: Unique job identifier
+            stats: Job statistics dict
+        """
+        # Accumulate stats
+        self._analysis_stats["analyzed"] += stats.get("analyzed", 0)
+        self._analysis_stats["cached"] += stats.get("cached", 0)
+        self._analysis_stats["errors"] += stats.get("errors", 0)
+
+        # Refresh file grid to show updated analysis results
+        self._refresh_file_grid()
+        self._last_grid_refresh_time = time.time()
+
+        # Check if more jobs pending
+        pending = self.analysis_queue.get_pending_count()
+        if pending > 0:
+            self._update_toolbar_status(
+                "analyzing", f"Processing queue ({pending} job(s) remaining)"
+            )
+        else:
+            # Queue empty - delegate to existing completion handler
+            self._on_analysis_complete(self._analysis_stats)
+
+    def _on_job_error(self, job_id: str, error_message: str):
+        """Worker encountered an error.
+
+        Args:
+            job_id: Unique job identifier
+            error_message: Error details
+        """
+        from PyQt6.QtWidgets import QMessageBox
+
+        logger.error(f"Job {job_id} error: {error_message}")
+        QMessageBox.critical(self, "Analysis Error", f"Job failed:\n\n{error_message}")
+
+        # Continue processing queue
+        if self.analysis_queue.get_pending_count() == 0:
+            self._update_toolbar_status("error", "Job failed")
+
+    def _on_queue_empty(self):
+        """All queued jobs completed."""
+        # Refresh all data
+        self._refresh_all()
 
     def _update_toolbar_status(self, state: str, text: str = "", progress: str = ""):
         """
@@ -1503,33 +1750,53 @@ class AnalysisStatusWindow(QDialog):
                 pass
 
     def _transform_data_for_grid(self, db_data):
-        """Transform database data to grid format with all required fields"""
+        """
+        Transform database data to grid format with all required fields.
+
+        Data now comes from image_files table (primary) with LEFT JOIN to analysis_results,
+        so unanalyzed images will have NULL analysis fields.
+        """
         import os
         from datetime import datetime
 
         transformed = []
         for row in db_data:
             file_path = row.get("file_path", "")
+            has_analysis = row.get("analysis_id") is not None
 
-            # Determine status (both fresh analysis and cached results show as "Analyzed")
-            status = "Failed" if row.get("confidence_score") is None else "Analyzed"
+            # Determine status - ALWAYS use image_files.status as source of truth
+            image_status = row.get("status", "registered")
+            status_mapping = {
+                ImageStatus.REGISTERED.value: "Registered",
+                ImageStatus.PENDING.value: "Pending",
+                ImageStatus.ANALYZING.value: "Analyzing",
+                ImageStatus.ANALYZED.value: "Analyzed",
+                ImageStatus.BUNDLED.value: "Bundled",
+                ImageStatus.DELETED.value: "Deleted",
+            }
+            status = status_mapping.get(image_status, image_status.title())
 
-            # Get file stats if file exists
-            file_size = 0
-            modified_time = None
-            if file_path and os.path.exists(file_path):
-                try:
-                    file_stats = os.stat(file_path)
-                    file_size = file_stats.st_size
-                    modified_time = datetime.fromtimestamp(file_stats.st_mtime)
-                except Exception:
-                    pass
+            # Override to "Failed" if analyzed but missing confidence score
+            if (
+                image_status == ImageStatus.ANALYZED.value
+                and has_analysis
+                and row.get("confidence_score") is None
+            ):
+                status = "Failed"
+
+            # File metadata from image_files table (always available)
+            file_size = row.get("file_size", 0)
+            file_mtime = row.get("file_mtime", 0)
+            modified_time = datetime.fromtimestamp(file_mtime) if file_mtime else None
 
             # Build transformed row
             transformed_row = {
-                "filename": os.path.basename(file_path) if file_path else "Unknown",
+                "filename": row.get(
+                    "filename", os.path.basename(file_path) if file_path else "Unknown"
+                ),
                 "full_path": file_path,
                 "status": status,
+                # Analysis fields (NULL if not analyzed yet)
                 "confidence": (row.get("confidence_score", 0) * 100)
                 if row.get("confidence_score") is not None
                 else None,
@@ -1538,7 +1805,9 @@ class AnalysisStatusWindow(QDialog):
                 "document_date": row.get("document_date", ""),
                 "page_number": row.get("page_number"),
                 "total_pages": row.get("total_pages"),
-                "rotation": row.get("suggested_rotation", 0),
+                "rotation": row.get(
+                    "rotation", 0
+                ),  # Use image_files.rotation (authoritative source)
                 "file_size": file_size,
                 "modified_time": modified_time,
                 "analysis_time": row.get("analyzed_at"),
@@ -1550,7 +1819,11 @@ class AnalysisStatusWindow(QDialog):
                 "cache_hit": bool(row.get("is_cached", False)),
                 "error_message": "",  # TODO: Get from errors table
                 "file_hash": row.get("file_hash", ""),
-                "raw_response": row.get("raw_response", ""),
+                "raw_response": row.get(
+                    "response_text", ""
+                ),  # Migration 16: renamed from raw_response
+                "response_text": row.get("response_text", ""),  # New name after Migration 16
+                "prompt_text": row.get("prompt_text", ""),
                 "tax_related": bool(row.get("tax_related", False)),
             }
 
@@ -1559,7 +1832,7 @@ class AnalysisStatusWindow(QDialog):
         return transformed
 
     def _refresh_document_details(self):
-        """Refresh Document Details tab with generated PDFs"""
+        """Refresh PDF Details tab with generated PDFs"""
         # Check if database connection is still valid
         if (
             not self.analysis_db
@@ -1572,8 +1845,6 @@ class AnalysisStatusWindow(QDialog):
             return  # Tab not yet created
 
         try:
-            from datetime import datetime
-
             # Query document_bundles table for completed bundles with PDFs
             cursor = self.analysis_db.connection.connection.cursor()
             cursor.execute("""
@@ -1604,12 +1875,10 @@ class AnalysisStatusWindow(QDialog):
                 file_paths = json.loads(file_paths_json) if file_paths_json else []
                 page_count = len(file_paths)
 
-                # Format created_at timestamp
-                try:
-                    created_dt = datetime.fromisoformat(created_at)
-                    created_str = created_dt.strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    created_str = created_at
+                # Format created_at timestamp (convert UTC to local)
+                from ui.datetime_utils import format_db_timestamp
+
+                created_str = format_db_timestamp(created_at, "%Y-%m-%d %I:%M:%S %p")
 
                 # Add row to table
                 row_position = self.document_table.rowCount()
@@ -1677,27 +1946,21 @@ class AnalysisStatusWindow(QDialog):
         if self.auto_refresh_timer:
             self.auto_refresh_timer.stop()
 
-        # Disconnect signals from analysis thread to prevent callbacks during shutdown
-        if self._analysis_thread:
+        # Disconnect signals from worker to prevent callbacks during shutdown
+        if self.analysis_worker:
             try:
-                self._analysis_thread.progress.disconnect()
-                self._analysis_thread.finished.disconnect()
+                self.analysis_worker.job_started.disconnect()
+                self.analysis_worker.progress.disconnect()
+                self.analysis_worker.job_finished.disconnect()
+                self.analysis_worker.error.disconnect()
+                self.analysis_worker.queue_empty.disconnect()
             except (TypeError, RuntimeError):
                 pass  # Already disconnected or never connected
 
-            # Cancel if running
-            if self._analysis_thread.isRunning():
-                self._analysis_thread.cancel()
-                self._analysis_thread.wait(2000)  # Wait max 2 seconds
-
-        # Cancel analysis worker if running (legacy)
-        if (
-            self.analysis_worker
-            and hasattr(self.analysis_worker, "isRunning")
-            and self.analysis_worker.isRunning()
-        ):
-            self.analysis_worker.cancel()
-            self.analysis_worker.wait(2000)  # Wait max 2 seconds
+            # Stop worker if running
+            if self.analysis_worker.isRunning():
+                self.analysis_worker.stop()
+                self.analysis_worker.wait(2000)  # Wait max 2 seconds
 
         # Close database connection only if we own it (not injected)
         if self._owns_analysis_db and self.analysis_db:

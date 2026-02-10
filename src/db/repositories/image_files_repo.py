@@ -117,33 +117,22 @@ class ImageFilesRepository:
             "SELECT * FROM image_files WHERE status != 'deleted' ORDER BY discovered_at DESC"
         )
 
-    def update_status(self, file_path: str, status: str, analysis_id: int | None = None) -> None:
+    def update_status(self, file_path: str, status: str) -> None:
         """
         Update image file status.
 
         Args:
             file_path: Path to image file
             status: New status (registered, analyzing, analyzed, bundled, deleted)
-            analysis_id: Optional analysis result ID reference
         """
-        if analysis_id is not None:
-            self.conn.execute(
-                """
-                UPDATE image_files
-                SET status = ?, analysis_id = ?
-                WHERE file_path = ?
-            """,
-                (status, analysis_id, file_path),
-            )
-        else:
-            self.conn.execute(
-                """
-                UPDATE image_files
-                SET status = ?
-                WHERE file_path = ?
-            """,
-                (status, file_path),
-            )
+        self.conn.execute(
+            """
+            UPDATE image_files
+            SET status = ?
+            WHERE file_path = ?
+        """,
+            (status, file_path),
+        )
         self.conn.commit()
 
     def update_last_seen(self, file_path: str) -> None:
@@ -198,6 +187,39 @@ class ImageFilesRepository:
         )
         self.conn.commit()
 
+    def update_rotation(self, file_path: str, rotation: int) -> None:
+        """
+        Update user-specified rotation for image file.
+
+        Args:
+            file_path: Path to image file
+            rotation: Rotation in degrees (0, 90, 180, 270)
+        """
+        self.conn.execute(
+            """
+            UPDATE image_files
+            SET rotation = ?
+            WHERE file_path = ?
+        """,
+            (rotation, file_path),
+        )
+        self.conn.commit()
+
+    def get_rotation(self, file_path: str) -> int:
+        """
+        Get user-specified rotation for image file.
+
+        Args:
+            file_path: Path to image file
+
+        Returns:
+            Rotation in degrees (0, 90, 180, 270), defaults to 0
+        """
+        result = self.conn.fetch_one_dict(
+            "SELECT rotation FROM image_files WHERE file_path = ?", (file_path,)
+        )
+        return result["rotation"] if result else 0
+
     def mark_deleted_batch(self, file_paths: list[str]) -> int:
         """
         Mark multiple images as deleted (batch operation).
@@ -225,21 +247,109 @@ class ImageFilesRepository:
 
     def set_output_filename(self, file_path: str, output_filename: str) -> None:
         """
-        Set proposed output filename.
+        Set proposed output filename (stored in metadata table).
 
         Args:
             file_path: Path to image file
             output_filename: Proposed output PDF filename
         """
+        # Get image_file_id
+        image_file = self.get_by_path(file_path)
+        if not image_file:
+            return
+
+        # Update metadata table (output_filename moved there after schema cleanup)
         self.conn.execute(
             """
-            UPDATE image_files
+            UPDATE metadata
             SET output_filename = ?
-            WHERE file_path = ?
+            WHERE image_file_id = ?
         """,
-            (output_filename, file_path),
+            (output_filename, image_file["id"]),
         )
         self.conn.commit()
+
+    def get_all_with_analysis(
+        self, directory_filter: str | None = None, provider_filter: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Get all image files with their normalized metadata (if available).
+
+        Uses LEFT OUTER JOIN to include images that haven't been analyzed yet.
+        Metadata is normalized and user-approved, while analysis_results contains raw LLM output.
+
+        Args:
+            directory_filter: Optional directory path to filter by
+            provider_filter: Optional provider name to filter by
+
+        Returns:
+            List of image file dicts with normalized metadata merged in
+        """
+        query = """
+            SELECT
+                -- Image file fields
+                img.id,
+                img.file_path,
+                img.file_hash,
+                img.directory_path,
+                img.filename,
+                img.file_size,
+                img.file_mtime,
+                img.status,
+                img.discovered_at,
+                img.last_seen_at,
+                img.deleted_at,
+
+                -- Normalized metadata fields (metadata table is authoritative)
+                m.company,
+                m.document_type,
+                m.document_date,
+                m.page_number,
+                m.total_pages,
+                m.belongs_to_same_doc,
+                m.confidence_score,
+                m.tax_related,
+
+                -- User preferences (from metadata table)
+                m.document_category,
+                m.rotation,
+                m.output_filename,
+                m.user_verified,
+                m.last_edited_by,
+                m.created_at as metadata_created_at,
+                m.updated_at as metadata_updated_at,
+
+                -- Analysis provenance (for history tracking)
+                ar.provider_name,
+                ar.model_name,
+                ar.analyzed_at,
+                ar.processing_time_ms,
+                ar.had_error,
+
+                -- Raw analysis fields (for debugging/history)
+                ar.response_text,
+                ar.extracted_metadata,
+                ar.prompt_text
+            FROM image_files img
+            LEFT JOIN metadata m ON img.id = m.image_file_id
+            LEFT JOIN analysis_results ar ON m.analysis_result_id = ar.id
+            WHERE img.status != 'deleted'
+        """
+        params = []
+
+        if directory_filter:
+            query += " AND img.directory_path = ?"
+            params.append(directory_filter)
+
+        if provider_filter:
+            query += " AND ar.provider_name = ?"
+            params.append(provider_filter)
+
+        query += " ORDER BY img.discovered_at DESC"
+
+        return self.conn.fetch_all_dicts(
+            query, params=tuple(params), json_fields=["extracted_metadata"]
+        )
 
     def get_stats(self) -> dict[str, int]:
         """

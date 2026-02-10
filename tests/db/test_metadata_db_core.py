@@ -1,5 +1,11 @@
 """
-Core tests for MetadataDB focusing on critical functionality.
+Core tests for MetadataDB focusing on new architecture.
+
+Tests:
+- Normalized metadata operations
+- Image file operations
+- Archived document operations
+- Autocomplete/distinct values
 
 Target: 80%+ coverage on core methods
 """
@@ -41,6 +47,8 @@ class TestMetadataDBCore:
         if os.path.exists(file_path):
             os.remove(file_path)
 
+    # ==================== Basic Initialization Tests ====================
+
     def test_init_creates_database(self, temp_db_path):
         # Act
         db = MetadataDB(temp_db_path)
@@ -58,8 +66,9 @@ class TestMetadataDBCore:
 
         # Assert
         assert "schema_version" in table_names
-        assert "active_metadata" in table_names
         assert "archived_metadata" in table_names
+        assert "metadata" in table_names  # Normalized metadata table
+        assert "image_files" in table_names  # Image file tracking
 
     def test_compute_file_hash_returns_consistent_hash(self, temp_file):
         # Act
@@ -70,81 +79,317 @@ class TestMetadataDBCore:
         assert hash1 == hash2
         assert len(hash1) == 64  # SHA-256
 
-    def test_save_and_get_metadata(self, db, temp_file):
+    # ==================== Image File Operations Tests ====================
+
+    def test_register_image_file(self, db, temp_file):
+        """Test registering an image file"""
         # Arrange
-        metadata = {
-            "company": "Test Corp",
-            "document_type": "Invoice",
-            "page_number": 1,
-            "total_pages": 3,
-        }
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        file_size = os.path.getsize(temp_file)
+        file_mtime = os.path.getmtime(temp_file)
 
         # Act
-        db.save_metadata(temp_file, metadata)
-        result = db.get_metadata(temp_file)
+        image_id = db.register_image_file(
+            file_path=temp_file,
+            file_hash=file_hash,
+            directory_path=os.path.dirname(temp_file),
+            filename=os.path.basename(temp_file),
+            file_size=file_size,
+            file_mtime=file_mtime,
+        )
+
+        # Assert
+        assert image_id is not None
+        assert image_id > 0
+
+    def test_get_image_file(self, db, temp_file):
+        """Test retrieving image file metadata"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        file_size = os.path.getsize(temp_file)
+        file_mtime = os.path.getmtime(temp_file)
+
+        db.register_image_file(
+            temp_file,
+            file_hash,
+            os.path.dirname(temp_file),
+            os.path.basename(temp_file),
+            file_size,
+            file_mtime,
+        )
+
+        # Act
+        result = db.get_image_file(temp_file)
+
+        # Assert
+        assert result is not None
+        assert result["file_path"] == temp_file
+        assert result["file_hash"] == file_hash
+        assert result["rotation"] == 0  # Default rotation
+
+    def test_update_image_rotation(self, db, temp_file):
+        """Test updating image rotation"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        db.register_image_file(
+            temp_file, file_hash, os.path.dirname(temp_file), os.path.basename(temp_file), 100, 0.0
+        )
+
+        # Act
+        db.update_image_rotation(temp_file, 90)
+        rotation = db.get_image_rotation(temp_file)
+
+        # Assert
+        assert rotation == 90
+
+    def test_get_image_rotation_default(self, db, temp_file):
+        """Test that default rotation is 0"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        db.register_image_file(
+            temp_file, file_hash, os.path.dirname(temp_file), os.path.basename(temp_file), 100, 0.0
+        )
+
+        # Act
+        rotation = db.get_image_rotation(temp_file)
+
+        # Assert
+        assert rotation == 0
+
+    def test_update_image_status(self, db, temp_file):
+        """Test updating image file status"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        db.register_image_file(
+            temp_file, file_hash, os.path.dirname(temp_file), os.path.basename(temp_file), 100, 0.0
+        )
+
+        # Act
+        db.update_image_status(temp_file, "analyzed", analysis_id=42)
+        result = db.get_image_file(temp_file)
+
+        # Assert
+        assert result["status"] == "analyzed"
+
+    # ==================== Normalized Metadata Tests ====================
+
+    def test_get_normalized_metadata_by_path(self, db, temp_file):
+        """Test retrieving normalized metadata by file path"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        image_id = db.register_image_file(
+            temp_file, file_hash, os.path.dirname(temp_file), os.path.basename(temp_file), 100, 0.0
+        )
+
+        # Create metadata record
+        normalized_metadata = {
+            "company": "Test Corp",
+            "document_type": "Invoice",
+            "document_date": "2024-01-15",
+        }
+        db.create_normalized_metadata(image_id, None, normalized_metadata)
+
+        # Act
+        result = db.get_normalized_metadata_by_path(temp_file)
 
         # Assert
         assert result is not None
         assert result["company"] == "Test Corp"
         assert result["document_type"] == "Invoice"
 
-    def test_get_metadata_returns_none_when_not_exists(self, db):
-        # Act
-        result = db.get_metadata("/nonexistent/file.jpg")
-
-        # Assert
-        assert result is None
-
-    def test_delete_metadata_removes_record(self, db, temp_file):
+    def test_get_normalized_metadata_by_image_id(self, db, temp_file):
+        """Test retrieving normalized metadata by image ID"""
         # Arrange
-        db.save_metadata(temp_file, {"company": "Test"})
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        image_id = db.register_image_file(
+            temp_file, file_hash, os.path.dirname(temp_file), os.path.basename(temp_file), 100, 0.0
+        )
+
+        # Create metadata record
+        normalized_metadata = {
+            "company": "Test Corp",
+            "document_type": "Receipt",
+        }
+        db.create_normalized_metadata(image_id, None, normalized_metadata)
 
         # Act
-        db.delete_metadata(temp_file)
+        result = db.get_normalized_metadata_by_image_id(image_id)
 
         # Assert
-        assert db.get_metadata(temp_file) is None
+        assert result is not None
+        assert result["company"] == "Test Corp"
+        assert result["document_type"] == "Receipt"
 
-    def test_archive_document(self, db, temp_file):
+    def test_update_normalized_metadata(self, db, temp_file):
+        """Test updating normalized metadata"""
         # Arrange
-        db.save_metadata(temp_file, {"company": "Test Corp"})
-        pdf_path = "/output/doc.pdf"
-        doc_metadata = {"company": "Test Corp", "title": "Invoice"}
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        image_id = db.register_image_file(
+            temp_file, file_hash, os.path.dirname(temp_file), os.path.basename(temp_file), 100, 0.0
+        )
 
-        # Act
-        db.archive_document(pdf_path, [temp_file], doc_metadata)
+        # Create initial metadata
+        db.create_normalized_metadata(image_id, None, {"company": "Original Corp"})
+
+        # Act - Update the company
+        db.update_normalized_metadata(image_id, {"company": "Updated Corp"})
+
+        result = db.get_normalized_metadata_by_image_id(image_id)
 
         # Assert
-        archived = db.get_archived_document(pdf_path)
-        assert archived is not None
-        assert archived["company"] == "Test Corp"
+        assert result["company"] == "Updated Corp"
 
-    def test_get_statistics(self, db, temp_file):
+    # ==================== Archived Document Tests ====================
+
+    def test_archive_document(self, db):
+        """Test archiving a completed document"""
         # Arrange
-        db.save_metadata(temp_file, {"company": "Test"})
+        pdf_path = "/output/test_invoice.pdf"
+        source_files = ["/scans/page1.jpg", "/scans/page2.jpg"]
+        document_metadata = {
+            "company": "Acme Corp",
+            "document_type": "Invoice",
+            "date": "2024-01-15",
+        }
 
         # Act
-        stats = db.get_statistics()
+        db.archive_document(pdf_path, source_files, document_metadata)
+        result = db.get_archived_document(pdf_path)
 
         # Assert
-        assert "active_metadata_count" in stats
-        assert "archived_documents_count" in stats
-        assert stats["active_metadata_count"] >= 1
+        assert result is not None
+        assert result["company"] == "Acme Corp"
+        assert result["document_type"] == "Invoice"
+        assert result["total_pages"] == 2
 
-    def test_save_and_get_rotation(self, db, temp_file):
+    def test_get_archived_statistics(self, db):
+        """Test getting archived document statistics"""
+        # Arrange - Archive some documents
+        db.archive_document("/out/doc1.pdf", ["/scans/p1.jpg"], {"company": "A"})
+        db.archive_document("/out/doc2.pdf", ["/scans/p2.jpg", "/scans/p3.jpg"], {"company": "B"})
+
         # Act
-        db.save_rotation(temp_file, 90)
-        rotation = db.get_rotation(temp_file)
+        stats = db.get_archived_statistics()
 
         # Assert
-        assert rotation == 90
+        assert stats["archived_documents_count"] == 2
+        assert stats["total_archived_pages"] == 3
 
-    def test_get_rotation_returns_zero_when_not_set(self, db):
+    # ==================== Autocomplete / Distinct Values Tests ====================
+
+    def test_get_unique_companies(self, db, temp_file):
+        """Test getting unique company names"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+
+        # Register and add metadata for multiple files
+        for i, company in enumerate(["Acme Corp", "Test Inc", "Acme Corp"]):
+            temp_path = f"{temp_file}_{i}"
+            with open(temp_path, "wb") as f:
+                f.write(f"test{i}".encode())
+
+            image_id = db.register_image_file(
+                temp_path,
+                file_hash,
+                os.path.dirname(temp_path),
+                os.path.basename(temp_path),
+                100,
+                0.0,
+            )
+            db.create_normalized_metadata(image_id, None, {"company": company})
+
+            # Cleanup
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
         # Act
-        rotation = db.get_rotation("/nonexistent.jpg")
+        companies = db.get_unique_companies(use_cache=False)
 
         # Assert
-        assert rotation == 0
+        assert "Acme Corp" in companies
+        assert "Test Inc" in companies
+        assert len(companies) == 2  # Acme Corp should appear once
+
+    def test_get_unique_titles(self, db, temp_file):
+        """Test getting unique document types"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+
+        for i, doc_type in enumerate(["Invoice", "Receipt", "Invoice"]):
+            temp_path = f"{temp_file}_{i}"
+            with open(temp_path, "wb") as f:
+                f.write(f"test{i}".encode())
+
+            image_id = db.register_image_file(
+                temp_path,
+                file_hash,
+                os.path.dirname(temp_path),
+                os.path.basename(temp_path),
+                100,
+                0.0,
+            )
+            db.create_normalized_metadata(image_id, None, {"document_type": doc_type})
+
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        # Act
+        titles = db.get_unique_titles(use_cache=False)
+
+        # Assert
+        assert "Invoice" in titles
+        assert "Receipt" in titles
+        assert len(titles) == 2
+
+    def test_get_unique_categories(self, db, temp_file):
+        """Test getting unique document categories"""
+        # Arrange
+        file_hash = MetadataDB.compute_file_hash(temp_file)
+        temp_files = []
+
+        for i, category in enumerate(["Tax Documents", "Receipts", "Tax Documents"]):
+            temp_path = f"{temp_file}_{i}"
+            with open(temp_path, "wb") as f:
+                f.write(f"test{i}".encode())
+            temp_files.append(temp_path)
+
+            image_id = db.register_image_file(
+                temp_path,
+                file_hash,
+                os.path.dirname(temp_path),
+                os.path.basename(temp_path),
+                100,
+                0.0,
+            )
+            db.create_normalized_metadata(image_id, None, {"document_category": category})
+
+        # Act
+        categories = db.get_unique_categories()
+
+        # Cleanup
+        for temp_path in temp_files:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        # Assert
+        assert "Tax Documents" in categories
+        assert "Receipts" in categories
+        assert len(categories) == 2
+
+    def test_invalidate_field_history_cache(self, db):
+        """Test cache invalidation"""
+        # Arrange - This should set cache
+        db.get_unique_companies(use_cache=True)
+
+        # Act
+        db.invalidate_field_history_cache()
+
+        # Assert - Just verify it doesn't error
+        # Cache should be cleared, next call will rebuild
+        companies = db.get_unique_companies(use_cache=True)
+        assert isinstance(companies, list)
+
+    # ==================== Context Manager / Cleanup Tests ====================
 
     def test_close_closes_connection(self, temp_db_path):
         # Arrange
@@ -153,7 +398,7 @@ class TestMetadataDBCore:
         # Act
         db.close()
 
-        # Assert - connection should be None after close
+        # Assert - connection should be closed
         assert db.connection.connection is None
 
     def test_context_manager(self, temp_db_path):
@@ -161,53 +406,10 @@ class TestMetadataDBCore:
         with MetadataDB(temp_db_path) as db:
             assert db.connection is not None
 
-    def test_get_unique_companies(self, db, temp_file):
-        # Arrange
-        db.save_metadata(temp_file, {"company": "Test Corp"})
-
-        # Act
-        companies = db.get_unique_companies()
-
-        # Assert
-        assert "Test Corp" in companies
-
-    def test_get_unique_companies_uses_cache(self, db, temp_file):
-        # Arrange
-        db.save_metadata(temp_file, {"company": "Test Corp"})
-
-        # Act - first call populates cache
-        companies1 = db.get_unique_companies(use_cache=True)
-        # Second call uses cache
-        companies2 = db.get_unique_companies(use_cache=True)
-
-        # Assert
-        assert companies1 == companies2
-
-    def test_get_unique_titles(self, db, temp_file):
-        # Arrange
-        db.save_metadata(temp_file, {"document_type": "Invoice"})
-
-        # Act
-        titles = db.get_unique_titles()
-
-        # Assert
-        assert "Invoice" in titles
-
-    def test_invalidate_field_history_cache(self, db, temp_file):
-        # Arrange
-        db.save_metadata(temp_file, {"company": "Test Corp"})
-        db.get_unique_companies(use_cache=True)  # Populate cache
-
-        # Act
-        db.invalidate_field_history_cache()
-
-        # Assert - cache should be cleared
-        assert db._companies_cache is None
-        assert db._titles_cache is None
-
     def test_get_schema_version(self, db):
         # Act
         version = db.get_schema_version()
 
         # Assert
-        assert version >= 1
+        assert version > 0  # Should have a version number
+        assert isinstance(version, int)
