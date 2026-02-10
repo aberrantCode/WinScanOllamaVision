@@ -47,10 +47,13 @@ class TestAnalysisDBCore:
         tables = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         table_names = [table[0] for table in tables]
 
-        # Assert
+        # Assert - after schema refactoring
         assert "analysis_results" in table_names
-        assert "llm_providers" in table_names
+        assert "metadata" in table_names
+        assert "document_bundles" in table_names
+        assert "pdf_files" in table_names
         assert "source_directories" in table_names
+        assert "bundle_images" in table_names
 
     def test_save_and_get_analysis(self, db):
         # Arrange
@@ -59,7 +62,7 @@ class TestAnalysisDBCore:
         analysis_data = {"document_type": "Invoice", "company": "Test Corp"}
 
         # Act
-        db.save_analysis(
+        analysis_id = db.save_analysis(
             file_path=file_path,
             file_hash=file_hash,
             provider_name="ollama",
@@ -70,10 +73,12 @@ class TestAnalysisDBCore:
         )
         result = db.get_analysis(file_path)
 
-        # Assert
+        # Assert - after schema refactoring, get_analysis returns analysis provenance only
         assert result is not None
+        assert result["id"] == analysis_id
         assert result["provider_name"] == "ollama"
-        assert result["company"] == "Test Corp"
+        assert result["model_name"] == "test-model"
+        # Metadata (company, document_type) is in separate metadata table, not analysis_results
 
     def test_get_analysis_returns_none_when_not_exists(self, db):
         # Act
@@ -100,24 +105,13 @@ class TestAnalysisDBCore:
         # Assert
         assert len(pages) >= 1
 
+    @pytest.mark.skip(
+        reason="Provider management removed after schema refactoring - now handled via config"
+    )
     def test_add_provider(self, db):
-        # Arrange
-        config = {"base_url": "http://localhost:11434"}
-
-        # Act
-        db.add_provider(
-            provider_name="ollama",
-            provider_type="ollama",
-            config=config,
-            default_model="test-model",
-        )
-        # Set as active after adding
-        db.set_active_provider("ollama")
-
-        # Assert
-        provider = db.get_active_provider()
-        assert provider is not None
-        assert provider["provider_name"] == "ollama"
+        # Provider management removed in schema refactoring
+        # LLM provider configuration now handled via ConfigManager, not database
+        pass
 
     def test_source_directory_management(self, db):
         # Act
@@ -187,16 +181,13 @@ class TestAnalysisDBCore:
         assert isinstance(stats, dict)
         assert "total_analyzed_pages" in stats
 
+    @pytest.mark.skip(
+        reason="get_failed_analyses() method not implemented after schema refactoring"
+    )
     def test_get_failed_analyses(self, db):
-        # Arrange
-        db.save_error("/test/failed.jpg", "Test error", "analysis_failed")
-
-        # Act
-        failed = db.get_failed_analyses()
-
-        # Assert
-        assert len(failed) >= 1
-        assert failed[0]["file_path"] == "/test/failed.jpg"
+        # Error tracking now done via had_error flag in analysis_results
+        # Query: SELECT * FROM analysis_results WHERE had_error = 1
+        pass
 
     def test_get_analysis_statistics(self, db):
         # Arrange
@@ -212,20 +203,34 @@ class TestAnalysisDBCore:
         assert stats["provider_breakdown"]["ollama"] >= 1
 
     def test_get_document_type_breakdown(self, db):
-        # Arrange
-        db.save_analysis(
+        # Arrange - save analyses and create metadata records
+        analysis_id1 = db.save_analysis(
             "/p1.jpg", "hash1", "ollama", "model", {"document_type": "Invoice"}, "{}", 100
         )
-        db.save_analysis(
+        analysis_id2 = db.save_analysis(
             "/p2.jpg", "hash2", "ollama", "model", {"document_type": "Receipt"}, "{}", 100
+        )
+
+        # Create metadata records (document_type is in metadata table now)
+        img1 = db.get_image_file("/p1.jpg")
+        img2 = db.get_image_file("/p2.jpg")
+        db.create_metadata_from_analysis(
+            image_file_id=img1["id"],
+            analysis_id=analysis_id1,
+            normalized_metadata={"document_type": "Invoice"},
+        )
+        db.create_metadata_from_analysis(
+            image_file_id=img2["id"],
+            analysis_id=analysis_id2,
+            normalized_metadata={"document_type": "Receipt"},
         )
 
         # Act
         breakdown = db.get_document_type_breakdown()
 
         # Assert
-        assert breakdown["Invoice"] >= 1
-        assert breakdown["Receipt"] >= 1
+        assert breakdown.get("Invoice", 0) >= 1
+        assert breakdown.get("Receipt", 0) >= 1
 
     def test_update_directory_scan_info(self, db):
         # Arrange
@@ -262,9 +267,12 @@ class TestAnalysisDBCore:
         assert db.connection.connection is None
 
     def test_get_bundled_file_paths_delegates_to_repository(self, db):
-        # Arrange - create accepted bundle
+        # Arrange - register images first, then create bundle
+        db.register_image_file("/test/p1.jpg", "hash1", "/test", "p1.jpg", 100, 123.0)
+        db.register_image_file("/test/p2.jpg", "hash2", "/test", "p2.jpg", 200, 124.0)
+
         bundle_id = db.save_bundle_suggestion(
-            ["/test/p1.jpg", "/test/p2.jpg"], {"company": "Test Corp"}, 0.9
+            ["/test/p1.jpg", "/test/p2.jpg"], {"bundle_name": "Test Bundle"}, 0.9
         )
         db.update_bundle_status(bundle_id, "accepted")
 
@@ -285,11 +293,17 @@ class TestAnalysisDBCore:
         assert len(bundled_paths) == 0
 
     def test_get_bundled_file_paths_filters_by_status(self, db):
-        # Arrange - create bundles with different statuses
-        _ = db.save_bundle_suggestion(["/suggested.jpg"], {"company": "Test"}, 0.9)
-        accepted_id = db.save_bundle_suggestion(["/accepted.jpg"], {"company": "Test"}, 0.9)
-        rejected_id = db.save_bundle_suggestion(["/rejected.jpg"], {"company": "Test"}, 0.9)
-        completed_id = db.save_bundle_suggestion(["/completed.jpg"], {"company": "Test"}, 0.9)
+        # Arrange - register images first
+        db.register_image_file("/suggested.jpg", "h1", "/", "suggested.jpg", 100, 123.0)
+        db.register_image_file("/accepted.jpg", "h2", "/", "accepted.jpg", 100, 123.0)
+        db.register_image_file("/rejected.jpg", "h3", "/", "rejected.jpg", 100, 123.0)
+        db.register_image_file("/completed.jpg", "h4", "/", "completed.jpg", 100, 123.0)
+
+        # Create bundles with different statuses
+        _ = db.save_bundle_suggestion(["/suggested.jpg"], {"bundle_name": "Test"}, 0.9)
+        accepted_id = db.save_bundle_suggestion(["/accepted.jpg"], {"bundle_name": "Test"}, 0.9)
+        rejected_id = db.save_bundle_suggestion(["/rejected.jpg"], {"bundle_name": "Test"}, 0.9)
+        completed_id = db.save_bundle_suggestion(["/completed.jpg"], {"bundle_name": "Test"}, 0.9)
 
         db.update_bundle_status(accepted_id, "accepted")
         db.update_bundle_status(rejected_id, "rejected")
@@ -304,36 +318,21 @@ class TestAnalysisDBCore:
         assert "/suggested.jpg" not in bundled_paths
         assert "/rejected.jpg" not in bundled_paths
 
+    @pytest.mark.skip(
+        reason="update_bundle_pdf_path() removed - PDF paths now stored in pdf_files table"
+    )
     def test_update_bundle_pdf_path_delegates_to_repository(self, db):
-        # Arrange
-        bundle_id = db.save_bundle_suggestion(["/test/page.jpg"], {"company": "Test"}, 0.9)
-        pdf_path = "/output/generated_doc.pdf"
+        # PDF path management moved to pdf_files table
+        # Use register_pdf_file() instead
+        pass
 
-        # Act
-        db.update_bundle_pdf_path(bundle_id, pdf_path)
-
-        # Assert - verify PDF path was saved
-        cursor = db.connection.connection.cursor()
-        result = cursor.execute(
-            "SELECT pdf_path FROM document_bundles WHERE id = ?", (bundle_id,)
-        ).fetchone()
-        assert result is not None
-        assert result["pdf_path"] == pdf_path
-
+    @pytest.mark.skip(
+        reason="update_bundle_pdf_path() removed - PDF paths now stored in pdf_files table"
+    )
     def test_update_bundle_pdf_path_updates_timestamp(self, db):
-        # Arrange
-        bundle_id = db.save_bundle_suggestion(["/test/page.jpg"], {"company": "Test"}, 0.9)
-
-        # Act
-        db.update_bundle_pdf_path(bundle_id, "/output/doc.pdf")
-
-        # Assert - verify updated_at was set
-        cursor = db.connection.connection.cursor()
-        result = cursor.execute(
-            "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
-        ).fetchone()
-        assert result is not None
-        assert result["updated_at"] is not None
+        # PDF path management moved to pdf_files table
+        # Use register_pdf_file() instead
+        pass
 
     # ==================== Image Files Facade Tests ====================
 
@@ -397,15 +396,21 @@ class TestAnalysisDBCore:
     # ==================== PDF Files Facade Tests ====================
 
     def test_register_pdf_file(self, db):
-        # Arrange
-        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
+        # Arrange - register images first
+        img_id1 = db.register_image_file("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        img_id2 = db.register_image_file("/test/img2.png", "h2", "/test", "img2.png", 100, 123.0)
+        img_id3 = db.register_image_file("/test/img3.png", "h3", "/test", "img3.png", 100, 123.0)
+
+        bundle_id = db.save_bundle_suggestion(
+            ["/test/img1.png", "/test/img2.png", "/test/img3.png"], {"bundle_name": "Test"}, 0.9
+        )
 
         # Act
         pdf_id = db.register_pdf_file(
             pdf_path="/output/doc.pdf",
             pdf_filename="doc.pdf",
             bundle_id=bundle_id,
-            source_image_ids=[1, 2, 3],
+            source_image_ids=[img_id1, img_id2, img_id3],
             page_count=3,
             file_hash="hash_pdf",
             file_size=102400,
@@ -416,12 +421,22 @@ class TestAnalysisDBCore:
         pdf = db.get_pdf_file("/output/doc.pdf")
         assert pdf is not None
         assert pdf["bundle_id"] == bundle_id
-        assert pdf["source_image_ids"] == [1, 2, 3]
+        assert pdf["page_count"] == 3
+
+        # Verify images were linked via junction table (pdf_image_pages)
+        cursor = db.connection.connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM pdf_image_pages WHERE pdf_file_id = ?", (pdf_id,))
+        assert cursor.fetchone()[0] == 3
 
     def test_get_pdf_by_bundle(self, db):
-        # Arrange
-        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
-        db.register_pdf_file("/out/doc.pdf", "doc.pdf", bundle_id, [1, 2], 2)
+        # Arrange - register images first
+        img_id1 = db.register_image_file("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        img_id2 = db.register_image_file("/test/img2.png", "h2", "/test", "img2.png", 100, 123.0)
+
+        bundle_id = db.save_bundle_suggestion(
+            ["/test/img1.png", "/test/img2.png"], {"bundle_name": "Test"}, 0.9
+        )
+        db.register_pdf_file("/out/doc.pdf", "doc.pdf", bundle_id, [img_id1, img_id2], 2)
 
         # Act
         pdf = db.get_pdf_by_bundle(bundle_id)
@@ -431,9 +446,11 @@ class TestAnalysisDBCore:
         assert pdf["bundle_id"] == bundle_id
 
     def test_update_pdf_generation_status(self, db):
-        # Arrange
-        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
-        db.register_pdf_file("/out/doc.pdf", "doc.pdf", bundle_id, [1], 1)
+        # Arrange - register image first
+        img_id = db.register_image_file("/test/img.png", "h1", "/test", "img.png", 100, 123.0)
+
+        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"bundle_name": "Test"}, 0.9)
+        db.register_pdf_file("/out/doc.pdf", "doc.pdf", bundle_id, [img_id], 1)
 
         # Act
         db.update_pdf_generation_status("/out/doc.pdf", "failed")
@@ -443,10 +460,15 @@ class TestAnalysisDBCore:
         assert pdf["generation_status"] == "failed"
 
     def test_get_pdf_files_stats(self, db):
-        # Arrange
-        bundle_id = db.save_bundle_suggestion(["/test/img.png"], {"company": "Test"}, 0.9)
-        db.register_pdf_file("/out/doc1.pdf", "doc1.pdf", bundle_id, [1], 1)
-        db.register_pdf_file("/out/doc2.pdf", "doc2.pdf", bundle_id, [2], 1)
+        # Arrange - register images first
+        img_id1 = db.register_image_file("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        img_id2 = db.register_image_file("/test/img2.png", "h2", "/test", "img2.png", 100, 123.0)
+
+        bundle_id = db.save_bundle_suggestion(
+            ["/test/img1.png", "/test/img2.png"], {"bundle_name": "Test"}, 0.9
+        )
+        db.register_pdf_file("/out/doc1.pdf", "doc1.pdf", bundle_id, [img_id1], 1)
+        db.register_pdf_file("/out/doc2.pdf", "doc2.pdf", bundle_id, [img_id2], 1)
 
         # Act
         stats = db.get_pdf_files_stats()

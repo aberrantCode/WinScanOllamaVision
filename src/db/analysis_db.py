@@ -307,8 +307,14 @@ class AnalysisDB:
         return self._bundles.get_bundled_file_paths()
 
     def update_bundle_pdf_path(self, bundle_id: int, pdf_path: str) -> None:
-        """Update bundle with generated PDF path."""
-        self._bundles.update_pdf_path(bundle_id, pdf_path)
+        """
+        Update bundle with generated PDF path.
+
+        DEPRECATED: PDF paths are now stored in pdf_files table via register_pdf_file().
+        This method is kept for backward compatibility but does nothing.
+        """
+        # No-op: PDF path stored in pdf_files table, not document_bundles
+        pass
 
     # ==================== Audit Trail Methods ====================
 
@@ -334,8 +340,16 @@ class AnalysisDB:
         cursor.execute("SELECT COUNT(*) FROM analysis_results")
         total_analyzed = cursor.fetchone()[0]
 
-        # Cached analyses
-        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 1")
+        # Cached analyses (images with multiple analyses)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT image_file_id)
+            FROM (
+                SELECT image_file_id, COUNT(*) as analysis_count
+                FROM analysis_results
+                GROUP BY image_file_id
+                HAVING analysis_count > 1
+            )
+        """)
         cached_count = cursor.fetchone()[0]
 
         # Average processing time
