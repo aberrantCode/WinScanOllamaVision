@@ -1846,19 +1846,24 @@ class AnalysisStatusWindow(QDialog):
 
         try:
             # Query document_bundles table for completed bundles with PDFs
+            # Get metadata from first image in bundle (they should all match)
             cursor = self.analysis_db.connection.connection.cursor()
             cursor.execute("""
                 SELECT
-                    id,
-                    pdf_path,
-                    company,
-                    document_type,
-                    document_date,
-                    file_paths,
-                    created_at
-                FROM document_bundles
-                WHERE status = 'completed' AND pdf_path IS NOT NULL
-                ORDER BY created_at DESC
+                    b.id,
+                    b.pdf_path,
+                    b.created_at,
+                    COUNT(bi.image_file_id) as page_count,
+                    m.company,
+                    m.document_type,
+                    m.document_date
+                FROM document_bundles b
+                LEFT JOIN bundle_images bi ON b.id = bi.bundle_id
+                LEFT JOIN image_files img ON bi.image_file_id = img.id AND bi.sequence_order = 1
+                LEFT JOIN metadata m ON img.id = m.image_file_id
+                WHERE b.status = 'completed' AND b.pdf_path IS NOT NULL
+                GROUP BY b.id, b.pdf_path, b.created_at, m.company, m.document_type, m.document_date
+                ORDER BY b.created_at DESC
             """)
             rows = cursor.fetchall()
 
@@ -1867,13 +1872,7 @@ class AnalysisStatusWindow(QDialog):
 
             # Populate table
             for row in rows:
-                bundle_id, pdf_path, company, doc_type, doc_date, file_paths_json, created_at = row
-
-                # Parse file_paths to get page count
-                import json
-
-                file_paths = json.loads(file_paths_json) if file_paths_json else []
-                page_count = len(file_paths)
+                bundle_id, pdf_path, created_at, page_count, company, doc_type, doc_date = row
 
                 # Format created_at timestamp (convert UTC to local)
                 from ui.datetime_utils import format_db_timestamp
