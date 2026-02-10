@@ -111,7 +111,11 @@ class OllamaService:
         )
         for i, path in enumerate(image_paths, 1):
             exists = os.path.exists(path) if path else False
-            size = os.path.getsize(path) if exists else 0
+            try:
+                size = os.path.getsize(path) if exists else 0
+            except OSError:
+                size = 0
+                logger.warning("File disappeared during check: %s", path)
             logger.debug("  Image %d: %s (Exists: %s, Size: %d bytes)", i, path, exists, size)
 
         try:

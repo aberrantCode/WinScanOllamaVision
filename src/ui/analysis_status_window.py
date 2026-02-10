@@ -29,6 +29,10 @@ from services.logging_service import get_logger
 
 logger = get_logger()
 
+# Whitelist of allowed metadata fields for SQL queries (security)
+# Using frozenset to prevent mutation
+ALLOWED_METADATA_FIELDS = frozenset({"company", "document_type", "document_date", "page_number"})
+
 
 class AnalysisWorker(QThread):
     """Persistent worker thread that processes analysis jobs from queue."""
@@ -1044,7 +1048,11 @@ class AnalysisStatusWindow(QDialog):
         # Metadata completeness - from user-approved metadata
         metadata_completeness = {}
         for field in ["company", "document_type", "document_date", "page_number"]:
-            # Field names from hardcoded list - safe from injection
+            # Validate field name against whitelist
+            if field not in ALLOWED_METADATA_FIELDS:
+                raise ValueError(f"Invalid metadata field: {field}")
+
+            # Now safe to use in SQL query
             cursor.execute(
                 f"""
                 SELECT COUNT(*) * 100.0 / (
@@ -1056,7 +1064,7 @@ class AnalysisStatusWindow(QDialog):
                 INNER JOIN image_files img ON m.image_file_id = img.id
                 WHERE img.status != 'deleted'
                 AND m.{field} IS NOT NULL AND m.{field} != ''
-            """  # nosec B608
+            """
             )
             result = cursor.fetchone()[0]
             metadata_completeness[field] = result if result else 0
