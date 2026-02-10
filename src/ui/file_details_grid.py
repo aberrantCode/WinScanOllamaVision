@@ -3628,15 +3628,11 @@ class FileDetailsGrid(QWidget):
 
             for file_path in file_paths:
                 try:
-                    # 1. Delete from analysis_results table
-                    cursor = analysis_db.connection.connection.cursor()
-                    cursor.execute("DELETE FROM analysis_results WHERE file_path = ?", (file_path,))
-                    analysis_db.connection.commit()
-
-                    # 2. Mark image as deleted in image_files table (soft delete)
+                    # 1. Mark image as deleted in image_files table (soft delete)
+                    # This will CASCADE to analysis_results via foreign key
                     analysis_db.mark_image_deleted(file_path)
 
-                    # 3. Delete from metadata table (using AnalysisDB facade)
+                    # 2. Delete from metadata table (using AnalysisDB facade)
                     analysis_db.delete_metadata_by_path(file_path)
 
                     deleted_count += 1
