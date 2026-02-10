@@ -6213,7 +6213,7 @@ class StartupWindow(QWidget):
                     self.movie.setScaledSize(scaled_size)
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(scaled_size)
-                    self.movie.setSpeed(20)  # 20% of original speed (5x slower)
+                    self.movie.setSpeed(100)  # Normal speed (100%)
                     # Play continuously
                     self.movie.start()
                     self._is_analyzing = False
@@ -6223,6 +6223,7 @@ class StartupWindow(QWidget):
                     self.movie.setScaledSize(default_size)
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(default_size)
+                    self.movie.setSpeed(100)  # Normal speed (100%)
                     # Play continuously
                     self.movie.start()
                     self._is_analyzing = False
