@@ -513,9 +513,11 @@ Example:
             else:
                 # Silently handle unexpected format
                 return {"pages": []}
-        except json.JSONDecodeError:
-            # Silently handle JSON decode errors
+        except json.JSONDecodeError as e:
+            # Log JSON decode errors and return empty result
+            logger.warning(f"JSON decode error in extract_page_info_list: {e}")
             return {"pages": []}
-        except Exception:
-            # Silently handle extraction errors
+        except Exception as e:
+            # Log extraction errors and return empty result
+            logger.error(f"Unexpected error in extract_page_info_list: {e}", exc_info=True)
             return {"pages": []}

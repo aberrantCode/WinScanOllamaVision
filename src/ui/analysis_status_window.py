@@ -794,8 +794,10 @@ class AnalysisStatusWindow(QDialog):
         """Handle progress updates from background analysis thread"""
         try:  # noqa: SIM105
             self.scan_status_label.setText(f"{status_text} ({current}/{total})")
-        except Exception:
-            pass  # Ignore errors during UI updates in callbacks
+        except Exception as e:
+            # Log UI update errors but don't crash during callbacks
+            logger = get_logger()
+            logger.warning(f"Error updating scan status label: {e}")
 
     def _on_analysis_finished(self, stats: dict):
         """Handle analysis finished event"""
@@ -803,8 +805,10 @@ class AnalysisStatusWindow(QDialog):
         try:
             self.scan_status_label.setText("Analysis complete")
             self._load_all_data()
-        except Exception:
-            pass
+        except Exception as e:
+            # Log analysis finished errors but don't crash
+            logger = get_logger()
+            logger.error(f"Error handling analysis finished event: {e}", exc_info=True)
 
     def _refresh_collection_status(self):
         """Refresh Collection Status tab with live statistics"""
@@ -1752,9 +1756,10 @@ class AnalysisStatusWindow(QDialog):
                 # Get analyzed pages and transform to grid format
                 data = self._transform_data_for_grid(self.analysis_db.get_analyzed_pages())
                 self.file_grid.refresh_data(data)
-            except Exception:
-                # Silently ignore errors during shutdown
-                pass
+            except Exception as e:
+                # Log errors during shutdown (database may be closing)
+                logger = get_logger()
+                logger.debug(f"Error refreshing file grid during shutdown: {e}")
 
     def _transform_data_for_grid(self, db_data):
         """
@@ -1919,9 +1924,10 @@ class AnalysisStatusWindow(QDialog):
                 created_item = QTableWidgetItem(created_str)
                 self.document_table.setItem(row_position, 5, created_item)
 
-        except Exception:
-            # Silently ignore errors during shutdown
-            pass
+        except Exception as e:
+            # Log errors during document details refresh (database may be closing)
+            logger = get_logger()
+            logger.error(f"Error refreshing document details: {e}", exc_info=True)
 
     def _on_document_table_double_click(self, item):
         """Handle double-click on document table to open PDF"""

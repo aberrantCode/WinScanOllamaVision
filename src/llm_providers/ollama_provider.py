@@ -132,7 +132,9 @@ class OllamaProvider(BaseLLMProvider):
         try:
             self.service.list_models()
             return True
-        except Exception:
+        except Exception as e:
+            # Log connection test failure
+            logger.debug(f"Ollama connection test failed: {e}")
             return False
 
     def validate_config(self) -> tuple[bool, str | None]:
