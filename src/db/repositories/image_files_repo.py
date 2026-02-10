@@ -343,7 +343,10 @@ class ImageFilesRepository:
                 -- Raw analysis fields (for debugging/history)
                 ar.response_text,
                 ar.extracted_metadata,
-                ar.prompt_text
+                ar.prompt_text,
+
+                -- Cache detection (image has multiple analyses)
+                (SELECT COUNT(*) FROM analysis_results WHERE image_file_id = img.id) > 1 AS is_cached
             FROM image_files img
             LEFT JOIN metadata m ON img.id = m.image_file_id
             LEFT JOIN analysis_results ar ON m.analysis_result_id = ar.id

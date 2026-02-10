@@ -178,13 +178,33 @@ class AnalysisDB:
         Retrieve the latest analysis results for a file.
 
         Note: After Migration 16, this returns analysis provenance only.
-        For document metadata, use get_metadata() instead.
+        For document metadata, use get_analysis_with_metadata() instead.
         """
         image_file = self._image_files.get_by_path(file_path)
         if not image_file:
             return None
 
         return self._analysis.get_latest_by_image_file_id(image_file["id"])
+
+    def get_analysis_with_metadata(self, file_path: str) -> dict[str, Any] | None:
+        """
+        Retrieve analysis results WITH normalized metadata for a file.
+
+        Returns a merged dict containing both analysis provenance and document metadata.
+        This is the recommended method for UI display after Migration 16.
+
+        Args:
+            file_path: Path to image file
+
+        Returns:
+            Dict with both analysis and metadata fields, or None if file not found
+        """
+        # Use get_analyzed_pages to get full joined data
+        all_pages = self.get_analyzed_pages()
+        for page in all_pages:
+            if page.get("file_path") == file_path:
+                return page
+        return None
 
     def get_analysis_by_image_file_id(self, image_file_id: int) -> dict[str, Any] | None:
         """Retrieve the latest analysis results for an image file."""

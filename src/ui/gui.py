@@ -1500,8 +1500,8 @@ class MetadataDisplayWidget(QWidget):
             self._show_no_analysis()
             return
 
-        # Get analysis from database
-        analysis = self.analysis_db.get_analysis(file_path)
+        # Get analysis WITH metadata from database
+        analysis = self.analysis_db.get_analysis_with_metadata(file_path)
 
         if not analysis:
             self._show_no_analysis()
@@ -1566,11 +1566,10 @@ class MetadataDisplayWidget(QWidget):
         else:
             self.page_label.setText("Page: --")
 
-        # Rotation status
-        rotation_needed = analysis.get("rotation_needed", False)
-        suggested_rotation = analysis.get("suggested_rotation", 0)
-        if rotation_needed and suggested_rotation:
-            self.rotation_label.setText(f"Rotation: {suggested_rotation}° suggested")
+        # Rotation status (stored as degrees in metadata table)
+        rotation_degrees = analysis.get("rotation", 0)
+        if rotation_degrees and rotation_degrees != 0:
+            self.rotation_label.setText(f"Rotation: {rotation_degrees}° suggested")
             self.rotation_label.setStyleSheet(
                 "font-size: 10pt; color: #F59E0B; background: transparent; border: none;"
             )
@@ -5636,6 +5635,12 @@ Files being sent to Ollama:
             # Format analyses for workflow
             formatted_analyses = []
             for analysis in analyses:
+                # Convert rotation degrees to rotation_needed format for workflow
+                rotation_degrees = analysis.get("rotation", 0)
+                rotation_needed = {0: "none", 90: "90_cw", 180: "180", 270: "90_ccw"}.get(
+                    rotation_degrees, "none"
+                )
+
                 formatted_analyses.append(
                     {
                         "document_type": analysis.get("document_type"),
@@ -5643,7 +5648,7 @@ Files being sent to Ollama:
                         "document_date": analysis.get("document_date"),
                         "page_number": analysis.get("page_number"),
                         "total_pages": analysis.get("total_pages"),
-                        "rotation_needed": analysis.get("rotation_needed", "none"),
+                        "rotation_needed": rotation_needed,  # Converted from degrees
                         "confidence_score": analysis.get("confidence_score", 0.0),
                         "tax_related": analysis.get("tax_related", False),
                         "analysis_id": analysis.get("id"),

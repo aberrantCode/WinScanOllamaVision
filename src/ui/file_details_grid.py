@@ -18,6 +18,7 @@ from PyQt6.QtCore import (
     QPoint,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import QAction, QColor, QCursor, QFont, QPainter, QPixmap, QTransform
@@ -664,17 +665,17 @@ class FileDetailsDialog(QDialog):
     def _create_overlay_controls(self) -> QWidget:
         """Create compact overlaid zoom/rotate controls with tooltips."""
         # Color definitions
-        GRAY_100 = "#F3F4F6"
-        GRAY_300 = "#D1D5DB"
-        GRAY_900 = "#111827"
-        PRIMARY_PALE = "#EFF6FF"
-        PRIMARY = "#3B82F6"
+        gray_100 = "#F3F4F6"
+        gray_300 = "#D1D5DB"
+        gray_900 = "#111827"
+        primary_pale = "#EFF6FF"
+        primary = "#3B82F6"
 
         controls = QWidget()
         controls.setStyleSheet(f"""
             QWidget {{
                 background: rgba(255, 255, 255, 0.95);
-                border: 2px solid {GRAY_900};
+                border: 2px solid {gray_900};
                 border-radius: 12px;
                 padding: 4px;
             }}
@@ -688,9 +689,9 @@ class FileDetailsDialog(QDialog):
         # Button style (doubled size)
         btn_style = f"""
             QPushButton {{
-                background: {GRAY_100};
-                color: {GRAY_900};
-                border: 1px solid {GRAY_300};
+                background: {gray_100};
+                color: {gray_900};
+                border: 1px solid {gray_300};
                 border-radius: 4px;
                 font-size: 20px;
                 font-weight: bold;
@@ -700,8 +701,8 @@ class FileDetailsDialog(QDialog):
                 max-height: 40px;
             }}
             QPushButton:hover {{
-                background: {PRIMARY_PALE};
-                border-color: {PRIMARY};
+                background: {primary_pale};
+                border-color: {primary};
             }}
         """
 
@@ -722,8 +723,8 @@ class FileDetailsDialog(QDialog):
         self.zoom_spinner.setStyleSheet(f"""
             QSpinBox {{
                 background: white;
-                color: {GRAY_900};
-                border: 1px solid {GRAY_300};
+                color: {gray_900};
+                border: 1px solid {gray_300};
                 border-radius: 4px;
                 padding: 2px;
                 font-size: 20px;
@@ -760,7 +761,7 @@ class FileDetailsDialog(QDialog):
         # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"background: {GRAY_300};")
+        sep.setStyleSheet(f"background: {gray_300};")
         sep.setFixedWidth(2)
         sep.setFixedHeight(40)
         layout.addWidget(sep)
@@ -1299,7 +1300,7 @@ class FileDetailsDialog(QDialog):
             get_logger().error(f"Error getting distinct values for {field_name}: {e}")
             return []
 
-        # Fallback for other fields (use analysis_db for historical data)
+        # Fallback for other fields - route to correct table based on schema
         if not self.analysis_db:
             return []
 
@@ -1311,8 +1312,22 @@ class FileDetailsDialog(QDialog):
             return []
 
         try:
-            # Safe to interpolate now that field_name is validated against whitelist
-            query = f"SELECT DISTINCT {field_name} FROM analysis_results WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
+            # Route field to correct table after Migration 16 schema refactoring
+            if field_name in ("provider_name", "model_name"):
+                # Analysis provenance fields - from analysis_results table
+                table = "analysis_results"
+            elif field_name in ("document_date", "page_number", "total_pages", "confidence_score"):
+                # Document metadata fields - from metadata table
+                table = "metadata"
+            elif field_name == "file_path":
+                # File system fields - from image_files table
+                table = "image_files"
+            else:
+                # Unknown field - skip
+                return []
+
+            # Safe to interpolate now that field_name is validated and table is hardcoded
+            query = f"SELECT DISTINCT {field_name} FROM {table} WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
             result = self.analysis_db.connection.execute(query).fetchall()
             return [row[0] for row in result if row[0]]
         except Exception as e:

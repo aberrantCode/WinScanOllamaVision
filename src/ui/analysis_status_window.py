@@ -1103,12 +1103,12 @@ class AnalysisStatusWindow(QDialog):
         archived_pages_result = cursor.fetchone()[0]
         total_archived_pages = archived_pages_result if archived_pages_result else 0
 
-        # Average processing time (EXCLUDE cached analyses - only real LLM inference time)
+        # Average processing time (only successful, non-error analyses with real LLM inference time)
         cursor.execute(
             """
             SELECT AVG(processing_time_ms)
             FROM analysis_results
-            WHERE is_cached = 0
+            WHERE had_error = 0
               AND processing_time_ms IS NOT NULL
               AND processing_time_ms > 0
         """
@@ -1816,7 +1816,9 @@ class AnalysisStatusWindow(QDialog):
                 else None,
                 "model_used": row.get("model_name", ""),
                 "provider": row.get("provider_name", ""),
-                "cache_hit": bool(row.get("is_cached", False)),
+                "cache_hit": bool(
+                    row.get("is_cached", False)
+                ),  # Calculated via subquery in get_all_with_analysis()
                 "error_message": "",  # TODO: Get from errors table
                 "file_hash": row.get("file_hash", ""),
                 "raw_response": row.get(

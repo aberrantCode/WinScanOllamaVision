@@ -400,8 +400,8 @@ class EnlargedPagesDialog(QDialog):
     def _format_metadata_tooltip(self, file_path: str) -> str:
         """Format metadata from analysis database as a readable tooltip"""
         try:
-            # Get analysis results from database
-            analysis = self.analysis_db.get_analysis(file_path)
+            # Get analysis results WITH metadata from database
+            analysis = self.analysis_db.get_analysis_with_metadata(file_path)
             if not analysis:
                 return "No metadata available"
 
@@ -415,7 +415,11 @@ class EnlargedPagesDialog(QDialog):
             total_pages = analysis.get("total_pages") or "N/A"
             confidence = analysis.get("confidence_score", 0.0)
             legibility = analysis.get("legibility") or "N/A"
-            rotation = analysis.get("rotation_needed") or "N/A"
+            # Rotation is stored as degrees (0, 90, 180, 270) in metadata table
+            rotation_degrees = analysis.get("rotation", 0)
+            rotation = {0: "none", 90: "90_cw", 180: "180", 270: "90_ccw"}.get(
+                rotation_degrees, "N/A"
+            )
 
             # Format as multi-line tooltip
             tooltip = f"""<b>{html.escape(filename)}</b><br>
@@ -718,8 +722,8 @@ class BundleSuggestionCard(QFrame):
     def _format_metadata_tooltip(self, file_path: str) -> str:
         """Format metadata from analysis database as a readable tooltip"""
         try:
-            # Get analysis results from database
-            analysis = self.analysis_db.get_analysis(file_path)
+            # Get analysis results WITH metadata from database
+            analysis = self.analysis_db.get_analysis_with_metadata(file_path)
             if not analysis:
                 return "No metadata available"
 
@@ -733,7 +737,11 @@ class BundleSuggestionCard(QFrame):
             total_pages = analysis.get("total_pages") or "N/A"
             confidence = analysis.get("confidence_score", 0.0)
             legibility = analysis.get("legibility") or "N/A"
-            rotation = analysis.get("rotation_needed") or "N/A"
+            # Rotation is stored as degrees (0, 90, 180, 270) in metadata table
+            rotation_degrees = analysis.get("rotation", 0)
+            rotation = {0: "none", 90: "90_cw", 180: "180", 270: "90_ccw"}.get(
+                rotation_degrees, "N/A"
+            )
 
             # Format as multi-line tooltip
             tooltip = f"""<b>{html.escape(filename)}</b><br>
