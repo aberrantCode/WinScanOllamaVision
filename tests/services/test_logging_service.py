@@ -145,7 +145,7 @@ class TestLoggingService:
 
         # Assert
         handlers = service.logger.handlers
-        assert len(handlers) == 2  # File + Console
+        assert len(handlers) == 1  # File handler only (console_output defaults to False)
         file_handler = handlers[0]
         assert isinstance(file_handler, logging.handlers.RotatingFileHandler)
 
@@ -416,7 +416,10 @@ class TestGetLoggerFunction:
         # Assert
         assert isinstance(logger, logging.Logger)
 
-    def test_get_logger_raises_when_not_initialized(self):
-        # Act & Assert
-        with pytest.raises(RuntimeError, match="LoggingService not initialized"):
-            get_logger()
+    def test_get_logger_returns_fallback_when_not_initialized(self):
+        # Act
+        logger = get_logger()
+
+        # Assert - should return fallback logger, not raise error
+        assert isinstance(logger, logging.Logger)
+        assert logger.name == "WinScanLLM"  # Fallback logger name
