@@ -487,9 +487,16 @@ class TestAnalyzeSinglePage:
         # Arrange
         image_path = "C:\\test\\file1.png"
         mock_metadata_db.compute_file_hash.return_value = "hash123"
+        # After Migration 16: get_analysis returns provenance only, file_hash is in image_files
         mock_analysis_db.get_analysis.return_value = {
-            "file_hash": "hash123",
-            "metadata": {"test": "data"},
+            "id": 1,
+            "provider_name": "test",
+            "model_name": "test_model",
+        }
+        mock_analysis_db.get_image_file.return_value = {
+            "id": 1,
+            "file_path": image_path,
+            "file_hash": "hash123",  # Matching hash triggers cache hit
         }
 
         # Act
@@ -1326,13 +1333,23 @@ class TestImageStatusTransitions:
             # Status should be set to analyzing before exception
             # (exact call depends on when exception occurs)
 
-    def test_cached_analysis_updates_status_to_analyzed(self, service, mock_analysis_db):
+    def test_cached_analysis_updates_status_to_analyzed(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
         # Arrange
         image_path = "C:\\test\\file1.png"
+        mock_metadata_db.compute_file_hash.return_value = "hash123"
+        # After Migration 16: get_analysis returns provenance only
         mock_analysis_db.get_analysis.return_value = {
             "id": 456,
+            "provider_name": "test",
+            "model_name": "test_model",
+        }
+        # file_hash is in image_files table
+        mock_analysis_db.get_image_file.return_value = {
+            "id": 1,
+            "file_path": image_path,
             "file_hash": "hash123",
-            "metadata": {"test": "data"},
         }
 
         # Act
