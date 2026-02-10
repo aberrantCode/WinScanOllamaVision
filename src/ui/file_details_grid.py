@@ -407,6 +407,14 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
                 return False
 
         elif self._quick_filter == "needs_review":
+            # Filter to images that need review: Failed, Analyzed, or low confidence
+            status = row_data.get("status", "")
+
+            # Include if status is Failed (error) or Analyzed (awaiting review)
+            if status in ("Failed", "Analyzed"):
+                return True
+
+            # Also include if confidence is low (< 80)
             confidence = row_data.get("confidence", 100)
             try:
                 return float(confidence) < 80
