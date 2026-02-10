@@ -1529,13 +1529,8 @@ class AnalysisStatusWindow(QDialog):
             "analyzing", display_text, f"{current}/{total} files ({percentage}%)"
         )
 
-        # Update stats (increment based on status text)
-        # Note: "cached" is treated as "analyzed" - it's just an implementation detail
-        if "error" in status_text.lower() or "failed" in status_text.lower():
-            self._analysis_stats["errors"] += 1
-        else:
-            # Both fresh analysis and cached results count as "analyzed"
-            self._analysis_stats["analyzed"] += 1
+        # Stats are accumulated in _on_job_finished, not here.
+        # This handler only updates the UI to show progress.
 
         # Refresh grid to show status changes
         # First progress update: refresh immediately to show "Analyzing" status

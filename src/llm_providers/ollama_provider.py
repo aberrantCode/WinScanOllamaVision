@@ -84,6 +84,7 @@ class OllamaProvider(BaseLLMProvider):
                 "metadata": metadata,
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
+                "provider_name": "ollama",
                 "success": True,
                 "error": None,
             }
@@ -95,6 +96,7 @@ class OllamaProvider(BaseLLMProvider):
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
+                "provider_name": "ollama",
                 "success": False,
                 "error": str(e),
             }
