@@ -13,11 +13,10 @@ from db.connection import DatabaseConnection
 from db.repositories import (
     AnalysisRepository,
     AuditRepository,
-    BundleRepository,
     BundleImagesRepository,
+    BundleRepository,
     DirectoryRepository,
     ImageFilesRepository,
-    PdfImagePagesRepository,
 )
 
 
@@ -45,138 +44,182 @@ class TestAnalysisRepository:
     def repo(self, conn):
         return AnalysisRepository(conn)
 
-    def test_save_and_get(self, repo):
-        # Arrange
-        analysis_data = {"document_type": "Invoice", "company": "Test Corp"}
+    @pytest.fixture
+    def image_repo(self, conn):
+        return ImageFilesRepository(conn)
 
-        # Act
-        repo.save(
+    def test_save_and_get(self, repo, image_repo):
+        # Arrange - create image file first
+        image_file_id = image_repo.register(
             file_path="/test/page.jpg",
             file_hash="abc123",
-            provider_name="ollama",
-            model_name="test-model",
-            analysis_data=analysis_data,
-            raw_response='{"test": "data"}',
-            processing_time_ms=100,
+            directory_path="/test",
+            filename="page.jpg",
+            file_size=1024,
+            file_mtime=1234567890.0,
         )
-        result = repo.get_by_path("/test/page.jpg")
-
-        # Assert
-        assert result["company"] == "Test Corp"
-        assert result["provider_name"] == "ollama"
-
-    def test_save_with_tax_related_field(self, repo):
-        # Arrange
-        analysis_data = {"document_type": "Invoice", "company": "Test Corp", "tax_related": True}
+        extracted_metadata = {"document_type": "Invoice", "company": "Test Corp"}
 
         # Act
-        repo.save(
+        analysis_id = repo.save(
+            image_file_id=image_file_id,
+            provider_name="ollama",
+            model_name="test-model",
+            prompt_text="Extract document metadata",
+            response_text='{"document_type": "Invoice", "company": "Test Corp"}',
+            confidence_score=0.95,
+            processing_time_ms=100,
+            extracted_metadata=extracted_metadata,
+        )
+        result = repo.get_latest_by_image_file_id(image_file_id)
+
+        # Assert
+        assert result is not None
+        assert result["id"] == analysis_id
+        assert result["provider_name"] == "ollama"
+        assert result["model_name"] == "test-model"
+        assert result["confidence_score"] == 0.95
+        assert result["extracted_metadata"] == extracted_metadata
+
+    def test_save_with_extracted_metadata(self, repo, image_repo):
+        # Arrange - create image file first
+        image_file_id = image_repo.register(
             file_path="/test/tax_doc.jpg",
             file_hash="xyz789",
-            provider_name="ollama",
-            model_name="test-model",
-            analysis_data=analysis_data,
-            raw_response='{"test": "data"}',
-            processing_time_ms=100,
+            directory_path="/test",
+            filename="tax_doc.jpg",
+            file_size=2048,
+            file_mtime=1234567890.0,
         )
-        result = repo.get_by_path("/test/tax_doc.jpg")
-
-        # Assert
-        assert result["tax_related"] == 1  # SQLite stores boolean as integer
-        assert result["company"] == "Test Corp"
-
-    def test_save_without_tax_related_defaults_to_false(self, repo):
-        # Arrange - analysis_data without tax_related field
-        analysis_data = {"document_type": "Receipt", "company": "Other Corp"}
+        extracted_metadata = {
+            "document_type": "Invoice",
+            "company": "Test Corp",
+            "tax_related": True,
+        }
 
         # Act
-        repo.save(
-            file_path="/test/non_tax_doc.jpg",
-            file_hash="def456",
-            provider_name="claude",
-            model_name="claude-3",
-            analysis_data=analysis_data,
-            raw_response='{"test": "data"}',
-            processing_time_ms=150,
-        )
-        result = repo.get_by_path("/test/non_tax_doc.jpg")
-
-        # Assert
-        assert result["tax_related"] == 0  # Should default to False (0)
-
-    def test_update_metadata_with_tax_related(self, repo):
-        # Arrange - save initial analysis
-        repo.save(
-            file_path="/test/update_tax.jpg",
-            file_hash="hash123",
+        _ = repo.save(
+            image_file_id=image_file_id,
             provider_name="ollama",
             model_name="test-model",
-            analysis_data={"document_type": "Invoice", "tax_related": False},
-            raw_response='{"test": "data"}',
+            prompt_text="Extract document metadata",
+            response_text='{"document_type": "Invoice", "company": "Test Corp", "tax_related": true}',
+            confidence_score=0.92,
             processing_time_ms=100,
+            extracted_metadata=extracted_metadata,
         )
-
-        # Act - update metadata with tax_related
-        updated_metadata = {
-            "document_type": "Tax Invoice",
-            "tax_related": True,
-            "company": "Updated Corp",
-        }
-        repo.update_metadata("/test/update_tax.jpg", updated_metadata)
-        result = repo.get_by_path("/test/update_tax.jpg")
+        result = repo.get_latest_by_image_file_id(image_file_id)
 
         # Assert
-        assert result["tax_related"] == 1
-        assert result["document_type"] == "Tax Invoice"
-        assert result["company"] == "Updated Corp"
+        assert result is not None
+        assert result["extracted_metadata"]["tax_related"] is True
+        assert result["extracted_metadata"]["company"] == "Test Corp"
 
-    def test_save_with_prompt_text(self, repo):
-        # Arrange
-        analysis_data = {"document_type": "Invoice", "company": "Test Corp"}
+    def test_save_with_had_error_flag(self, repo, image_repo):
+        # Arrange - create image file first
+        image_file_id = image_repo.register(
+            file_path="/test/error_doc.jpg",
+            file_hash="def456",
+            directory_path="/test",
+            filename="error_doc.jpg",
+            file_size=1536,
+            file_mtime=1234567890.0,
+        )
+
+        # Act
+        _ = repo.save(
+            image_file_id=image_file_id,
+            provider_name="claude",
+            model_name="claude-3",
+            prompt_text="Extract document metadata",
+            response_text="ERROR: Failed to analyze image",
+            confidence_score=None,
+            processing_time_ms=150,
+            had_error=True,
+        )
+        result = repo.get_latest_by_image_file_id(image_file_id)
+
+        # Assert
+        assert result is not None
+        assert result["had_error"] == 1  # SQLite stores boolean as integer
+        assert result["confidence_score"] is None
+
+    def test_save_with_prompt_text(self, repo, image_repo):
+        # Arrange - create image file first
+        image_file_id = image_repo.register(
+            file_path="/test/with_prompt.jpg",
+            file_hash="abc123",
+            directory_path="/test",
+            filename="with_prompt.jpg",
+            file_size=2048,
+            file_mtime=1234567890.0,
+        )
         prompt_text = (
             "Analyze this document and extract metadata including company name and document type."
         )
 
         # Act
-        repo.save(
-            file_path="/test/with_prompt.jpg",
-            file_hash="abc123",
+        _ = repo.save(
+            image_file_id=image_file_id,
             provider_name="ollama",
             model_name="test-model",
-            analysis_data=analysis_data,
-            raw_response='{"test": "data"}',
-            processing_time_ms=100,
             prompt_text=prompt_text,
+            response_text='{"document_type": "Invoice", "company": "Test Corp"}',
+            confidence_score=0.88,
+            processing_time_ms=100,
         )
-        result = repo.get_by_path("/test/with_prompt.jpg")
+        result = repo.get_latest_by_image_file_id(image_file_id)
 
         # Assert
+        assert result is not None
         assert result["prompt_text"] == prompt_text
-        assert result["company"] == "Test Corp"
 
-    def test_save_without_prompt_text_defaults_to_none(self, repo):
-        # Arrange - save without prompt_text parameter
-        analysis_data = {"document_type": "Receipt"}
+    def test_save_multiple_analyses_same_image(self, repo, image_repo):
+        # Arrange - create image file first, analyze twice with different providers
+        image_file_id = image_repo.register(
+            file_path="/test/multi_analysis.jpg",
+            file_hash="multi123",
+            directory_path="/test",
+            filename="multi_analysis.jpg",
+            file_size=3072,
+            file_mtime=1234567890.0,
+        )
 
-        # Act
-        repo.save(
-            file_path="/test/no_prompt.jpg",
-            file_hash="def456",
+        # Act - save two analyses for the same image
+        analysis_id_1 = repo.save(
+            image_file_id=image_file_id,
+            provider_name="ollama",
+            model_name="qwen2.5-vl",
+            prompt_text="Extract metadata",
+            response_text='{"company": "Corp A"}',
+            confidence_score=0.85,
+            processing_time_ms=120,
+        )
+        analysis_id_2 = repo.save(
+            image_file_id=image_file_id,
             provider_name="claude",
             model_name="claude-3",
-            analysis_data=analysis_data,
-            raw_response='{"test": "data"}',
+            prompt_text="Extract metadata",
+            response_text='{"company": "Corp B"}',
+            confidence_score=0.92,
             processing_time_ms=150,
         )
-        result = repo.get_by_path("/test/no_prompt.jpg")
 
-        # Assert
-        assert result["prompt_text"] is None
+        results = repo.get_by_image_file_id(image_file_id)
 
-    def test_get_all_with_filters(self, repo):
-        # Arrange
-        repo.save("/p1.jpg", "h1", "ollama", "m1", {"page_number": 1}, "{}", 100)
-        repo.save("/p2.jpg", "h2", "claude", "m2", {"page_number": 2}, "{}", 100)
+        # Assert - verify both analyses are present
+        assert len(results) == 2
+        result_ids = {r["id"] for r in results}
+        assert analysis_id_1 in result_ids
+        assert analysis_id_2 in result_ids
+
+    def test_get_all_with_filters(self, repo, image_repo):
+        # Arrange - create two image files
+        img1_id = image_repo.register("/p1.jpg", "h1", "/", "p1.jpg", 1024, 1234567890.0)
+        img2_id = image_repo.register("/p2.jpg", "h2", "/", "p2.jpg", 1024, 1234567890.0)
+
+        repo.save(img1_id, "ollama", "m1", "prompt", "response", 0.9, 100)
+        repo.save(img2_id, "claude", "m2", "prompt", "response", 0.8, 100)
 
         # Act
         all_results = repo.get_all()
@@ -261,8 +304,8 @@ class TestBundleRepository:
 
     def test_get_suggestions_with_filters(self, repo):
         # Arrange
-        repo.save_suggestion({"company": "Test"}, 0.9)
-        repo.save_suggestion({"company": "Test"}, 0.5, 1)
+        repo.save_suggestion({"bundle_name": "Test Bundle 1"}, 0.9)
+        repo.save_suggestion({"bundle_name": "Test Bundle 2"}, 0.5)
 
         # Act
         high_confidence = repo.get_suggestions(min_confidence=0.8)
@@ -280,11 +323,13 @@ class TestBundleRepository:
         assert isinstance(bundled_paths, set)
         assert len(bundled_paths) == 0
 
-    def test_get_bundled_file_paths_includes_accepted_bundles(self, repo, image_repo, bundle_images_repo):
+    def test_get_bundled_file_paths_includes_accepted_bundles(
+        self, repo, image_repo, bundle_images_repo
+    ):
         # Arrange
         file_paths = ["/p1.jpg", "/p2.jpg"]
         image_ids = self._create_test_images(image_repo, file_paths)
-        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_id = repo.save_suggestion({"bundle_name": "Test Bundle"}, 0.9)
         bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         repo.update_status(bundle_id, "accepted")
 
@@ -295,11 +340,13 @@ class TestBundleRepository:
         assert "/p1.jpg" in bundled_paths
         assert "/p2.jpg" in bundled_paths
 
-    def test_get_bundled_file_paths_includes_completed_bundles(self, repo, image_repo, bundle_images_repo):
+    def test_get_bundled_file_paths_includes_completed_bundles(
+        self, repo, image_repo, bundle_images_repo
+    ):
         # Arrange
         file_paths = ["/p3.jpg", "/p4.jpg"]
         image_ids = self._create_test_images(image_repo, file_paths)
-        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_id = repo.save_suggestion({"bundle_name": "Test Bundle"}, 0.9)
         bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         repo.update_status(bundle_id, "completed")
 
@@ -310,11 +357,13 @@ class TestBundleRepository:
         assert "/p3.jpg" in bundled_paths
         assert "/p4.jpg" in bundled_paths
 
-    def test_get_bundled_file_paths_excludes_suggested_bundles(self, repo, image_repo, bundle_images_repo):
+    def test_get_bundled_file_paths_excludes_suggested_bundles(
+        self, repo, image_repo, bundle_images_repo
+    ):
         # Arrange
         file_paths = ["/p5.jpg"]
         image_ids = self._create_test_images(image_repo, file_paths)
-        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_id = repo.save_suggestion({"bundle_name": "Test Bundle"}, 0.9)
         bundle_images_repo.add_images_bulk(bundle_id, image_ids)
 
         # Act
@@ -323,11 +372,13 @@ class TestBundleRepository:
         # Assert
         assert "/p5.jpg" not in bundled_paths
 
-    def test_get_bundled_file_paths_excludes_rejected_bundles(self, repo, image_repo, bundle_images_repo):
+    def test_get_bundled_file_paths_excludes_rejected_bundles(
+        self, repo, image_repo, bundle_images_repo
+    ):
         # Arrange
         file_paths = ["/p6.jpg"]
         image_ids = self._create_test_images(image_repo, file_paths)
-        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths))
+        bundle_id = repo.save_suggestion({"bundle_name": "Test Bundle"}, 0.9)
         bundle_images_repo.add_images_bulk(bundle_id, image_ids)
         repo.update_status(bundle_id, "rejected")
 
@@ -337,7 +388,9 @@ class TestBundleRepository:
         # Assert
         assert "/p6.jpg" not in bundled_paths
 
-    def test_get_bundled_file_paths_returns_distinct_paths(self, repo, image_repo, bundle_images_repo):
+    def test_get_bundled_file_paths_returns_distinct_paths(
+        self, repo, image_repo, bundle_images_repo
+    ):
         # Arrange - two bundles with overlapping files
         file_paths1 = ["/p7.jpg", "/p8.jpg"]
         file_paths2 = ["/p8.jpg", "/p9.jpg"]
@@ -357,10 +410,10 @@ class TestBundleRepository:
             path_to_id[path] = img_id
 
         # Create bundles
-        bundle_id1 = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths1))
+        bundle_id1 = repo.save_suggestion({"bundle_name": "Test Bundle 1"}, 0.9)
         bundle_images_repo.add_images_bulk(bundle_id1, [path_to_id[p] for p in file_paths1])
 
-        bundle_id2 = repo.save_suggestion({"company": "Test"}, 0.9, len(file_paths2))
+        bundle_id2 = repo.save_suggestion({"bundle_name": "Test Bundle 2"}, 0.9)
         bundle_images_repo.add_images_bulk(bundle_id2, [path_to_id[p] for p in file_paths2])
 
         repo.update_status(bundle_id1, "accepted")
@@ -374,46 +427,6 @@ class TestBundleRepository:
         assert "/p7.jpg" in bundled_paths
         assert "/p8.jpg" in bundled_paths
         assert "/p9.jpg" in bundled_paths
-
-    def test_update_pdf_path(self, repo):
-        # Arrange
-        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9)
-        pdf_path = "/output/test_document.pdf"
-
-        # Act
-        repo.update_pdf_path(bundle_id, pdf_path)
-
-        # Assert - verify pdf_path was updated
-        cursor = repo.conn.connection.cursor()
-        result = cursor.execute(
-            "SELECT pdf_path, updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
-        ).fetchone()
-        assert result is not None
-        assert result["pdf_path"] == pdf_path
-        assert result["updated_at"] is not None
-
-    def test_update_pdf_path_updates_timestamp(self, repo):
-        # Arrange
-        bundle_id = repo.save_suggestion({"company": "Test"}, 0.9)
-
-        # Get initial timestamp
-        cursor = repo.conn.connection.cursor()
-        initial_result = cursor.execute(
-            "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
-        ).fetchone()
-        _ = initial_result["updated_at"]  # Verify field exists but we don't use it
-
-        # Act - update PDF path
-        repo.update_pdf_path(bundle_id, "/output/doc.pdf")
-
-        # Assert - timestamp should be updated
-        final_result = cursor.execute(
-            "SELECT updated_at FROM document_bundles WHERE id = ?", (bundle_id,)
-        ).fetchone()
-        final_timestamp = final_result["updated_at"]
-
-        # Note: This may be the same if executed too quickly, but it validates the field was set
-        assert final_timestamp is not None
 
 
 class TestDirectoryRepository:
@@ -600,7 +613,7 @@ class TestImageFilesRepository:
         # Arrange
         repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
         repo.register("/test/img2.png", "h2", "/test", "img2.png", 200, 124.0)
-        repo.update_status("/test/img1.png", "analyzed", analysis_id=1)
+        repo.update_status("/test/img1.png", "analyzed")
 
         # Act
         registered = repo.get_by_status("registered")
@@ -635,19 +648,17 @@ class TestImageFilesRepository:
         # Assert
         image = repo.get_by_path("/test/img1.png")
         assert image["status"] == "analyzing"
-        assert image["analysis_id"] is None
 
-    def test_update_status_with_analysis_id(self, repo):
+    def test_update_status_with_different_status(self, repo):
         # Arrange
         repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
 
         # Act
-        repo.update_status("/test/img1.png", "analyzed", analysis_id=42)
+        repo.update_status("/test/img1.png", "analyzed")
 
         # Assert
         image = repo.get_by_path("/test/img1.png")
         assert image["status"] == "analyzed"
-        assert image["analysis_id"] == 42
 
     def test_update_last_seen(self, repo):
         # Arrange
@@ -717,16 +728,23 @@ class TestImageFilesRepository:
         # Assert
         assert count == 0
 
-    def test_set_output_filename(self, repo):
+    def test_set_output_filename(self, repo, conn):
         # Arrange
-        repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+        img_id = repo.register("/test/img1.png", "h1", "/test", "img1.png", 100, 123.0)
+
+        # Create metadata record first (output_filename is in metadata table)
+        conn.execute("INSERT INTO metadata (image_file_id) VALUES (?)", (img_id,))
+        conn.commit()
 
         # Act
         repo.set_output_filename("/test/img1.png", "output_doc.pdf")
 
-        # Assert
-        image = repo.get_by_path("/test/img1.png")
-        assert image["output_filename"] == "output_doc.pdf"
+        # Assert - check metadata table, not image_files
+        result = conn.fetch_one_dict(
+            "SELECT output_filename FROM metadata WHERE image_file_id = ?", (img_id,)
+        )
+        assert result is not None
+        assert result["output_filename"] == "output_doc.pdf"
 
     def test_get_stats(self, repo):
         # Arrange
@@ -735,7 +753,7 @@ class TestImageFilesRepository:
         repo.register("/test/img3.png", "h3", "/test", "img3.png", 300, 125.0)
         repo.register("/test/img4.png", "h4", "/test", "img4.png", 400, 126.0)
 
-        repo.update_status("/test/img1.png", "analyzed", analysis_id=1)
+        repo.update_status("/test/img1.png", "analyzed")
         repo.update_status("/test/img2.png", "bundled")
         repo.mark_deleted("/test/img3.png")
         # img4 remains "registered"
@@ -760,10 +778,9 @@ class TestImageFilesRepository:
         assert img["status"] == "analyzing"
 
         # analyzing → analyzed
-        repo.update_status("/test/img1.png", "analyzed", analysis_id=1)
+        repo.update_status("/test/img1.png", "analyzed")
         img = repo.get_by_path("/test/img1.png")
         assert img["status"] == "analyzed"
-        assert img["analysis_id"] == 1
 
         # analyzed → bundled
         repo.update_status("/test/img1.png", "bundled")
@@ -789,39 +806,45 @@ class TestImageFilesRepository:
         assert len(results) == 2
         assert results[0]["file_path"] in ["/test/img1.png", "/test/img2.png"]
         assert results[0]["status"] == "registered"
-        # Analysis fields should be None
-        assert results[0]["analysis_id"] is None
+        # Metadata fields should be None (no metadata record created)
         assert results[0]["document_type"] is None
         assert results[0]["company"] is None
 
     def test_get_all_with_analysis_with_analysis(self, repo, conn):
         """Test get_all_with_analysis returns images with joined analysis data."""
         from db.repositories import AnalysisRepository
+        from db.repositories.metadata_repo import MetadataRepository
 
         # Arrange - register image and add analysis
-        repo.register("/test/img3.png", "h3", "/test", "img3.png", 100, 123.0)
+        img_id = repo.register("/test/img3.png", "h3", "/test", "img3.png", 100, 123.0)
 
-        # Create analysis entry
+        # Create analysis entry with new signature
         analysis_repo = AnalysisRepository(conn)
-        analysis_data = {
-            "document_type": "Invoice",
-            "company": "ACME Corp",
-            "document_date": "2024-01-15",
-            "confidence_score": 0.95,
-        }
-        analysis_repo.save(
-            "/test/img3.png",
-            "h3",
-            "test_provider",
-            "test_model",
-            analysis_data,
-            "raw llm response",
-            1500,
+        analysis_id = analysis_repo.save(
+            image_file_id=img_id,
+            provider_name="test_provider",
+            model_name="test_model",
+            prompt_text="Extract metadata",
+            response_text='{"document_type": "Invoice", "company": "ACME Corp"}',
+            confidence_score=0.95,
+            processing_time_ms=1500,
         )
 
-        # Get analysis ID and update image
-        analysis = analysis_repo.get_by_path("/test/img3.png")
-        repo.update_status("/test/img3.png", "analyzed", analysis_id=analysis["id"])
+        # Create metadata entry
+        metadata_repo = MetadataRepository(conn)
+        metadata_repo.create_from_analysis(
+            image_file_id=img_id,
+            analysis_result_id=analysis_id,
+            normalized_metadata={
+                "document_type": "Invoice",
+                "company": "ACME Corp",
+                "document_date": "2024-01-15",
+                "confidence_score": 0.95,
+            },
+        )
+
+        # Update status
+        repo.update_status("/test/img3.png", "analyzed")
 
         # Act
         results = repo.get_all_with_analysis()
@@ -831,8 +854,7 @@ class TestImageFilesRepository:
         result = results[0]
         assert result["file_path"] == "/test/img3.png"
         assert result["status"] == "analyzed"
-        assert result["analysis_id"] is not None
-        # Joined analysis data should be present
+        # Joined metadata should be present
         assert result["document_type"] == "Invoice"
         assert result["company"] == "ACME Corp"
         assert result["document_date"] == "2024-01-15"
@@ -843,20 +865,33 @@ class TestImageFilesRepository:
     def test_get_all_with_analysis_mixed(self, repo, conn):
         """Test get_all_with_analysis returns both analyzed and unanalyzed images."""
         from db.repositories import AnalysisRepository
+        from db.repositories.metadata_repo import MetadataRepository
 
         # Arrange - register multiple images, analyze only one
-        repo.register("/test/img4.png", "h4", "/test", "img4.png", 100, 123.0)
-        repo.register("/test/img5.png", "h5", "/test", "img5.png", 200, 124.0)
+        img4_id = repo.register("/test/img4.png", "h4", "/test", "img4.png", 100, 123.0)
+        _ = repo.register("/test/img5.png", "h5", "/test", "img5.png", 200, 124.0)
 
         # Analyze only img4
         analysis_repo = AnalysisRepository(conn)
-        analysis_data = {"document_type": "Receipt", "company": "Store"}
-        analysis_repo.save(
-            "/test/img4.png", "h4", "test_provider", "test_model", analysis_data, "raw", 1000
+        analysis_id = analysis_repo.save(
+            image_file_id=img4_id,
+            provider_name="test_provider",
+            model_name="test_model",
+            prompt_text="Extract metadata",
+            response_text='{"document_type": "Receipt", "company": "Store"}',
+            confidence_score=0.88,
+            processing_time_ms=1000,
         )
 
-        analysis = analysis_repo.get_by_path("/test/img4.png")
-        repo.update_status("/test/img4.png", "analyzed", analysis_id=analysis["id"])
+        # Create metadata for img4
+        metadata_repo = MetadataRepository(conn)
+        metadata_repo.create_from_analysis(
+            image_file_id=img4_id,
+            analysis_result_id=analysis_id,
+            normalized_metadata={"document_type": "Receipt", "company": "Store"},
+        )
+
+        repo.update_status("/test/img4.png", "analyzed")
 
         # Act
         results = repo.get_all_with_analysis()
@@ -871,35 +906,52 @@ class TestImageFilesRepository:
         assert img4 is not None
         assert img5 is not None
 
-        # img4 should have analysis data
-        assert img4["analysis_id"] is not None
+        # img4 should have metadata
         assert img4["document_type"] == "Receipt"
         assert img4["company"] == "Store"
 
-        # img5 should NOT have analysis data
-        assert img5["analysis_id"] is None
+        # img5 should NOT have metadata (no metadata record created)
         assert img5["document_type"] is None
         assert img5["company"] is None
 
     def test_get_all_with_analysis_filters(self, repo, conn):
         """Test get_all_with_analysis respects directory and provider filters."""
         from db.repositories import AnalysisRepository
+        from db.repositories.metadata_repo import MetadataRepository
 
         # Arrange - register images in different directories with different providers
-        repo.register("/test1/img1.png", "h1", "/test1", "img1.png", 100, 123.0)
-        repo.register("/test2/img2.png", "h2", "/test2", "img2.png", 200, 124.0)
+        img1_id = repo.register("/test1/img1.png", "h1", "/test1", "img1.png", 100, 123.0)
+        img2_id = repo.register("/test2/img2.png", "h2", "/test2", "img2.png", 200, 124.0)
 
         analysis_repo = AnalysisRepository(conn)
+        metadata_repo = MetadataRepository(conn)
 
         # Analyze both with different providers
-        analysis_repo.save("/test1/img1.png", "h1", "provider_a", "model", {}, "raw", 1000)
-        analysis_repo.save("/test2/img2.png", "h2", "provider_b", "model", {}, "raw", 1000)
+        analysis1_id = analysis_repo.save(
+            image_file_id=img1_id,
+            provider_name="provider_a",
+            model_name="model",
+            prompt_text="Extract",
+            response_text="{}",
+            confidence_score=0.9,
+            processing_time_ms=1000,
+        )
+        analysis2_id = analysis_repo.save(
+            image_file_id=img2_id,
+            provider_name="provider_b",
+            model_name="model",
+            prompt_text="Extract",
+            response_text="{}",
+            confidence_score=0.9,
+            processing_time_ms=1000,
+        )
 
-        analysis1 = analysis_repo.get_by_path("/test1/img1.png")
-        analysis2 = analysis_repo.get_by_path("/test2/img2.png")
+        # Create metadata records
+        metadata_repo.create_from_analysis(img1_id, analysis1_id, {})
+        metadata_repo.create_from_analysis(img2_id, analysis2_id, {})
 
-        repo.update_status("/test1/img1.png", "analyzed", analysis_id=analysis1["id"])
-        repo.update_status("/test2/img2.png", "analyzed", analysis_id=analysis2["id"])
+        repo.update_status("/test1/img1.png", "analyzed")
+        repo.update_status("/test2/img2.png", "analyzed")
 
         # Act & Assert - filter by directory
         results_dir1 = repo.get_all_with_analysis(directory_filter="/test1")
