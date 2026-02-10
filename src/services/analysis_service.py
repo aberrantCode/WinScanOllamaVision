@@ -275,17 +275,20 @@ class AnalysisService:
         # Check if already analyzed (cache hit)
         if incremental:
             existing_analysis = self.analysis_db.get_analysis(image_path)
-            if existing_analysis and existing_analysis["file_hash"] == file_hash:
-                # Update status to 'analyzed' if it exists
-                analysis_id = existing_analysis.get("id")
-                if analysis_id:
-                    self.analysis_db.update_image_status(image_path, "analyzed", analysis_id)
-                return {
-                    "success": True,
-                    "cached": True,
-                    "skipped": False,
-                    "analysis": existing_analysis,
-                }
+            if existing_analysis:
+                # Get image file record to check hash (file_hash is in image_files table now)
+                image_file = self.analysis_db.get_image_file(image_path)
+                if image_file and image_file["file_hash"] == file_hash:
+                    # Update status to 'analyzed' if it exists
+                    analysis_id = existing_analysis.get("id")
+                    if analysis_id:
+                        self.analysis_db.update_image_status(image_path, "analyzed", analysis_id)
+                    return {
+                        "success": True,
+                        "cached": True,
+                        "skipped": False,
+                        "analysis": existing_analysis,
+                    }
 
         # File needs analysis - status is already set to "analyzing" by worker thread
         # (No need to update status here - would be duplicate)

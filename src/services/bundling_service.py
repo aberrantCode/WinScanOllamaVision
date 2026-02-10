@@ -43,13 +43,13 @@ class BundlingService:
         Returns:
             List of bundle suggestion dictionaries
         """
-        # Get analyzed pages
+        # Get analyzed pages with metadata
+        # Note: get_analyzed_pages() returns image files joined with metadata table
+        # This includes company, document_type, page_number, etc. needed for bundling
         if file_paths:
-            analyses = []
-            for path in file_paths:
-                analysis = self.analysis_db.get_analysis(path)
-                if analysis:
-                    analyses.append(analysis)
+            # Get all analyzed pages, then filter to requested paths
+            all_analyses = self.analysis_db.get_analyzed_pages()
+            analyses = [a for a in all_analyses if a["file_path"] in file_paths]
         else:
             analyses = self.analysis_db.get_analyzed_pages(directory_filter=directory)
 

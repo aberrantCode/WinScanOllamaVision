@@ -349,7 +349,7 @@ class TestFullWorkflow:
         file_path = test_images[0]
         metadata = {"company": "TestCo", "document_type": "invoice"}
 
-        # Act - Save to both databases
+        # Act - Save analysis (automatically creates metadata record after schema refactoring)
         file_hash = metadata_db.compute_file_hash(file_path)
         analysis_db.save_analysis(
             file_path=file_path,
@@ -360,21 +360,19 @@ class TestFullWorkflow:
             raw_response="{}",
             processing_time_ms=100,
         )
-        metadata_db.save_metadata(
-            file_path=file_path,
-            metadata=metadata,
-            model_used="qwen2.5-vl",
-            processing_time_ms=100,
-        )
 
         # Assert - Retrieve from both databases
         analysis = analysis_db.get_analysis(file_path)
-        metadata_result = metadata_db.get_metadata(file_path)
+        metadata_result = metadata_db.get_normalized_metadata_by_path(file_path)
 
         assert analysis is not None
-        assert analysis["file_hash"] == file_hash
+        # file_hash is in image_files table, not analysis_results
+        image_file = analysis_db.get_image_file(file_path)
+        assert image_file["file_hash"] == file_hash
+
         assert metadata_result is not None
-        assert metadata_result["company"] == "TestCo"
+        # Company name is normalized to lowercase by MetadataNormalizer
+        assert metadata_result["company"].lower() == "testco"
 
     @patch("services.analysis_service.get_logger")
     @patch("services.analysis_service.ProviderFactory")

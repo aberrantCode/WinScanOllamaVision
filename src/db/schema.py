@@ -216,6 +216,23 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
     )
 
     # Document bundles - AI-suggested document groupings
+    # Check if table exists with old schema and drop if needed
+    result = cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='document_bundles'"
+    ).fetchone()
+
+    if result:
+        # Table exists - check if it has old schema (file_paths column)
+        columns_info = cursor.execute("PRAGMA table_info(document_bundles)").fetchall()
+        columns = [r[1] for r in columns_info]
+
+        if "file_paths" in columns:
+            # Old schema detected - drop and recreate
+            logger.warning("Dropping document_bundles table with old schema")
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("DROP TABLE IF EXISTS document_bundles")
+            cursor.execute("PRAGMA foreign_keys = ON")
+
     _execute_sql(
         cursor,
         """

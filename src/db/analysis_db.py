@@ -141,6 +141,25 @@ class AnalysisDB:
         if analysis_id:
             self._image_files.update_status(file_path, "analyzed")
 
+        # Create metadata record if analysis was successful and has data
+        if not had_error and analysis_data and analysis_id:
+            # Import here to avoid circular dependency
+            from services.metadata_normalizer import MetadataNormalizer
+
+            try:
+                normalizer = MetadataNormalizer()
+                normalized = normalizer.normalize(analysis_data)
+
+                self.create_metadata_from_analysis(
+                    image_file_id=image_file_id,
+                    analysis_id=analysis_id,
+                    normalized_metadata=normalized,
+                )
+            except Exception:
+                # If metadata normalization fails, continue without it
+                # The analysis is still saved, just without metadata record
+                pass
+
         # Update rotation from analysis data (only if not an error)
         if not had_error and analysis_data:
             rotation_needed = analysis_data.get("rotation_needed", "none")
