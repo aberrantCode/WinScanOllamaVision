@@ -66,9 +66,10 @@ class TestMetadataDBCore:
 
         # Assert
         assert "schema_version" in table_names
-        assert "archived_metadata" in table_names
         assert "metadata" in table_names  # Normalized metadata table
         assert "image_files" in table_names  # Image file tracking
+        assert "document_bundles" in table_names
+        assert "pdf_files" in table_names
 
     def test_compute_file_hash_returns_consistent_hash(self, temp_file):
         # Act
@@ -125,7 +126,7 @@ class TestMetadataDBCore:
         assert result is not None
         assert result["file_path"] == temp_file
         assert result["file_hash"] == file_hash
-        assert result["rotation"] == 0  # Default rotation
+        assert result["status"] == "registered"  # Default status
 
     def test_update_image_rotation(self, db, temp_file):
         """Test updating image rotation"""
@@ -165,7 +166,7 @@ class TestMetadataDBCore:
         )
 
         # Act
-        db.update_image_status(temp_file, "analyzed", analysis_id=42)
+        db.update_image_status(temp_file, "analyzed")
         result = db.get_image_file(temp_file)
 
         # Assert
@@ -243,7 +244,7 @@ class TestMetadataDBCore:
 
     def test_archive_document(self, db):
         """Test archiving a completed document"""
-        # Arrange
+        # Arrange - Create bundle and PDF first
         pdf_path = "/output/test_invoice.pdf"
         source_files = ["/scans/page1.jpg", "/scans/page2.jpg"]
         document_metadata = {
@@ -252,28 +253,62 @@ class TestMetadataDBCore:
             "date": "2024-01-15",
         }
 
-        # Act
+        # Create bundle
+        cursor = db.connection.execute(
+            "INSERT INTO document_bundles (bundle_name, confidence_score, confidence_level, status) VALUES (?, ?, ?, ?)",
+            ("Test Invoice", 0.9, "high", "completed"),
+        )
+        bundle_id = cursor.lastrowid
+
+        # Create PDF file
+        db.connection.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id, page_count) VALUES (?, ?, ?, ?)",
+            (pdf_path, "test_invoice.pdf", bundle_id, 2),
+        )
+        db.connection.commit()
+
+        # Act - archive_document is now a no-op, but get_archived_document should work
         db.archive_document(pdf_path, source_files, document_metadata)
         result = db.get_archived_document(pdf_path)
 
-        # Assert
+        # Assert - check PDF info (metadata is stored separately in metadata table)
         assert result is not None
-        assert result["company"] == "Acme Corp"
-        assert result["document_type"] == "Invoice"
-        assert result["total_pages"] == 2
+        assert result["pdf_path"] == pdf_path
+        assert result["page_count"] == 2
+        assert result["bundle_name"] == "Test Invoice"
 
     def test_get_archived_statistics(self, db):
         """Test getting archived document statistics"""
-        # Arrange - Archive some documents
-        db.archive_document("/out/doc1.pdf", ["/scans/p1.jpg"], {"company": "A"})
-        db.archive_document("/out/doc2.pdf", ["/scans/p2.jpg", "/scans/p3.jpg"], {"company": "B"})
+        # Arrange - Create bundles and PDFs
+        # Create bundle 1
+        cursor = db.connection.execute(
+            "INSERT INTO document_bundles (bundle_name, status) VALUES (?, ?)",
+            ("Doc 1", "completed"),
+        )
+        bundle_id1 = cursor.lastrowid
+        db.connection.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id, page_count, generation_status) VALUES (?, ?, ?, ?, ?)",
+            ("/out/doc1.pdf", "doc1.pdf", bundle_id1, 1, "completed"),
+        )
+
+        # Create bundle 2
+        cursor = db.connection.execute(
+            "INSERT INTO document_bundles (bundle_name, status) VALUES (?, ?)",
+            ("Doc 2", "completed"),
+        )
+        bundle_id2 = cursor.lastrowid
+        db.connection.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id, page_count, generation_status) VALUES (?, ?, ?, ?, ?)",
+            ("/out/doc2.pdf", "doc2.pdf", bundle_id2, 2, "completed"),
+        )
+        db.connection.commit()
 
         # Act
         stats = db.get_archived_statistics()
 
-        # Assert
-        assert stats["archived_documents_count"] == 2
-        assert stats["total_archived_pages"] == 3
+        # Assert - new keys from ArchivedMetadataRepository
+        assert stats["total_pdfs"] == 2
+        assert stats["total_pages"] == 3
 
     # ==================== Autocomplete / Distinct Values Tests ====================
 

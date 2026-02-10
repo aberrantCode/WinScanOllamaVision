@@ -156,7 +156,10 @@ class MetadataRepository:
 
     def link_to_pdf(self, image_file_ids: list[int], pdf_file_id: int) -> None:
         """
-        Link metadata to generated PDF.
+        Link images to PDF via bundle.
+
+        In the new schema, PDFs are linked to bundles, not directly to images.
+        This method adds images to the bundle that the PDF belongs to.
 
         Args:
             image_file_ids: List of image file IDs
@@ -165,15 +168,27 @@ class MetadataRepository:
         if not image_file_ids:
             return
 
-        placeholders = ",".join("?" * len(image_file_ids))
-        self.conn.execute(
-            f"""
-            UPDATE metadata
-            SET pdf_file_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE image_file_id IN ({placeholders})
-        """,
-            (pdf_file_id, *image_file_ids),
+        # Get the bundle_id for this PDF
+        result = self.conn.fetch_one_dict(
+            "SELECT bundle_id FROM pdf_files WHERE id = ?",
+            (pdf_file_id,),
         )
+
+        if not result or not result["bundle_id"]:
+            return
+
+        bundle_id = result["bundle_id"]
+
+        # Add images to bundle via bundle_images table
+        for sequence, image_file_id in enumerate(image_file_ids, start=1):
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO bundle_images (bundle_id, image_file_id, sequence_order)
+                VALUES (?, ?, ?)
+            """,
+                (bundle_id, image_file_id, sequence),
+            )
+
         self.conn.commit()
 
     def get_analysis_history(self, image_file_id: int) -> list[dict[str, Any]]:
@@ -186,24 +201,16 @@ class MetadataRepository:
         Returns:
             List of analysis result dictionaries
         """
-        # Get file_path from image_files
-        image = self.conn.fetch_one_dict(
-            "SELECT file_path FROM image_files WHERE id = ?",
-            (image_file_id,),
-        )
-
-        if not image:
-            return []
-
-        # Get all analyses for this file_path
+        # Get all analyses for this image_file_id
         results = self.conn.fetch_all_dicts(
             """
             SELECT *
             FROM analysis_results
-            WHERE file_path = ?
+            WHERE image_file_id = ?
             ORDER BY analyzed_at DESC
         """,
-            (image["file_path"],),
+            (image_file_id,),
+            json_fields=["extracted_metadata", "model_options"],
         )
 
         return results if results else []
@@ -333,8 +340,14 @@ class MetadataRepository:
         cursor.execute("SELECT COUNT(*) FROM metadata WHERE auto_approved = 1")
         auto_approved = cursor.fetchone()[0]
 
-        # Linked to PDFs
-        cursor.execute("SELECT COUNT(*) FROM metadata WHERE pdf_file_id IS NOT NULL")
+        # Linked to PDFs (via bundle_images -> pdf_files)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT m.id)
+            FROM metadata m
+            INNER JOIN bundle_images bi ON m.image_file_id = bi.image_file_id
+            INNER JOIN document_bundles b ON bi.bundle_id = b.id
+            INNER JOIN pdf_files p ON b.id = p.bundle_id
+        """)
         linked_to_pdf = cursor.fetchone()[0]
 
         return {

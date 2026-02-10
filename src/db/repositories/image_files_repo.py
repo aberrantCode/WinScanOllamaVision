@@ -189,25 +189,33 @@ class ImageFilesRepository:
 
     def update_rotation(self, file_path: str, rotation: int) -> None:
         """
-        Update user-specified rotation for image file.
+        Update user-specified rotation for image file (stored in metadata table).
 
         Args:
             file_path: Path to image file
             rotation: Rotation in degrees (0, 90, 180, 270)
         """
+        # Get image_file_id
+        image_file = self.get_by_path(file_path)
+        if not image_file:
+            return
+
+        # Create metadata record if it doesn't exist, then update rotation
         self.conn.execute(
             """
-            UPDATE image_files
-            SET rotation = ?
-            WHERE file_path = ?
+            INSERT INTO metadata (image_file_id, rotation)
+            VALUES (?, ?)
+            ON CONFLICT(image_file_id) DO UPDATE SET
+                rotation = excluded.rotation,
+                updated_at = CURRENT_TIMESTAMP
         """,
-            (rotation, file_path),
+            (image_file["id"], rotation),
         )
         self.conn.commit()
 
     def get_rotation(self, file_path: str) -> int:
         """
-        Get user-specified rotation for image file.
+        Get user-specified rotation for image file (stored in metadata table).
 
         Args:
             file_path: Path to image file
@@ -215,10 +223,16 @@ class ImageFilesRepository:
         Returns:
             Rotation in degrees (0, 90, 180, 270), defaults to 0
         """
+        # Get image_file_id
+        image_file = self.get_by_path(file_path)
+        if not image_file:
+            return 0
+
+        # Query metadata table (rotation moved there after schema cleanup)
         result = self.conn.fetch_one_dict(
-            "SELECT rotation FROM image_files WHERE file_path = ?", (file_path,)
+            "SELECT rotation FROM metadata WHERE image_file_id = ?", (image_file["id"],)
         )
-        return result["rotation"] if result else 0
+        return result["rotation"] if result and result["rotation"] is not None else 0
 
     def mark_deleted_batch(self, file_paths: list[str]) -> int:
         """
