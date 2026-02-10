@@ -510,9 +510,9 @@ class AnalysisStatusWindow(QDialog):
             "Total number of pages that have been bundled into accepted/completed documents"
         )
 
-        self.metadata_quality_card = create_metric_card(self.theme_colors, "📋 Needs Review", "0%")
+        self.metadata_quality_card = create_metric_card(self.theme_colors, "📋 Needs Review", "0")
         self.metadata_quality_card.setToolTip(
-            "Percentage of files missing key metadata (company, document type, or date)"
+            "Number of images with 'analyzed' status awaiting review"
         )
 
         self.avg_processing_card = create_metric_card(self.theme_colors, "⏱️ Avg Inference", "--")
@@ -874,7 +874,7 @@ class AnalysisStatusWindow(QDialog):
                 "pages_bundled": 0,
                 "documents_archived": 0,
                 "pdfs_generated": 0,
-                "missing_metadata_pct": 0,
+                "needs_review_count": 0,
                 "processing_speed": 0,
                 "eta_minutes": 0,
                 "avg_confidence": 0,
@@ -976,24 +976,14 @@ class AnalysisStatusWindow(QDialog):
         """)
         cached_count = cursor.fetchone()[0]
 
-        # Missing metadata percentage - count images with incomplete user-approved metadata
+        # Needs review count - images with 'analyzed' status awaiting review
         cursor.execute(
             """
-            SELECT COUNT(*) FROM metadata m
-            INNER JOIN image_files img ON m.image_file_id = img.id
-            WHERE img.status != 'deleted'
-            AND (
-                m.company IS NULL OR m.company = '' OR m.company = 'N/A' OR
-                m.document_type IS NULL OR m.document_type = '' OR m.document_type = 'N/A' OR
-                m.document_date IS NULL OR m.document_date = '' OR m.document_date = 'N/A'
-            )
+            SELECT COUNT(*) FROM image_files
+            WHERE status = 'analyzed'
         """
         )
-        missing_metadata_count = cursor.fetchone()[0]
-        # Calculate percentage against analyzed files, not detected files
-        missing_metadata_pct = (
-            (missing_metadata_count / files_analyzed * 100) if files_analyzed > 0 else 0
-        )
+        needs_review_count = cursor.fetchone()[0]
 
         # Processing speed (last 100 successful analyses)
         # After Migration 16, use had_error flag instead of is_cached
@@ -1154,7 +1144,7 @@ class AnalysisStatusWindow(QDialog):
             "pages_bundled": pages_bundled,
             "documents_archived": documents_archived,
             "pdfs_generated": pdfs_generated,
-            "missing_metadata_pct": missing_metadata_pct,
+            "needs_review_count": needs_review_count,
             "processing_speed": processing_speed,
             "eta_minutes": eta_minutes,
             "avg_confidence": avg_confidence,
@@ -1201,9 +1191,9 @@ class AnalysisStatusWindow(QDialog):
             str(stats["total_archived_pages"])
         )
 
-        # Needs Review Percentage
+        # Needs Review Count
         self.metadata_quality_card.findChild(QLabel, "📋_needs_review_value").setText(
-            f"{stats['missing_metadata_pct']:.1f}%"
+            str(stats["needs_review_count"])
         )
 
         # Average Inference Time

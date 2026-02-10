@@ -2426,6 +2426,10 @@ class BundleReviewWindow(QDialog):
                     bundling_service = BundlingService(self.analysis_db)
                     bundling_service.accept_bundle(bundle_id)
 
+                # Mark all images in bundle as "reviewed"
+                for file_path in remaining_paths:
+                    self.analysis_db.update_image_status(file_path, "reviewed")
+
             except Exception as e:
                 QMessageBox.critical(
                     self, "Save Failed", f"Failed to save bundle changes:\n{str(e)}"

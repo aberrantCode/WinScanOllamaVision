@@ -12,7 +12,7 @@ class ImageStatus(str, Enum):
     Valid status values for image_files.status column.
 
     Status Flow:
-        registered → pending → analyzing → analyzed → bundled
+        registered → pending → analyzing → analyzed → reviewed → bundled
                                     ↓
                                  deleted (at any point)
     """
@@ -26,8 +26,11 @@ class ImageStatus(str, Enum):
     # Currently being analyzed by LLM
     ANALYZING = "analyzing"
 
-    # Analysis complete
+    # Analysis complete, awaiting review
     ANALYZED = "analyzed"
+
+    # User has reviewed and approved the analysis
+    REVIEWED = "reviewed"
 
     # Included in a document bundle
     BUNDLED = "bundled"

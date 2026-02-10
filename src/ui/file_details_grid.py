@@ -3151,6 +3151,32 @@ class FileDetailsGrid(QWidget):
 
         menu.addSeparator()
 
+        # Status change options
+        if len(selection) == 1:
+            # Single selection: "Mark Reviewed"
+            mark_reviewed_action = QAction("✓ Mark Reviewed", menu)
+            mark_reviewed_action.triggered.connect(
+                lambda: self._change_status_for_selected("reviewed")
+            )
+            menu.addAction(mark_reviewed_action)
+        else:
+            # Multiple selection: "Change Status" submenu
+            from db.image_status import ImageStatus
+
+            change_status_menu = QMenu("Change Status", menu)
+            change_status_menu.setStyleSheet(menu.styleSheet())  # Apply same theme
+
+            for status in ImageStatus:
+                status_action = QAction(status.display_name, change_status_menu)
+                status_action.triggered.connect(
+                    lambda checked=False, s=status.value: self._change_status_for_selected(s)
+                )
+                change_status_menu.addAction(status_action)
+
+            menu.addMenu(change_status_menu)
+
+        menu.addSeparator()
+
         export_action = QAction("Export Selected to CSV", menu)
         export_action.triggered.connect(lambda: self._export_csv(selected_only=True))
         menu.addAction(export_action)
@@ -3502,6 +3528,81 @@ class FileDetailsGrid(QWidget):
         if file_paths:
             clipboard_text = ", ".join(file_paths)
             QApplication.clipboard().setText(clipboard_text)
+
+    def _change_status_for_selected(self, new_status: str):
+        """Change status for selected images."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        # Get database instance from parent chain
+        parent_widget = self.parent()
+        analysis_db = None
+
+        while parent_widget:
+            if hasattr(parent_widget, "analysis_db"):
+                analysis_db = parent_widget.analysis_db
+                break
+            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+        if not analysis_db:
+            QMessageBox.warning(
+                self,
+                "Database Not Available",
+                "Cannot update status: database connection not available.",
+            )
+            return
+
+        # Collect file paths from selected rows
+        file_paths = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+            if row_data and row_data.get("full_path"):
+                file_paths.append(row_data["full_path"])
+
+        if not file_paths:
+            QMessageBox.warning(self, "No Records", "No valid records found to update.")
+            return
+
+        # Update status in database
+        updated_count = 0
+        errors = []
+
+        for file_path in file_paths:
+            try:
+                analysis_db.update_image_status(file_path, new_status)
+                updated_count += 1
+            except Exception as e:
+                errors.append(f"{file_path}: {str(e)}")
+
+        # Refresh the grid
+        parent = self.parent()
+        if parent and hasattr(parent, "_refresh_file_grid"):
+            parent._refresh_file_grid()  # type: ignore[attr-defined]
+        else:
+            # Fallback: reload from database
+            try:
+                data = analysis_db.get_all_with_analysis()
+                self.refresh_data(data)
+            except Exception:
+                pass
+
+        # Show result message
+        if updated_count > 0:
+            from db.image_status import ImageStatus
+
+            display_status = ImageStatus(new_status).display_name
+            message = f"Successfully updated {updated_count} image(s) to status '{display_status}'."
+            if errors:
+                message += f"\n\nErrors ({len(errors)}):\n" + "\n".join(errors[:5])
+                if len(errors) > 5:
+                    message += f"\n... and {len(errors) - 5} more errors"
+            QMessageBox.information(self, "Status Update Complete", message)
+        elif errors:
+            QMessageBox.warning(
+                self, "Update Failed", "No records were updated.\n\n" + "\n".join(errors[:10])
+            )
 
     def _delete_selected(self):
         """Delete selected rows from database."""
