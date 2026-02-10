@@ -49,18 +49,36 @@ class TestGenerateBundleRecommendations:
     def test_generate_uses_file_paths_when_provided(self, service, mock_db):
         # Arrange
         file_paths = ["file1.png", "file2.png"]
-        mock_db.get_analysis.return_value = {
-            "file_path": "file1.png",
-            "company": "TestCo",
-            "document_type": "invoice",
-        }
+        # After Migration 16, bundling uses get_analyzed_pages() which joins metadata
+        mock_db.get_analyzed_pages.return_value = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 1,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 2,
+            },
+            {
+                "file_path": "other.png",
+                "company": "Other",
+                "document_type": "receipt",
+                "page_number": 1,
+            },
+        ]
+        mock_db.get_bundled_file_paths.return_value = set()
 
         # Act
         service.generate_bundle_recommendations(file_paths=file_paths)
 
-        # Assert
-        assert mock_db.get_analysis.call_count == 2
-        mock_db.get_analyzed_pages.assert_not_called()
+        # Assert - should call get_analyzed_pages and filter to requested paths
+        mock_db.get_analyzed_pages.assert_called_once()
+        # get_analysis is no longer used for bundling
+        mock_db.get_analysis.assert_not_called()
 
     def test_generate_uses_analyzed_pages_when_no_file_paths(self, service, mock_db):
         # Arrange

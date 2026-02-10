@@ -2,7 +2,6 @@
 Tests for Analysis Status Window enhancements
 """
 
-import json
 from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
@@ -108,26 +107,27 @@ class TestAnalysisStatusWindowEnhancements:
         self, qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
     ):
         """Test _refresh_document_details() populates table"""
-        # Setup mock database response
+        # Setup mock database response - match actual query column order
+        # After Migration 16, query returns: id, pdf_path, created_at, page_count, company, doc_type, doc_date
         mock_cursor = MagicMock()
         test_data = [
             (
-                1,  # id
+                1,  # bundle_id
                 "C:/output/Invoice_ABC_2024-01-15.pdf",  # pdf_path
+                datetime.now().isoformat(),  # created_at
+                2,  # page_count
                 "ABC Company",  # company
                 "Invoice",  # document_type
                 "2024-01-15",  # document_date
-                json.dumps(["C:/scan/page1.png", "C:/scan/page2.png"]),  # file_paths
-                datetime.now().isoformat(),  # created_at
             ),
             (
-                2,
-                "C:/output/Receipt_XYZ_2024-01-20.pdf",
-                "XYZ Corp",
-                "Receipt",
-                "2024-01-20",
-                json.dumps(["C:/scan/page3.png"]),
-                datetime.now().isoformat(),
+                2,  # bundle_id
+                "C:/output/Receipt_XYZ_2024-01-20.pdf",  # pdf_path
+                datetime.now().isoformat(),  # created_at
+                1,  # page_count
+                "XYZ Corp",  # company
+                "Receipt",  # document_type
+                "2024-01-20",  # document_date
             ),
         ]
         mock_cursor.fetchall.return_value = test_data
