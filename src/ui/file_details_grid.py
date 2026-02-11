@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.image_preview_widget import ImagePreviewWidget, ToolbarSize, ToolbarPosition
 from ui.pannable_image_label import PannableImageLabel
 
 
@@ -561,9 +562,6 @@ class FileDetailsDialog(QDialog):
             self.default_zoom_mode = "fit_to_width"
             self.default_zoom_percent = 100
 
-        # Zoom and rotation controls
-        self.zoom_level = 100  # Start at 100%
-        self.rotation_angle = 0  # Rotation in degrees (0, 90, 180, 270)
 
         # Correct the file path if it's in a temp folder
         stored_path = self.file_data.get("full_path")
@@ -587,6 +585,8 @@ class FileDetailsDialog(QDialog):
                 "text_secondary": "#B0B0B0",
                 "border": "#4A4A4A",
                 "accent": "#3B82F6",
+                "button_bg": "#3A3A3A",
+                "button_hover": "#4A4A4A",
             }
         else:
             return {
@@ -596,136 +596,10 @@ class FileDetailsDialog(QDialog):
                 "text_secondary": "#374151",
                 "border": "#E5E7EB",
                 "accent": "#3B82F6",
+                "button_bg": "#F3F4F6",
+                "button_hover": "#EFF6FF",
             }
 
-    def _create_overlay_controls(self) -> QWidget:
-        """Create compact overlaid zoom/rotate controls with tooltips."""
-        # Color definitions
-        gray_100 = "#F3F4F6"
-        gray_300 = "#D1D5DB"
-        gray_900 = "#111827"
-        primary_pale = "#EFF6FF"
-        primary = "#3B82F6"
-
-        controls = QWidget()
-        controls.setStyleSheet(f"""
-            QWidget {{
-                background: rgba(255, 255, 255, 0.95);
-                border: 2px solid {gray_900};
-                border-radius: 12px;
-                padding: 4px;
-            }}
-        """)
-
-        layout = QHBoxLayout(controls)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
-        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetFixedSize)  # Shrink to fit content
-
-        # Button style (doubled size)
-        btn_style = f"""
-            QPushButton {{
-                background: {gray_100};
-                color: {gray_900};
-                border: 1px solid {gray_300};
-                border-radius: 4px;
-                font-size: 20px;
-                font-weight: bold;
-                min-width: 40px;
-                max-width: 40px;
-                min-height: 40px;
-                max-height: 40px;
-            }}
-            QPushButton:hover {{
-                background: {primary_pale};
-                border-color: {primary};
-            }}
-        """
-
-        # Zoom controls
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setStyleSheet(btn_style)
-        zoom_out_btn.setToolTip("Zoom Out (25%)")
-        zoom_out_btn.clicked.connect(self._on_zoom_out)
-        layout.addWidget(zoom_out_btn)
-
-        self.zoom_spinner = QSpinBox()
-        self.zoom_spinner.setRange(25, 400)
-        self.zoom_spinner.setValue(100)
-        self.zoom_spinner.setSuffix("%")
-        self.zoom_spinner.setFixedWidth(110)
-        self.zoom_spinner.setFixedHeight(40)
-        self.zoom_spinner.setToolTip("Zoom Level (25-400%)")
-        self.zoom_spinner.setStyleSheet(f"""
-            QSpinBox {{
-                background: white;
-                color: {gray_900};
-                border: 1px solid {gray_300};
-                border-radius: 4px;
-                padding: 2px;
-                font-size: 20px;
-            }}
-        """)
-        self.zoom_spinner.valueChanged.connect(self._on_zoom_percent_changed)
-        layout.addWidget(self.zoom_spinner)
-
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setStyleSheet(btn_style)
-        zoom_in_btn.setToolTip("Zoom In (25%)")
-        zoom_in_btn.clicked.connect(self._on_zoom_in)
-        layout.addWidget(zoom_in_btn)
-
-        # Fit buttons
-        fit_width_btn = QPushButton("W")
-        fit_width_btn.setStyleSheet(btn_style)
-        fit_width_btn.setToolTip("Fit to Width")
-        fit_width_btn.clicked.connect(self._on_fit_width)
-        layout.addWidget(fit_width_btn)
-
-        fit_height_btn = QPushButton("H")
-        fit_height_btn.setStyleSheet(btn_style)
-        fit_height_btn.setToolTip("Fit to Height")
-        fit_height_btn.clicked.connect(self._on_fit_height)
-        layout.addWidget(fit_height_btn)
-
-        fit_btn = QPushButton("F")
-        fit_btn.setStyleSheet(btn_style)
-        fit_btn.setToolTip("Fit to Window")
-        fit_btn.clicked.connect(self._on_fit_window)
-        layout.addWidget(fit_btn)
-
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"background: {gray_300};")
-        sep.setFixedWidth(2)
-        sep.setFixedHeight(40)
-        layout.addWidget(sep)
-
-        # Rotation controls (only CW and CCW)
-        rotate_ccw_btn = QPushButton("↺")
-        rotate_ccw_btn.setStyleSheet(btn_style)
-        rotate_ccw_btn.setToolTip("Rotate Counter-Clockwise (90°)")
-        rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
-        layout.addWidget(rotate_ccw_btn)
-
-        rotate_cw_btn = QPushButton("↻")
-        rotate_cw_btn.setStyleSheet(btn_style)
-        rotate_cw_btn.setToolTip("Rotate Clockwise (90°)")
-        rotate_cw_btn.clicked.connect(self._on_rotate_cw)
-        layout.addWidget(rotate_cw_btn)
-
-        return controls
-
-    def _position_overlay_controls(self):
-        """Position overlay controls at bottom-center of image area."""
-        if not hasattr(self, "overlay_controls") or not hasattr(self, "image_area"):
-            return
-
-        # Center horizontally, position at bottom
-        x = (self.image_area.width() - self.overlay_controls.width()) // 2
-        y = self.image_area.height() - self.overlay_controls.height() - 10
-        self.overlay_controls.move(x, y)
 
     def _init_ui(self):
         """Initialize the user interface with image preview and accordion sections."""
@@ -766,30 +640,13 @@ class FileDetailsDialog(QDialog):
         left_layout.setContentsMargins(15, 15, 15, 15)
 
         # Image display area (with overlay controls)
-        image_area = QWidget()
-        image_area.setMinimumSize(400, 400)  # Ensure minimum size for absolute positioning
-        image_layout = QVBoxLayout(image_area)
-        image_layout.setContentsMargins(0, 0, 0, 0)
-        image_layout.setSpacing(0)
-
-        # Image preview label with panning support
-        self.image_label = PannableImageLabel()
-        self.image_label.set_zoom_level(self.zoom_level)  # Initialize zoom level
-        self.image_label.setStyleSheet(f"""
-            QLabel {{
-                background-color: {self.theme_colors["bg_primary"]};
-                border: 2px solid {self.theme_colors["border"]};
-                border-radius: 8px;
-                padding: 10px;
-            }}
-        """)
-        image_layout.addWidget(self.image_label)
-
-        # Overlay controls (positioned absolutely at bottom-left)
-        self.overlay_controls = self._create_overlay_controls()
-        self.overlay_controls.setParent(image_area)
-        self.overlay_controls.raise_()  # Bring controls to front
-        # Position will be set in _apply_initial_zoom after layout is complete
+        # Create unified image preview widget
+        self.image_preview = ImagePreviewWidget(
+            toolbar_size=ToolbarSize.COMPACT,
+            toolbar_position=ToolbarPosition.BOTTOM_CENTER,
+            theme_colors=self.theme_colors,
+        )
+        self.image_preview.setMinimumSize(400, 400)
 
         # Load and display image (path already corrected in __init__)
         file_path = self.file_data.get("full_path")
@@ -802,25 +659,30 @@ class FileDetailsDialog(QDialog):
                 self.original_pixmap = pixmap
                 self.current_rotation = "none"
 
-                # Update preview with initial zoom
-                self._update_image_preview()
+                # Load into preview widget with fit to window
+                self.image_preview.set_pixmap(pixmap, apply_fit="window")
             else:
                 self.base_pixmap = None
                 self.original_pixmap = None
                 self.current_rotation = "none"
-                self.image_label.setText("Failed to load image")
-                self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
+                self.image_preview.image_label.setText("Failed to load image")
+                self.image_preview.image_label.setStyleSheet(
+                    f"color: {self.theme_colors['text_secondary']};"
+                )
         else:
             self.base_pixmap = None
             self.original_pixmap = None
             self.current_rotation = "none"
-            self.image_label.setText(f"Image not found\n{file_path or 'No path'}")
-            self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
+            self.image_preview.image_label.setText(f"Image not found\n{file_path or 'No path'}")
+            self.image_preview.image_label.setStyleSheet(
+                f"color: {self.theme_colors['text_secondary']};"
+            )
 
+        image_area = self.image_preview  # For compatibility with existing splitter code
         left_layout.addWidget(image_area)
 
         # Store references for dynamic resizing
-        self.image_area = image_area  # Store for overlay control repositioning
+        self.image_area = image_area  # Store for compatibility
         self.left_panel = left_panel
         self.splitter = splitter
 
@@ -1756,161 +1618,6 @@ class FileDetailsDialog(QDialog):
             # Fallback to fit width
             return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
 
-    def _update_image_preview(self):
-        """Update preview with zoom, rotation, and pan transformations."""
-        if not self.base_pixmap:
-            return
-
-        # Start with base pixmap
-        pixmap = self.base_pixmap
-
-        # Apply rotation
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Apply zoom
-        zoom_factor = self.zoom_level / 100.0
-        if zoom_factor != 1.0:
-            new_width = int(pixmap.width() * zoom_factor)
-            new_height = int(pixmap.height() * zoom_factor)
-            pixmap = pixmap.scaled(
-                new_width,
-                new_height,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-        # Apply pan
-        pan_offset = self.image_label.get_pan_offset()
-        if self.zoom_level > 100 and not pan_offset.isNull():
-            canvas = QPixmap(pixmap.size())
-            canvas.fill(Qt.GlobalColor.white)
-            painter = QPainter(canvas)
-            painter.drawPixmap(pan_offset, pixmap)
-            painter.end()
-            pixmap = canvas
-
-        self.image_label.setPixmap(pixmap)
-
-    def _on_zoom_in(self):
-        """Zoom in by 25%."""
-        new_zoom = min(400, self.zoom_level + 25)
-        self.zoom_spinner.setValue(new_zoom)
-
-    def _on_zoom_out(self):
-        """Zoom out by 25%."""
-        new_zoom = max(25, self.zoom_level - 25)
-        self.zoom_spinner.setValue(new_zoom)
-
-    def _on_zoom_percent_changed(self, value: int):
-        """Handle zoom percentage change."""
-        self.zoom_level = value
-        self.image_label.set_zoom_level(value)
-        self._update_image_preview()
-
-    def _on_rotate_ccw(self):
-        """Rotate counter-clockwise by 90 degrees."""
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.image_label.reset_pan()  # Reset pan when rotating
-        self._update_image_preview()
-
-    def _on_rotate_cw(self):
-        """Rotate clockwise by 90 degrees."""
-        self.rotation_angle = (self.rotation_angle + 90) % 360
-        self.image_label.reset_pan()  # Reset pan when rotating
-        self._update_image_preview()
-
-    def _on_fit_width(self):
-        """Fit image to width of preview area."""
-        if not self.base_pixmap or not hasattr(self, "image_area"):
-            return
-
-        # Start with base pixmap
-        pixmap = self.base_pixmap
-
-        # Apply rotation to get actual display dimensions
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Get available width from image_area (subtract margins and padding)
-        available_width = self.image_area.width() - 40
-
-        # Ensure we have valid dimensions
-        if available_width <= 0 or pixmap.width() <= 0:
-            return
-
-        # Calculate zoom to fit width
-        zoom_percent = int((available_width / pixmap.width()) * 100)
-        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
-
-        self.zoom_spinner.setValue(zoom_percent)
-
-    def _on_fit_height(self):
-        """Fit image to height of preview area."""
-        if not self.base_pixmap or not hasattr(self, "image_area"):
-            return
-
-        # Start with base pixmap
-        pixmap = self.base_pixmap
-
-        # Apply rotation to get actual display dimensions
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Get available height from image_area (subtract margins, padding, and overlay controls)
-        available_height = self.image_area.height() - 80  # Extra space for overlay controls
-
-        # Ensure we have valid dimensions
-        if available_height <= 0 or pixmap.height() <= 0:
-            return
-
-        # Calculate zoom to fit height
-        zoom_percent = int((available_height / pixmap.height()) * 100)
-        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
-
-        self.zoom_spinner.setValue(zoom_percent)
-
-    def _on_fit_window(self):
-        """Fit image to window (both width and height)."""
-        if not self.base_pixmap or not hasattr(self, "image_area"):
-            return
-
-        # Start with base pixmap
-        pixmap = self.base_pixmap
-
-        # Apply rotation to get actual display dimensions
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Get available dimensions from image_area (subtract margins and overlay controls space)
-        available_width = self.image_area.width() - 40
-        available_height = self.image_area.height() - 80  # Extra space for overlay controls
-
-        # Ensure we have valid dimensions
-        if (
-            available_width <= 0
-            or available_height <= 0
-            or pixmap.width() <= 0
-            or pixmap.height() <= 0
-        ):
-            return
-
-        # Calculate zoom to fit both dimensions (use smaller ratio)
-        width_ratio = available_width / pixmap.width()
-        height_ratio = available_height / pixmap.height()
-        zoom_ratio = min(width_ratio, height_ratio)
-        zoom_percent = int(zoom_ratio * 100)
-        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
-
-        self.zoom_spinner.setValue(zoom_percent)
 
     def _on_splitter_moved(self, pos, index):
         """Handle splitter movement - no automatic rescaling with manual zoom controls."""
@@ -1918,45 +1625,6 @@ class FileDetailsDialog(QDialog):
         # Users can use fit buttons (W, H, F) if they want to adjust zoom
         pass
 
-    def showEvent(self, event):  # noqa: N802
-        """Handle first show to apply initial zoom setting."""
-        super().showEvent(event)
-
-        # Only apply on first show
-        if not hasattr(self, "_first_show_done"):
-            self._first_show_done = True
-
-            # Apply initial zoom after window is shown and layout is calculated
-            if hasattr(self, "base_pixmap") and self.base_pixmap is not None:
-                # Use QTimer to ensure layout has been fully calculated
-                from PyQt6.QtCore import QTimer
-
-                QTimer.singleShot(100, self._apply_initial_zoom)
-
-    def _apply_initial_zoom(self):
-        """Apply the configured zoom setting after window is shown."""
-        if not hasattr(self, "base_pixmap") or self.base_pixmap is None:
-            return
-
-        # Ensure overlay controls are visible and positioned at bottom-left
-        if hasattr(self, "overlay_controls"):
-            self._position_overlay_controls()
-            self.overlay_controls.show()
-            self.overlay_controls.raise_()
-
-        # Apply zoom based on default mode
-        if self.default_zoom_mode == "fit_to_width":
-            self._on_fit_width()
-        elif self.default_zoom_mode == "fit_to_height":
-            self._on_fit_height()
-        elif self.default_zoom_mode == "fit_to_window":
-            self._on_fit_window()
-        elif self.default_zoom_mode == "custom_%":
-            # Use configured percentage
-            self.zoom_spinner.setValue(self.default_zoom_percent)
-        else:
-            # Default to fit width
-            self._on_fit_width()
 
     def resizeEvent(self, event):  # noqa: N802
         """Handle window resize - reposition overlay controls."""
@@ -2284,12 +1952,8 @@ class FileDetailsDialog(QDialog):
                     transform, Qt.TransformationMode.SmoothTransformation
                 )
 
-        # Reset overlay rotation controls when metadata rotation changes
-        self.rotation_angle = 0
-        self.image_label.reset_pan()
-
-        # Update the preview with new base pixmap
-        self._update_image_preview()
+        # Reset and update the image preview widget
+        self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window")
 
     def _store_original_metadata_values(self):
         """Store the original values of all metadata fields for change tracking."""

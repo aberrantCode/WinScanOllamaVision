@@ -4,7 +4,9 @@
       "Bash(git commit:*)",
       "Bash(bandit:*)",
       "Bash(ruff format:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(Get-Content \"$env:APPDATA\\\\WinScanLLM\\\\logs\\\\app.log\" -Tail 200)",
+      "Bash(Select-String -Pattern \"ImagePreviewWidget|ENSURE OVERLAY|overlay\")"
     ]
   }
 }

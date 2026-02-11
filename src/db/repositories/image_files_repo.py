@@ -368,6 +368,89 @@ class ImageFilesRepository:
             query, params=tuple(params), json_fields=["extracted_metadata"]
         )
 
+    def get_batch_with_analysis(self, file_paths: list[str]) -> dict[str, dict[str, Any]]:
+        """
+        Get analysis data for multiple file paths in a single query (batch operation).
+
+        This is MUCH more efficient than calling get_all_with_analysis() for each file.
+        Returns a dict keyed by file_path for O(1) lookup.
+
+        Args:
+            file_paths: List of file paths to fetch analysis for
+
+        Returns:
+            Dict mapping file_path -> analysis dict (includes files not found as None)
+        """
+        if not file_paths:
+            return {}
+
+        # Create placeholders for IN clause
+        placeholders = ",".join("?" * len(file_paths))
+
+        # Same query structure as get_all_with_analysis but with IN clause
+        # Column names from internal code, values parameterized - safe from injection
+        query = f"""
+            SELECT
+                -- Image file fields
+                img.id,
+                img.file_path,
+                img.file_hash,
+                img.directory_path,
+                img.filename,
+                img.file_size,
+                img.file_mtime,
+                img.status,
+                img.discovered_at,
+                img.last_seen_at,
+                img.deleted_at,
+
+                -- Normalized metadata fields (metadata table is authoritative)
+                m.company,
+                m.document_type,
+                m.document_date,
+                m.page_number,
+                m.total_pages,
+                m.belongs_to_same_doc,
+                m.confidence_score,
+                m.tax_related,
+
+                -- User preferences (from metadata table)
+                m.document_category,
+                m.rotation,
+                m.output_filename,
+                m.user_verified,
+                m.last_edited_by,
+                m.created_at as metadata_created_at,
+                m.updated_at as metadata_updated_at,
+
+                -- Analysis provenance (for history tracking)
+                ar.provider_name,
+                ar.model_name,
+                ar.analyzed_at,
+                ar.processing_time_ms,
+                ar.had_error,
+
+                -- Raw analysis fields (for debugging/history)
+                ar.response_text,
+                ar.extracted_metadata,
+                ar.prompt_text,
+
+                -- Cache detection (image has multiple analyses)
+                (SELECT COUNT(*) FROM analysis_results WHERE image_file_id = img.id) > 1 AS is_cached
+            FROM image_files img
+            LEFT JOIN metadata m ON img.id = m.image_file_id
+            LEFT JOIN analysis_results ar ON m.analysis_result_id = ar.id
+            WHERE img.file_path IN ({placeholders})
+            ORDER BY img.discovered_at DESC
+        """  # nosec B608
+
+        results = self.conn.fetch_all_dicts(
+            query, params=tuple(file_paths), json_fields=["extracted_metadata"]
+        )
+
+        # Convert to dict keyed by file_path for O(1) lookup
+        return {row["file_path"]: row for row in results}
+
     def get_stats(self) -> dict[str, int]:
         """
         Get statistics (total, by status, etc).

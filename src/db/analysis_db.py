@@ -242,6 +242,21 @@ class AnalysisDB:
         """
         return self._image_files.get_all_with_analysis(directory_filter, provider_filter)
 
+    def get_analyses_batch(self, file_paths: list[str]) -> dict[str, dict[str, Any]]:
+        """
+        Get analysis data for multiple file paths in a single query (batch operation).
+
+        Much more efficient than calling get_analysis() in a loop.
+        Use this when loading bundles or processing multiple files.
+
+        Args:
+            file_paths: List of file paths to fetch analysis for
+
+        Returns:
+            Dict mapping file_path -> analysis dict. Missing files will not be in the dict.
+        """
+        return self._image_files.get_batch_with_analysis(file_paths)
+
     # ==================== Directory Methods ====================
 
     def add_source_directory(self, directory_path: str, scan_on_startup: bool = True) -> None:

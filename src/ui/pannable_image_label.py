@@ -4,13 +4,16 @@ Pannable image label widget for zoomed image navigation.
 Provides a QLabel subclass with click & drag panning support.
 """
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QLabel
 
 
 class PannableImageLabel(QLabel):
     """QLabel with click & drag panning support for zoomed images."""
+
+    # Signal emitted when pan offset changes
+    pan_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,7 +56,11 @@ class PannableImageLabel(QLabel):
             delta = event.pos() - self.pan_start_pos
             self.pan_offset += delta
             self.pan_start_pos = event.pos()
-            # Notify parent to update the image display
+
+            # Emit signal for modern signal-based communication
+            self.pan_changed.emit()
+
+            # Backward compatibility: also call parent method if it exists
             if self.parent():
                 parent = self.parent()
                 while parent:
@@ -61,6 +68,7 @@ class PannableImageLabel(QLabel):
                         parent._update_image_preview()
                         break
                     parent = parent.parent()
+
             event.accept()
         else:
             super().mouseMoveEvent(event)

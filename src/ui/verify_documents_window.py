@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import cast
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap, QTransform
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -36,14 +36,13 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 from ui.bundle_widgets import ClickableLabel
-from ui.pannable_image_label import PannableImageLabel
+from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.styles import (
     Colors,
     get_danger_button_style,
@@ -322,6 +321,13 @@ class BundleReviewWindow(QDialog):
     ):
         super().__init__(parent)
 
+        # CRITICAL TEST - Log at very start
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+        logger.info("========== BUNDLE REVIEW WINDOW INIT CALLED ==========")
+        logger.info(f"prototype_mode={prototype_mode}, bundle_data={bool(bundle_data)}")
+
         # Services
         self.analysis_db = analysis_db
         self.metadata_db = metadata_db
@@ -343,8 +349,6 @@ class BundleReviewWindow(QDialog):
             self.bundle_data = None
 
         self.current_page_index = 0
-        self.zoom_level = 100
-        self.rotation_angle = 0
         self.layout_mode = "flow"
 
         # Tracking
@@ -360,9 +364,6 @@ class BundleReviewWindow(QDialog):
 
         # Accordion sections
         self.accordion_sections = []
-
-        # Track first show for default zoom
-        self._first_show = True
 
         self._init_ui()
         self._load_bundle()
@@ -577,134 +578,31 @@ class BundleReviewWindow(QDialog):
         image_layout.setContentsMargins(0, 0, 0, 0)
         image_layout.setSpacing(0)
 
-        # Preview label with panning support
-        self.large_preview = PannableImageLabel()
-        self.large_preview.set_zoom_level(self.zoom_level)  # Initialize zoom level
-        self.large_preview.setStyleSheet(
-            f"background: white; border: 2px solid {Colors.GRAY_200}; border-radius: 4px;"
+        # Create unified image preview widget with compact toolbar
+        self.large_preview_widget = ImagePreviewWidget(
+            toolbar_size=ToolbarSize.COMPACT,
+            toolbar_position=ToolbarPosition.TOP_CENTER,
+            theme_colors=None,  # Uses default light theme
         )
-        image_layout.addWidget(self.large_preview)
 
-        # Overlay controls (positioned absolutely)
-        self.overlay_controls = self._create_overlay_controls()
-        self.overlay_controls.setParent(image_area)
-        self.overlay_controls.move(10, 10)  # Top-left corner
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+        logger.info("Created ImagePreviewWidget")
+        logger.info(f"Widget visible: {self.large_preview_widget.isVisible()}")
+        logger.info(f"Overlay exists: {self.large_preview_widget.overlay_controls is not None}")
+        if self.large_preview_widget.overlay_controls:
+            logger.info(
+                f"Overlay visible: {self.large_preview_widget.overlay_controls.isVisible()}"
+            )
+            logger.info(f"Overlay size: {self.large_preview_widget.overlay_controls.size()}")
+
+        image_layout.addWidget(self.large_preview_widget)
 
         preview_layout.addWidget(image_area)
         stack_layout.addWidget(preview_container)
 
         return panel
-
-    def _create_overlay_controls(self) -> QWidget:
-        """Create compact overlaid zoom/rotate controls with tooltips."""
-        controls = QWidget()
-        controls.setStyleSheet(f"""
-            QWidget {{
-                background: rgba(255, 255, 255, 240);
-                border: 1px solid {Colors.GRAY_300};
-                border-radius: 4px;
-            }}
-        """)
-
-        layout = QHBoxLayout(controls)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
-        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetFixedSize)  # Shrink to fit content
-
-        # Ultra-compact button style
-        btn_style = f"""
-            QPushButton {{
-                background: {Colors.GRAY_100};
-                color: {Colors.GRAY_900};
-                border: 1px solid {Colors.GRAY_300};
-                border-radius: 2px;
-                font-size: 10px;
-                font-weight: bold;
-                min-width: 20px;
-                max-width: 20px;
-                min-height: 20px;
-                max-height: 20px;
-            }}
-            QPushButton:hover {{
-                background: {Colors.PRIMARY_PALE};
-                border-color: {Colors.PRIMARY};
-            }}
-        """
-
-        # Zoom controls
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setStyleSheet(btn_style)
-        zoom_out_btn.setToolTip("Zoom Out (25%)")
-        zoom_out_btn.clicked.connect(self._on_zoom_out)
-        layout.addWidget(zoom_out_btn)
-
-        self.zoom_spinner = QSpinBox()
-        self.zoom_spinner.setRange(25, 400)
-        self.zoom_spinner.setValue(100)
-        self.zoom_spinner.setSuffix("%")
-        self.zoom_spinner.setFixedWidth(55)
-        self.zoom_spinner.setFixedHeight(20)
-        self.zoom_spinner.setToolTip("Zoom Level (25-400%)")
-        self.zoom_spinner.setStyleSheet(f"""
-            QSpinBox {{
-                background: white;
-                color: {Colors.GRAY_900};
-                border: 1px solid {Colors.GRAY_300};
-                border-radius: 2px;
-                padding: 1px;
-                font-size: 10px;
-            }}
-        """)
-        self.zoom_spinner.valueChanged.connect(self._on_zoom_percent_changed)
-        layout.addWidget(self.zoom_spinner)
-
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setStyleSheet(btn_style)
-        zoom_in_btn.setToolTip("Zoom In (25%)")
-        zoom_in_btn.clicked.connect(self._on_zoom_in)
-        layout.addWidget(zoom_in_btn)
-
-        # Fit buttons
-        fit_width_btn = QPushButton("W")
-        fit_width_btn.setStyleSheet(btn_style)
-        fit_width_btn.setToolTip("Fit to Width")
-        fit_width_btn.clicked.connect(self._on_fit_width)
-        layout.addWidget(fit_width_btn)
-
-        fit_height_btn = QPushButton("H")
-        fit_height_btn.setStyleSheet(btn_style)
-        fit_height_btn.setToolTip("Fit to Height")
-        fit_height_btn.clicked.connect(self._on_fit_height)
-        layout.addWidget(fit_height_btn)
-
-        fit_btn = QPushButton("F")
-        fit_btn.setStyleSheet(btn_style)
-        fit_btn.setToolTip("Fit to Window")
-        fit_btn.clicked.connect(self._on_fit_window)
-        layout.addWidget(fit_btn)
-
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"background: {Colors.GRAY_300};")
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(20)
-        layout.addWidget(sep)
-
-        # Rotation controls (only CW and CCW)
-        rotate_ccw_btn = QPushButton("↺")
-        rotate_ccw_btn.setStyleSheet(btn_style)
-        rotate_ccw_btn.setToolTip("Rotate Counter-Clockwise (90°)")
-        rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
-        layout.addWidget(rotate_ccw_btn)
-
-        rotate_cw_btn = QPushButton("↻")
-        rotate_cw_btn.setStyleSheet(btn_style)
-        rotate_cw_btn.setToolTip("Rotate Clockwise (90°)")
-        rotate_cw_btn.clicked.connect(self._on_rotate_cw)
-        layout.addWidget(rotate_cw_btn)
-
-        return controls
 
     def _create_accordion_panel(self) -> QWidget:
         """Create right panel with accordion sections (like file details viewer)."""
@@ -1623,8 +1521,9 @@ class BundleReviewWindow(QDialog):
         }
 
     def _load_bundle_from_database(self, bundle_id: int) -> dict:
-        """Load bundle data from database."""
+        """Load bundle data from database using batch query for performance."""
         import json
+        import os
 
         from services.logging_service import get_logger
 
@@ -1644,12 +1543,16 @@ class BundleReviewWindow(QDialog):
 
         logger.info(f"Loading bundle {bundle_id} with {len(file_paths)} files")
 
-        # Load analyses for each page
+        # PERFORMANCE OPTIMIZATION: Load ALL analyses in a single batch query
+        # instead of making N individual queries (N+1 query problem)
+        analyses_dict = self.analysis_db.get_analyses_batch(file_paths)
+
+        # Build analyses list in the correct order
         analyses = []
         missing_files = []
 
         for file_path in file_paths:
-            analysis = self.analysis_db.get_analysis(file_path)
+            analysis = analyses_dict.get(file_path)
             if analysis:
                 analyses.append(analysis)
             else:
@@ -1668,8 +1571,6 @@ class BundleReviewWindow(QDialog):
                 )
 
             # Check if file exists
-            import os
-
             if not os.path.exists(file_path):
                 missing_files.append(file_path)
 
@@ -1694,6 +1595,43 @@ class BundleReviewWindow(QDialog):
         self._populate_thumbnails()
         if self.bundle_data.get("file_paths"):
             self._display_page(0)
+
+    def showEvent(self, event):
+        """Handle window show event to ensure overlay controls are visible."""
+        super().showEvent(event)
+        # Force overlay controls to show and reposition after window is shown
+        if hasattr(self, "large_preview_widget") and self.large_preview_widget.overlay_controls:
+            from PyQt6.QtCore import QTimer
+
+            # Defer to ensure layout is complete
+            QTimer.singleShot(100, self._ensure_overlay_visible)
+
+    def _ensure_overlay_visible(self):
+        """Ensure overlay controls are visible and positioned correctly."""
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
+        if hasattr(self, "large_preview_widget") and self.large_preview_widget.overlay_controls:
+            logger.info(
+                f"ENSURE OVERLAY: widget_size={self.large_preview_widget.size()}, overlay_size={self.large_preview_widget.overlay_controls.size()}, before_visible={self.large_preview_widget.overlay_controls.isVisible()}"
+            )
+
+            self.large_preview_widget.overlay_controls.show()
+            self.large_preview_widget.overlay_controls.raise_()
+            self.large_preview_widget.overlay_controls.adjustSize()
+            self.large_preview_widget._position_overlay_controls()
+
+            # Force widget updates
+            self.large_preview_widget.overlay_controls.update()
+            self.large_preview_widget.overlay_controls.repaint()
+            self.large_preview_widget.update()
+
+            logger.info(
+                f"ENSURE OVERLAY: after_pos={self.large_preview_widget.overlay_controls.pos()}, after_visible={self.large_preview_widget.overlay_controls.isVisible()}, geometry={self.large_preview_widget.overlay_controls.geometry()}"
+            )
+        else:
+            logger.warning("ENSURE OVERLAY: No large_preview_widget or overlay_controls!")
 
     def _populate_thumbnails(self):
         """Populate thumbnails (no gaps for removed pages)."""
@@ -1826,9 +1764,8 @@ class BundleReviewWindow(QDialog):
             return
 
         self.current_page_index = index
-        self.rotation_angle = 0
-        self.large_preview.reset_pan()
 
+        # Load the image (set_pixmap will reset rotation/pan automatically)
         self._update_large_preview()
         self._refresh_accordion_content()
         self._populate_thumbnails()
@@ -1879,10 +1816,22 @@ class BundleReviewWindow(QDialog):
             painter.drawText(20, 60, "✓")
             painter.end()
 
-        # Apply transforms
-        transformed = self._apply_transform(base_pixmap)
+        # Load pixmap into preview widget
+        from services.logging_service import get_logger
 
-        self.large_preview.setPixmap(transformed)
+        logger = get_logger()
+        logger.debug(f"Loading pixmap into widget, size: {base_pixmap.size()}")
+        self.large_preview_widget.set_pixmap(base_pixmap, apply_fit="width")
+        logger.debug(
+            f"After set_pixmap, overlay visible: {self.large_preview_widget.overlay_controls.isVisible()}"
+        )
+        logger.debug(
+            f"After set_pixmap, overlay size: {self.large_preview_widget.overlay_controls.size()}"
+        )
+        logger.debug(
+            f"After set_pixmap, overlay position: {self.large_preview_widget.overlay_controls.pos()}"
+        )
+        logger.debug(f"After set_pixmap, widget size: {self.large_preview_widget.size()}")
 
     def _create_placeholder_pixmap(self, text: str) -> QPixmap:
         """Create placeholder pixmap with error text."""
@@ -1893,38 +1842,6 @@ class BundleReviewWindow(QDialog):
         painter.setFont(QFont("Arial", 14))
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
         painter.end()
-        return pixmap
-
-    def _apply_transform(self, pixmap: QPixmap) -> QPixmap:
-        """Apply zoom, rotation, pan."""
-        # Rotation
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Zoom
-        zoom_factor = self.zoom_level / 100.0
-        if zoom_factor != 1.0:
-            new_width = int(pixmap.width() * zoom_factor)
-            new_height = int(pixmap.height() * zoom_factor)
-            pixmap = pixmap.scaled(
-                new_width,
-                new_height,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-        # Pan
-        pan_offset = self.large_preview.get_pan_offset()
-        if self.zoom_level > 100 and not pan_offset.isNull():
-            canvas = QPixmap(pixmap.size())
-            canvas.fill(Qt.GlobalColor.white)
-            painter = QPainter(canvas)
-            painter.drawPixmap(pan_offset, pixmap)
-            painter.end()
-            pixmap = canvas
-
         return pixmap
 
     def _refresh_accordion_content(self):
@@ -1983,145 +1900,6 @@ class BundleReviewWindow(QDialog):
 
         self._populate_thumbnails()
 
-    def _on_zoom_in(self):
-        """Zoom in."""
-        new_zoom = min(400, self.zoom_level + 25)
-        self.zoom_spinner.setValue(new_zoom)
-
-    def _on_zoom_out(self):
-        """Zoom out."""
-        new_zoom = max(25, self.zoom_level - 25)
-        self.zoom_spinner.setValue(new_zoom)
-
-    def _on_zoom_percent_changed(self, value: int):
-        """Handle zoom change."""
-        self.zoom_level = value
-        self.large_preview.set_zoom_level(value)
-        self._update_large_preview()
-
-    def _on_rotate_ccw(self):
-        """Rotate CCW."""
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self._update_large_preview()
-
-    def _on_rotate_cw(self):
-        """Rotate CW."""
-        self.rotation_angle = (self.rotation_angle + 90) % 360
-        self._update_large_preview()
-
-    def _on_fit_width(self):
-        """Fit to width of preview area."""
-        if not self.bundle_data.get("file_paths"):
-            return
-
-        file_path = self.bundle_data["file_paths"][self.current_page_index]
-
-        # Get original image size
-        import os
-
-        if not self.prototype_mode and os.path.exists(file_path):
-            pixmap = QPixmap(file_path)
-        else:
-            pixmap = QPixmap(600, 800)  # Mock size
-
-        if pixmap.isNull():
-            return
-
-        # Apply rotation to get actual display dimensions
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Get preview area width (subtract some margin)
-        preview_width = self.large_preview.width() - 20
-
-        # Calculate zoom to fit width
-        zoom_percent = int((preview_width / pixmap.width()) * 100)
-        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
-
-        self.zoom_spinner.setValue(zoom_percent)
-
-    def _on_fit_height(self):
-        """Fit to height of preview area."""
-        if not self.bundle_data.get("file_paths"):
-            return
-
-        file_path = self.bundle_data["file_paths"][self.current_page_index]
-
-        # Get original image size
-        import os
-
-        if not self.prototype_mode and os.path.exists(file_path):
-            pixmap = QPixmap(file_path)
-        else:
-            pixmap = QPixmap(600, 800)  # Mock size
-
-        if pixmap.isNull():
-            return
-
-        # Apply rotation to get actual display dimensions
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Get preview area height (subtract some margin)
-        preview_height = self.large_preview.height() - 20
-
-        # Calculate zoom to fit height
-        zoom_percent = int((preview_height / pixmap.height()) * 100)
-        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
-
-        self.zoom_spinner.setValue(zoom_percent)
-
-    def _on_fit_window(self):
-        """Fit to window (both width and height)."""
-        if not self.bundle_data.get("file_paths"):
-            return
-
-        file_path = self.bundle_data["file_paths"][self.current_page_index]
-
-        # Get original image size
-        import os
-
-        if not self.prototype_mode and os.path.exists(file_path):
-            pixmap = QPixmap(file_path)
-        else:
-            pixmap = QPixmap(600, 800)  # Mock size
-
-        if pixmap.isNull():
-            return
-
-        # Apply rotation to get actual display dimensions
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Get preview area dimensions (subtract margins)
-        preview_width = self.large_preview.width() - 20
-        preview_height = self.large_preview.height() - 20
-
-        # Calculate zoom to fit both dimensions (use smaller ratio)
-        width_ratio = preview_width / pixmap.width()
-        height_ratio = preview_height / pixmap.height()
-        zoom_ratio = min(width_ratio, height_ratio)
-        zoom_percent = int(zoom_ratio * 100)
-        zoom_percent = max(25, min(400, zoom_percent))  # Clamp to valid range
-
-        self.zoom_spinner.setValue(zoom_percent)
-
-    def showEvent(self, event):  # noqa: N802
-        """Handle window show event - set default zoom to fit width on first show."""
-        super().showEvent(event)
-        if self._first_show:
-            self._first_show = False
-            # Use QTimer to ensure window geometry is finalized
-            from PyQt6.QtCore import QTimer
-
-            QTimer.singleShot(100, self._on_fit_width)
-
     def _on_confirm_page(self):
         """Confirm page."""
         self.confirmed_pages.add(self.current_page_index)
@@ -2152,7 +1930,7 @@ class BundleReviewWindow(QDialog):
             if remaining:
                 self._display_page(remaining[0])
             else:
-                self.large_preview.clear()
+                self.large_preview_widget.image_label.clear()
 
             self._populate_thumbnails()
 
@@ -2209,7 +1987,7 @@ class BundleReviewWindow(QDialog):
         )
 
         if file_path:
-            pixmap = self.large_preview.pixmap()
+            pixmap = self.large_preview_widget.image_label.pixmap()
             if pixmap:
                 pixmap.save(file_path)
 

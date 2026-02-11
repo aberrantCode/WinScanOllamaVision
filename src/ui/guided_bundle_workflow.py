@@ -454,6 +454,12 @@ class GuidedBundleWorkflow(QDialog):
 
     def _create_preview_panel(self) -> QWidget:
         """Create center panel with large image preview."""
+        from services.logging_service import get_logger
+        from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
+
+        logger = get_logger()
+        logger.info("========== CREATING PREVIEW PANEL WITH ImagePreviewWidget ==========")
+
         theme = self._get_theme_colors()
 
         panel = QWidget()
@@ -481,10 +487,29 @@ class GuidedBundleWorkflow(QDialog):
         preview_layout.addWidget(page_label)
         self.page_label = page_label
 
-        self.large_preview = QLabel()
-        self.large_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.large_preview.setStyleSheet(f"background: {theme['preview_bg']};")
-        preview_layout.addWidget(self.large_preview)
+        # Use ImagePreviewWidget instead of plain QLabel
+        theme_colors = {
+            "bg_primary": theme.get("bg_primary", "#FFFFFF"),
+            "bg_secondary": theme.get("bg_secondary", "#F9FAFB"),
+            "text_primary": theme.get("text_primary", "#111827"),
+            "text_secondary": theme.get("text_secondary", "#374151"),
+            "border": theme.get("border", "#E5E7EB"),
+            "accent": theme.get("accent", "#3B82F6"),
+            "button_bg": theme.get("button_bg", "#F3F4F6"),
+            "button_hover": theme.get("button_hover", "#E5E7EB"),
+        }
+
+        self.large_preview_widget = ImagePreviewWidget(
+            toolbar_size=ToolbarSize.COMPACT,
+            toolbar_position=ToolbarPosition.TOP_CENTER,
+            theme_colors=theme_colors,
+        )
+        preview_layout.addWidget(self.large_preview_widget)
+
+        # Keep old reference for compatibility
+        self.large_preview = self.large_preview_widget.image_label
+
+        logger.info("ImagePreviewWidget created and added to layout")
 
         layout.addWidget(preview_area)
 
@@ -1969,9 +1994,13 @@ class GuidedBundleWorkflow(QDialog):
         # Store original pixmap for fit calculations
         self.original_pixmap = base_pixmap
 
-        # Apply transforms
-        transformed = self._apply_transform(base_pixmap)
-        self.large_preview.setPixmap(transformed)
+        # Use ImagePreviewWidget's set_pixmap method (handles toolbar automatically)
+        if hasattr(self, "large_preview_widget"):
+            self.large_preview_widget.set_pixmap(base_pixmap, apply_fit="width")
+        else:
+            # Fallback to old method
+            transformed = self._apply_transform(base_pixmap)
+            self.large_preview.setPixmap(transformed)
 
         # Update page label
         self.page_label.setText(f"Page {self.current_page_index + 1} of {len(self.page_order)}")
