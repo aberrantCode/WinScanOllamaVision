@@ -16,7 +16,8 @@ src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
 from PyQt6.QtWidgets import QApplication
-from ui.guided_bundle_workflow import GuidedBundleWorkflow
+
+from ui.verify_documents_window import BundleReviewWindow
 
 
 def main():
@@ -24,7 +25,7 @@ def main():
     app = QApplication(sys.argv)
 
     # Create window in prototype mode with mock data
-    window = GuidedBundleWorkflow(
+    window = BundleReviewWindow(
         bundles=None,  # Will use mock data
         start_index=0,
         prototype_mode=True,

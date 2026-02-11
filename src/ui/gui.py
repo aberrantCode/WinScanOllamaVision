@@ -5581,9 +5581,9 @@ Files being sent to Ollama:
                 workflow_bundles = self._prepare_bundles_for_workflow(bundles)
 
                 # Show GuidedBundleWorkflow instead of BundleSuggestionsView
-                from ui.guided_bundle_workflow import GuidedBundleWorkflow
+                from ui.verify_documents_window import BundleReviewWindow
 
-                self.bundle_workflow = GuidedBundleWorkflow(
+                self.bundle_workflow = BundleReviewWindow(
                     bundles=workflow_bundles,
                     start_index=0,
                     prototype_mode=False,
@@ -6368,13 +6368,13 @@ class StartupWindow(QWidget):
                     return
 
             # Launch guided workflow IMMEDIATELY with cached bundles
-            from ui.guided_bundle_workflow import GuidedBundleWorkflow
+            from ui.verify_documents_window import BundleReviewWindow
 
             # Prepare bundles for workflow
             workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
 
             # Create and show workflow
-            workflow = GuidedBundleWorkflow(
+            workflow = BundleReviewWindow(
                 bundles=workflow_bundles,
                 start_index=0,
                 prototype_mode=False,
@@ -6483,13 +6483,13 @@ class StartupWindow(QWidget):
                 return
 
             # Launch guided workflow
-            from ui.guided_bundle_workflow import GuidedBundleWorkflow
+            from ui.verify_documents_window import BundleReviewWindow
 
             # Prepare bundles for workflow
             workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
 
             # Create and show workflow
-            workflow = GuidedBundleWorkflow(
+            workflow = BundleReviewWindow(
                 bundles=workflow_bundles,
                 start_index=0,
                 prototype_mode=False,

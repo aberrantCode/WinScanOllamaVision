@@ -1,17 +1,18 @@
-"""Tests for GuidedBundleWorkflow UI component."""
+"""Tests for BundleReviewWindow UI component."""
 
 import os
 from unittest.mock import Mock, patch
 
 import pytest
 
-from ui.guided_bundle_workflow import GuidedBundleWorkflow
+from ui.verify_documents_window import BundleReviewWindow
 
 
 @pytest.fixture
 def mock_config_manager():
     """Create a mock ConfigManager."""
     mock = Mock()
+
     # Set up default return values for Theme settings used in __init__
     def get_setting_default(section, key, default=None):
         if section == "Theme" and key == "default_zoom_mode_png":
@@ -27,13 +28,13 @@ def mock_config_manager():
 @pytest.fixture
 def workflow_instance(mock_config_manager):
     """
-    Create a minimal GuidedBundleWorkflow instance for testing.
+    Create a minimal BundleReviewWindow instance for testing.
 
     This creates an instance without calling __init__ to avoid Qt dependencies.
     We only need the _determine_output_directory method.
     """
     # Create instance without calling __init__
-    workflow = GuidedBundleWorkflow.__new__(GuidedBundleWorkflow)
+    workflow = BundleReviewWindow.__new__(BundleReviewWindow)
     workflow.config_manager = mock_config_manager
     return workflow
 
@@ -43,6 +44,7 @@ class TestDetermineOutputDirectory:
 
     def test_same_as_source_strategy(self, workflow_instance, mock_config_manager):
         """Test output directory with same_as_source strategy."""
+
         # Configure mock to return same_as_source strategy
         def get_setting_side_effect(section, key, default=None):
             if section == "OutputDirectory" and key == "strategy":
@@ -53,9 +55,7 @@ class TestDetermineOutputDirectory:
 
         mock_config_manager.get_setting.side_effect = get_setting_side_effect
 
-        bundle = {
-            "file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]
-        }
+        bundle = {"file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]}
 
         result = workflow_instance._determine_output_directory(bundle)
 
@@ -63,6 +63,7 @@ class TestDetermineOutputDirectory:
 
     def test_same_as_source_custom_subdirectory(self, workflow_instance, mock_config_manager):
         """Test output directory with custom subdirectory name."""
+
         # Configure mock to return same_as_source strategy with custom subdirectory
         def get_setting_side_effect(section, key, default=None):
             if section == "OutputDirectory" and key == "strategy":
@@ -73,9 +74,7 @@ class TestDetermineOutputDirectory:
 
         mock_config_manager.get_setting.side_effect = get_setting_side_effect
 
-        bundle = {
-            "file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]
-        }
+        bundle = {"file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]}
 
         result = workflow_instance._determine_output_directory(bundle)
 
@@ -95,9 +94,7 @@ class TestDetermineOutputDirectory:
 
         mock_config_manager.get_setting.side_effect = get_setting_side_effect
 
-        bundle = {
-            "file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]
-        }
+        bundle = {"file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]}
 
         # Mock os.path.isdir to return True for custom path
         with patch("os.path.isdir") as mock_isdir:
@@ -122,9 +119,7 @@ class TestDetermineOutputDirectory:
 
         mock_config_manager.get_setting.side_effect = get_setting_side_effect
 
-        bundle = {
-            "file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]
-        }
+        bundle = {"file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]}
 
         # Mock os.path.isdir to return False for custom path
         with patch("os.path.isdir") as mock_isdir:
@@ -132,15 +127,14 @@ class TestDetermineOutputDirectory:
             result = workflow_instance._determine_output_directory(bundle)
 
         # Should fall back to default
-        expected_default = os.path.join(
-            os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs"
-        )
+        expected_default = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         assert result == expected_default
 
     def test_global_custom_strategy_empty_path_fallback(
         self, workflow_instance, mock_config_manager
     ):
         """Test fallback when global_custom path is empty."""
+
         # Configure mock to return global_custom strategy with empty path
         def get_setting_side_effect(section, key, default=None):
             if section == "OutputDirectory" and key == "strategy":
@@ -151,20 +145,17 @@ class TestDetermineOutputDirectory:
 
         mock_config_manager.get_setting.side_effect = get_setting_side_effect
 
-        bundle = {
-            "file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]
-        }
+        bundle = {"file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]}
 
         result = workflow_instance._determine_output_directory(bundle)
 
         # Should fall back to default
-        expected_default = os.path.join(
-            os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs"
-        )
+        expected_default = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         assert result == expected_default
 
     def test_unknown_strategy_fallback(self, workflow_instance, mock_config_manager):
         """Test fallback to default with unknown strategy."""
+
         # Configure mock to return unknown strategy
         def get_setting_side_effect(section, key, default=None):
             if section == "OutputDirectory" and key == "strategy":
@@ -173,22 +164,17 @@ class TestDetermineOutputDirectory:
 
         mock_config_manager.get_setting.side_effect = get_setting_side_effect
 
-        bundle = {
-            "file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]
-        }
+        bundle = {"file_paths": ["/test/source/dir/file1.png", "/test/source/dir/file2.png"]}
 
         result = workflow_instance._determine_output_directory(bundle)
 
         # Should fall back to default
-        expected_default = os.path.join(
-            os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs"
-        )
+        expected_default = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         assert result == expected_default
 
-    def test_same_as_source_empty_file_paths_fallback(
-        self, workflow_instance, mock_config_manager
-    ):
+    def test_same_as_source_empty_file_paths_fallback(self, workflow_instance, mock_config_manager):
         """Test fallback when bundle has no file_paths."""
+
         # Configure mock to return same_as_source strategy
         def get_setting_side_effect(section, key, default=None):
             if section == "OutputDirectory" and key == "strategy":
@@ -202,7 +188,5 @@ class TestDetermineOutputDirectory:
         result = workflow_instance._determine_output_directory(bundle)
 
         # Should fall back to default
-        expected_default = os.path.join(
-            os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs"
-        )
+        expected_default = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         assert result == expected_default

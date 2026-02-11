@@ -1,5 +1,5 @@
 """
-Comprehensive tests for GuidedBundleWorkflow.
+Comprehensive tests for BundleReviewWindow.
 
 Tests the guided workflow for bundle review, metadata editing, and PDF generation,
 with focus on the mark_bundle_completed() integration.
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PyQt6.QtWidgets import QMessageBox
 
-from ui.guided_bundle_workflow import GuidedBundleWorkflow
+from ui.verify_documents_window import BundleReviewWindow
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def mock_logging_service():
         yield mock_logger
 
 
-class TestGuidedBundleWorkflowPdfCompletion:
+class TestBundleReviewWindowPdfCompletion:
     """Tests for PDF generation and bundle completion workflow"""
 
     @pytest.fixture
@@ -84,9 +84,9 @@ class TestGuidedBundleWorkflowPdfCompletion:
 
     @pytest.fixture
     def workflow(self, qapp, mock_config_manager, mock_analysis_db, sample_bundle):
-        """Create GuidedBundleWorkflow instance for testing."""
+        """Create BundleReviewWindow instance for testing."""
         bundles = [sample_bundle]
-        workflow = GuidedBundleWorkflow(
+        workflow = BundleReviewWindow(
             bundles=bundles,
             analysis_db=mock_analysis_db,
             config_manager=mock_config_manager,
@@ -455,7 +455,7 @@ class TestGuidedBundleWorkflowPdfCompletion:
         assert accepted["page_order"] == [0, 1]
 
 
-class TestGuidedBundleWorkflowIntegration:
+class TestBundleReviewWindowIntegration:
     """Integration tests for the complete workflow"""
 
     @pytest.fixture
@@ -475,7 +475,7 @@ class TestGuidedBundleWorkflowIntegration:
                 "file_paths": ["C:\\test\\page2.png"],
             },
         ]
-        wf = GuidedBundleWorkflow(
+        wf = BundleReviewWindow(
             bundles=bundles,
             analysis_db=mock_analysis_db,
             config_manager=mock_config_manager,

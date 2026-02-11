@@ -50,7 +50,7 @@ if not all_found:
     sys.exit(1)
 
 # Check that the workflow import is present
-if "from ui.guided_bundle_workflow import GuidedBundleWorkflow" in gui_source:
+if "from ui.verify_documents_window import BundleReviewWindow" in gui_source:
     print("\n[OK] Guided workflow import exists in gui.py")
 else:
     print("\n[ERROR] Guided workflow import NOT FOUND in gui.py")

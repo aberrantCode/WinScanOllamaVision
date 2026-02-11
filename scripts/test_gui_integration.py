@@ -8,10 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 print("Testing GUI integration imports...")
 
 # Test that gui.py can import workflow
-from ui.guided_bundle_workflow import GuidedBundleWorkflow
-from services.bundling_service import BundlingService
-from db.analysis_db import AnalysisDB
-from config.config_manager import ConfigManager
+from ui.verify_documents_window import BundleReviewWindow
 
 print("[OK] All GUI integration imports work")
 
@@ -36,7 +33,7 @@ try:
 
     app = QApplication(sys.argv)
 
-    workflow = GuidedBundleWorkflow(
+    workflow = BundleReviewWindow(
         bundles=mock_bundles,
         start_index=0,
         prototype_mode=True,

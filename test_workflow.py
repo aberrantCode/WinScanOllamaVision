@@ -12,7 +12,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from services.logging_service import LoggingService
-from ui.guided_bundle_workflow import GuidedBundleWorkflow
+from ui.verify_documents_window import BundleReviewWindow
 
 
 def capture():
@@ -25,7 +25,7 @@ def capture():
 if __name__ == "__main__":
     LoggingService().initialize(log_level=logging.INFO, console_output=False)
     app = QApplication(sys.argv)
-    window = GuidedBundleWorkflow(
+    window = BundleReviewWindow(
         bundles=None,
         start_index=0,
         prototype_mode=True,
