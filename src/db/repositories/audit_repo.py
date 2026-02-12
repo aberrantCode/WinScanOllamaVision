@@ -4,7 +4,12 @@ Audit repository for managing audit trail logging.
 Simplified CRUD operations for user action tracking.
 """
 
+import sqlite3
+
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class AuditRepository:
@@ -43,4 +48,13 @@ class AuditRepository:
         """,
             (action_type, action_details, file_path, bundle_id),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[AUDIT REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[AUDIT REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to save audit log: {e}") from e

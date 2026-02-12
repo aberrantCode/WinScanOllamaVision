@@ -4,7 +4,12 @@ Directory repository for managing source directory configuration.
 Simplified CRUD operations for scan directory tracking.
 """
 
+import sqlite3
+
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class DirectoryRepository:
@@ -35,7 +40,16 @@ class DirectoryRepository:
         """,
             (directory_path, scan_on_startup),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[DIRECTORY REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[DIRECTORY REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to add directory: {e}") from e
 
     def get_active(self) -> list[str]:
         """
@@ -60,7 +74,16 @@ class DirectoryRepository:
             "DELETE FROM source_directories WHERE directory_path = ?",
             (directory_path,),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[DIRECTORY REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[DIRECTORY REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to remove directory: {e}") from e
 
     def update_scan_info(self, directory_path: str, file_count: int) -> None:
         """
@@ -78,4 +101,13 @@ class DirectoryRepository:
         """,
             (file_count, directory_path),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[DIRECTORY REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[DIRECTORY REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update scan info: {e}") from e

@@ -4,9 +4,13 @@ Repository for bundle_images junction table.
 Manages the many-to-many relationship between bundles and images.
 """
 
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class BundleImagesRepository:
@@ -40,7 +44,16 @@ class BundleImagesRepository:
             """,
             (bundle_id, image_file_id, sequence_order),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to add image to bundle: {e}") from e
         return cursor.lastrowid if cursor.lastrowid else 0
 
     def add_images_bulk(self, bundle_id: int, image_file_ids: list[int]) -> None:
@@ -59,7 +72,16 @@ class BundleImagesRepository:
                 """,
                 (bundle_id, image_file_id, idx),
             )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to add images to bundle: {e}") from e
 
     def get_images_for_bundle(self, bundle_id: int) -> list[dict[str, Any]]:
         """
@@ -120,7 +142,16 @@ class BundleImagesRepository:
             "DELETE FROM bundle_images WHERE bundle_id = ? AND image_file_id = ?",
             (bundle_id, image_file_id),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to remove image from bundle: {e}") from e
 
     def remove_all_images(self, bundle_id: int) -> None:
         """
@@ -133,7 +164,16 @@ class BundleImagesRepository:
             "DELETE FROM bundle_images WHERE bundle_id = ?",
             (bundle_id,),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[BUNDLE IMAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to remove all images from bundle: {e}") from e
 
     def reorder_images(self, bundle_id: int, image_file_ids: list[int]) -> None:
         """
