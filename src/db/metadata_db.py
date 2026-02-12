@@ -12,6 +12,9 @@ from db.repositories.archived_metadata_repo import ArchivedMetadataRepository
 from db.repositories.image_files_repo import ImageFilesRepository
 from db.repositories.metadata_repo import MetadataRepository as NormalizedMetadataRepository
 from db.schema import create_all_tables
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class MetadataDB:
@@ -56,12 +59,29 @@ class MetadataDB:
 
         Returns:
             Hexadecimal hash string
+
+        Raises:
+            FileNotFoundError: If file does not exist
+            PermissionError: If file cannot be accessed
+            OSError: If file cannot be read
         """
         sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
+        try:
+            with open(file_path, "rb") as f:
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
+            return sha256_hash.hexdigest()
+        except FileNotFoundError as e:
+            logger.error(f"[FILE HASH] File not found: {file_path}")
+            raise FileNotFoundError(
+                f"Cannot compute hash - file does not exist: {file_path}"
+            ) from e
+        except PermissionError as e:
+            logger.error(f"[FILE HASH] Permission denied: {file_path}")
+            raise PermissionError(f"Cannot access file for hashing: {file_path}") from e
+        except OSError as e:
+            logger.error(f"[FILE HASH] OS error: {file_path} - {e}")
+            raise OSError(f"Failed to read file for hashing: {e}") from e
 
     # ==================== Archived Document Methods ====================
 

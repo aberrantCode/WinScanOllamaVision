@@ -80,6 +80,41 @@ class TestMetadataDBCore:
         assert hash1 == hash2
         assert len(hash1) == 64  # SHA-256
 
+    def test_compute_file_hash_file_not_found(self):
+        """Test that compute_file_hash raises FileNotFoundError for nonexistent file"""
+        # Arrange
+        nonexistent_path = "/nonexistent/path/to/file.png"
+
+        # Act & Assert
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            MetadataDB.compute_file_hash(nonexistent_path)
+
+    def test_compute_file_hash_permission_denied(self, temp_file, monkeypatch):
+        """Test that compute_file_hash raises PermissionError when file is not accessible"""
+
+        # Arrange - Mock open to raise PermissionError
+        def mock_open(*args, **kwargs):
+            raise PermissionError("Access denied")
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        # Act & Assert
+        with pytest.raises(PermissionError, match="Cannot access file"):
+            MetadataDB.compute_file_hash(temp_file)
+
+    def test_compute_file_hash_os_error(self, temp_file, monkeypatch):
+        """Test that compute_file_hash raises OSError for OS-level errors"""
+
+        # Arrange - Mock open to raise OSError
+        def mock_open(*args, **kwargs):
+            raise OSError("Disk I/O error")
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        # Act & Assert
+        with pytest.raises(OSError, match="Failed to read file"):
+            MetadataDB.compute_file_hash(temp_file)
+
     # ==================== Image File Operations Tests ====================
 
     def test_register_image_file(self, db, temp_file):
