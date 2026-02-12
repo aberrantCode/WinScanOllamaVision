@@ -507,6 +507,33 @@ class TestAnalyzeSinglePage:
         assert result["cached"] is True
         assert result["skipped"] is False
 
+    def test_analyze_handles_missing_file_hash_field(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        """Test that analyze_single_page safely handles image_file record missing file_hash key"""
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        mock_metadata_db.compute_file_hash.return_value = "hash123"
+        mock_analysis_db.get_analysis.return_value = {
+            "id": 1,
+            "provider_name": "test",
+            "model_name": "test_model",
+        }
+        # Mock get_image_file to return dict without file_hash key
+        mock_analysis_db.get_image_file.return_value = {
+            "id": 1,
+            "file_path": image_path,
+            # Missing "file_hash" key
+        }
+
+        # Act - should not raise KeyError
+        result = service._analyze_single_page(image_path, incremental=True)
+
+        # Assert - should return error result instead of crashing
+        assert result["success"] is False
+        assert result["skipped"] is True
+        assert "Invalid DB record" in result["error"]
+
     def test_analyze_single_page_skips_cache_when_not_incremental(self, service, mock_analysis_db):
         # Arrange
         image_path = "C:\\test\\file1.png"

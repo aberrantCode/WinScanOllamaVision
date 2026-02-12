@@ -15,32 +15,16 @@ from db.metadata_db import MetadataDB
 from llm_providers.provider_factory import ProviderFactory
 from services.logging_service import get_logger
 from services.metadata_normalizer import MetadataNormalizer
+from services.prompts import DEFAULT_ANALYSIS_PROMPT
+
+logger = get_logger()
 
 
 class AnalysisService:
     """Manages automatic startup analysis of document pages"""
 
-    DEFAULT_ANALYSIS_PROMPT = (
-        "Analyze this document page and extract the following information in JSON format:\n\n"
-        "Required fields:\n"
-        "1. **document_type**: Type of document (invoice, receipt, contract, letter, etc.)\n"
-        "2. **company**: Company name that issued this document\n"
-        "3. **document_date**: Date on the document (YYYY-MM-DD format if possible)\n"
-        "4. **tax_related**: Is this document related to taxes? (true/false) Examples include: W-2, 1099, "
-        "tax returns, property tax bills, tax receipts, IRS correspondence, deductible expense receipts\n"
-        "5. **page_number**: Current page number (if visible)\n"
-        "6. **total_pages**: Total number of pages (if visible)\n"
-        "7. **rotation_needed** (boolean): Do the words in the text get read from left-to-right without "
-        "having to flip it? If so then no rotation is needed (false); otherwise rotation is needed (true).\n"
-        "8. **suggested_rotation** (integer): If rotation needed, specify degrees clockwise: 90, 180, or 270. "
-        "Use 0 if no rotation needed.\n"
-        '9. **rotation_confidence** (string): Confidence in rotation assessment: "high", "medium", or "low".\n'
-        "10. **confidence_score**: Your overall confidence in the extraction (0.0 to 1.0)\n\n"
-        "IMPORTANT: For rotation fields, carefully check if text can be read normally (left-to-right, top-to-bottom) "
-        "without rotating the page. If you need to tilt your head to read it, mark rotation_needed as true and "
-        "specify the degrees needed.\n\n"
-        "Return ONLY valid JSON with these exact field names."
-    )
+    # Re-export the constant for backward compatibility
+    DEFAULT_ANALYSIS_PROMPT = DEFAULT_ANALYSIS_PROMPT
 
     def __init__(
         self, config_manager: ConfigManager, analysis_db: AnalysisDB, metadata_db: MetadataDB
@@ -279,17 +263,42 @@ class AnalysisService:
             existing_analysis = self.analysis_db.get_analysis(image_path)
             if existing_analysis:
                 # Get image file record to check hash (file_hash is in image_files table now)
-                image_file = self.analysis_db.get_image_file(image_path)
-                if image_file and image_file["file_hash"] == file_hash:
-                    # Update status to 'analyzed' if it exists
-                    analysis_id = existing_analysis.get("id")
-                    if analysis_id:
-                        self.analysis_db.update_image_status(image_path, "analyzed", analysis_id)
+                try:
+                    image_file = self.analysis_db.get_image_file(image_path)
+                    if not image_file:
+                        logger.warning(f"[ANALYSIS] Image file not in DB: {image_path}")
+                        return {
+                            "success": False,
+                            "cached": False,
+                            "skipped": True,
+                            "error": "Not registered",
+                        }
+
+                    # Use .get() for safe dictionary access
+                    file_hash_from_db = image_file.get("file_hash")
+                    if not file_hash_from_db:
+                        raise KeyError("Image file record missing 'file_hash' field")
+
+                    if file_hash_from_db == file_hash:
+                        # Update status to 'analyzed' if it exists
+                        analysis_id = existing_analysis.get("id")
+                        if analysis_id:
+                            self.analysis_db.update_image_status(
+                                image_path, "analyzed", analysis_id
+                            )
+                        return {
+                            "success": True,
+                            "cached": True,
+                            "skipped": False,
+                            "analysis": existing_analysis,
+                        }
+                except KeyError as e:
+                    logger.error(f"[ANALYSIS] Missing field in image file data: {e}")
                     return {
-                        "success": True,
-                        "cached": True,
-                        "skipped": False,
-                        "analysis": existing_analysis,
+                        "success": False,
+                        "cached": False,
+                        "skipped": True,
+                        "error": f"Invalid DB record: {e}",
                     }
 
         # File needs analysis - status is already set to "analyzing" by worker thread
@@ -304,8 +313,8 @@ class AnalysisService:
             # Get metadata extraction prompt from settings
             metadata_prompt = self.config.get_setting("Prompts", "document_metadata")
             if not metadata_prompt:
-                # Fallback to a basic prompt if not configured
-                metadata_prompt = "Analyze this document and extract metadata."
+                # Fallback to default prompt if not configured
+                metadata_prompt = self.DEFAULT_ANALYSIS_PROMPT
 
             # Perform analysis
             self._log("[ANALYSIS] Calling provider.analyze_images()...")
