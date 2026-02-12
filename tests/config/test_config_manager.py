@@ -420,3 +420,46 @@ class TestConfigManager:
 
         # Assert
         assert result == 99
+
+    def test_load_config_handles_corrupted_file(self, temp_config_file):
+        """Test that load config backs up corrupted file and creates defaults"""
+        # Arrange - Write corrupted config
+        with open(temp_config_file, "w") as f:
+            f.write("[Invalid\nThis is not valid INI format\n")
+
+        # Act
+        config = ConfigManager(temp_config_file)
+
+        # Assert - Should create backup and load defaults
+        assert os.path.exists(f"{temp_config_file}.corrupted")
+        assert config.get_setting("LLMProvider", "active_provider") == "ollama"  # Default value
+
+    def test_save_config_handles_permission_error(self, config_manager):
+        """Test that save config raises PermissionError with user-friendly message"""
+        # Arrange
+        with patch("builtins.open", side_effect=PermissionError("Access denied")):  # noqa: SIM117
+            # Act & Assert
+            with pytest.raises(PermissionError, match="Cannot save configuration"):
+                config_manager._save_config()
+
+    def test_save_config_handles_os_error(self, config_manager):
+        """Test that save config raises OSError with user-friendly message"""
+        # Arrange
+        with patch("builtins.open", side_effect=OSError("Disk full")):  # noqa: SIM117
+            # Act & Assert
+            with pytest.raises(OSError, match="Failed to save configuration"):
+                config_manager._save_config()
+
+    def test_save_config_creates_backup(self, config_manager):
+        """Test that save config creates backup before overwriting"""
+        # Arrange - Set initial value
+        config_manager.set_setting("Test", "key", "value1")
+
+        # Modify config
+        config_manager.config["Test"]["key"] = "value2"
+
+        # Act
+        config_manager._save_config()
+
+        # Assert - Backup should exist
+        assert os.path.exists(f"{config_manager.config_file}.backup")

@@ -1,7 +1,12 @@
 import configparser
 import json
 import os
+import shutil
 from typing import Any, cast
+
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class ConfigManager:
@@ -15,12 +20,32 @@ class ConfigManager:
             config_file = os.path.join(appdata_dir, "settings.ini")
 
         self.config_file = config_file
-        self.config = configparser.ConfigParser()
+        # Disable interpolation to avoid issues with % characters in prompts
+        self.config = configparser.ConfigParser(interpolation=None)
         self._load_config()
 
     def _load_config(self):
+        """
+        Load configuration from file, handling corrupted files gracefully.
+
+        If config file is corrupted, backs it up and creates defaults.
+        """
         if os.path.exists(self.config_file):
-            self.config.read(self.config_file)
+            try:
+                self.config.read(self.config_file)
+                logger.info(f"Loaded config from {self.config_file}")
+            except configparser.Error as e:
+                logger.error(f"[CONFIG] Malformed config: {self.config_file} - {e}")
+                # Backup corrupted file
+                backup = f"{self.config_file}.corrupted"
+                shutil.copy2(self.config_file, backup)
+                logger.info(f"[CONFIG] Backed up corrupted config to: {backup}")
+                # Create defaults
+                self._create_default_config()
+                logger.info("[CONFIG] Created new default configuration")
+                self._save_config()
+                return
+
             # Ensure all default sections exist (for config files created before new providers added)
             self._create_default_config()
             self._save_config()
@@ -121,8 +146,32 @@ class ConfigManager:
             }
 
     def _save_config(self):
-        with open(self.config_file, "w") as configfile:
-            self.config.write(configfile)
+        """
+        Save configuration to file with atomic write and backup.
+
+        Raises:
+            PermissionError: If config file cannot be written
+            OSError: If file operations fail
+        """
+        try:
+            # Atomic write: write to temp file first
+            temp_file = f"{self.config_file}.tmp"
+            with open(temp_file, "w") as configfile:
+                self.config.write(configfile)
+
+            # Create backup if original exists
+            if os.path.exists(self.config_file):
+                shutil.copy2(self.config_file, f"{self.config_file}.backup")
+
+            # Move temp to actual location
+            shutil.move(temp_file, self.config_file)
+            logger.debug(f"[CONFIG] Saved configuration to {self.config_file}")
+        except PermissionError as e:
+            logger.error(f"[CONFIG] Permission denied: {self.config_file}")
+            raise PermissionError(f"Cannot save configuration: {self.config_file}") from e
+        except OSError as e:
+            logger.error(f"[CONFIG] Failed to save: {e}")
+            raise OSError(f"Failed to save configuration: {e}") from e
 
     def _reload_config(self):
         """Reload configuration from disk to pick up external changes"""
