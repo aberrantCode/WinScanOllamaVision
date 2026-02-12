@@ -7,6 +7,7 @@ not document metadata (which goes in metadata table).
 """
 
 import json
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
@@ -60,32 +61,53 @@ class AnalysisRepository:
 
         Returns:
             The ID of the inserted analysis record
-        """
-        cursor = self.conn.execute(
-            """
-            INSERT INTO analysis_results (
-                image_file_id, provider_name, model_name, model_options,
-                prompt_text, response_text, extracted_metadata,
-                confidence_score, had_error, analyzed_at, processing_time_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
-        """,
-            (
-                image_file_id,
-                provider_name,
-                model_name,
-                json.dumps(model_options) if model_options else None,
-                prompt_text,
-                response_text,
-                json.dumps(extracted_metadata) if extracted_metadata else None,
-                confidence_score,
-                1 if had_error else 0,
-                processing_time_ms,
-            ),
-        )
-        self.conn.commit()
 
-        # Return the ID of the inserted row
-        return cursor.lastrowid if cursor.lastrowid else 0
+        Raises:
+            ValueError: If image_file_id is invalid (foreign key constraint)
+            sqlite3.OperationalError: If database is locked
+            sqlite3.Error: If database operation fails
+        """
+        try:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO analysis_results (
+                    image_file_id, provider_name, model_name, model_options,
+                    prompt_text, response_text, extracted_metadata,
+                    confidence_score, had_error, analyzed_at, processing_time_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            """,
+                (
+                    image_file_id,
+                    provider_name,
+                    model_name,
+                    json.dumps(model_options) if model_options else None,
+                    prompt_text,
+                    response_text,
+                    json.dumps(extracted_metadata) if extracted_metadata else None,
+                    confidence_score,
+                    1 if had_error else 0,
+                    processing_time_ms,
+                ),
+            )
+            self.conn.commit()
+
+            # Return the ID of the inserted row
+            if cursor.lastrowid is None:
+                raise sqlite3.Error("INSERT did not return row ID")
+            return cursor.lastrowid
+
+        except sqlite3.IntegrityError as e:
+            logger.error(f"[ANALYSIS REPO] Foreign key constraint: {e}")
+            self.conn.rollback()
+            raise ValueError(f"Invalid image_file_id: {image_file_id}") from e
+        except sqlite3.OperationalError as e:
+            logger.error(f"[ANALYSIS REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError(f"Database operation failed: {e}") from e
+        except sqlite3.Error as e:
+            logger.error(f"[ANALYSIS REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to save analysis: {e}") from e
 
     def get_by_image_file_id(self, image_file_id: int) -> list[dict[str, Any]]:
         """

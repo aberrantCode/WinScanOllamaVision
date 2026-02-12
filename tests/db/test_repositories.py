@@ -5,7 +5,9 @@ Tests repository methods in isolation with mocked DatabaseConnection.
 """
 
 import os
+import sqlite3
 import tempfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -228,6 +230,66 @@ class TestAnalysisRepository:
         # Assert
         assert len(all_results) >= 2
         assert len(ollama_only) >= 1
+
+    def test_save_handles_integrity_error(self, repo):
+        """Test that save handles foreign key constraint violations"""
+        # Arrange - invalid image_file_id (doesn't exist)
+        invalid_image_id = 99999
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Invalid image_file_id"):
+            repo.save(
+                image_file_id=invalid_image_id,
+                provider_name="ollama",
+                model_name="test-model",
+                prompt_text="test",
+                response_text="test",
+                confidence_score=0.9,
+                processing_time_ms=100,
+            )
+
+    def test_save_handles_locked_database(self, repo, image_repo):
+        """Test that save handles database locked errors"""
+        # Arrange
+        image_file_id = image_repo.register("/test.jpg", "hash", "/", "test.jpg", 1024, 12345.0)
+
+        with patch.object(  # noqa: SIM117
+            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+        ):
+            # Act & Assert
+            with pytest.raises(sqlite3.OperationalError, match="Database operation failed"):
+                repo.save(
+                    image_file_id=image_file_id,
+                    provider_name="ollama",
+                    model_name="test-model",
+                    prompt_text="test",
+                    response_text="test",
+                    confidence_score=0.9,
+                    processing_time_ms=100,
+                )
+
+    def test_save_rolls_back_on_error(self, repo, image_repo):
+        """Test that save rolls back transaction on errors"""
+        # Arrange
+        image_file_id = image_repo.register("/test.jpg", "hash", "/", "test.jpg", 1024, 12345.0)
+        mock_rollback = MagicMock()
+        repo.conn.rollback = mock_rollback
+
+        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Database error")):
+            # Act & Assert
+            with pytest.raises(sqlite3.Error, match="Failed to save analysis"):
+                repo.save(
+                    image_file_id=image_file_id,
+                    provider_name="ollama",
+                    model_name="test-model",
+                    prompt_text="test",
+                    response_text="test",
+                    confidence_score=0.9,
+                    processing_time_ms=100,
+                )
+
+            # Verify rollback was called
+            mock_rollback.assert_called_once()
 
 
 class TestBundleRepository:
