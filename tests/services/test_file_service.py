@@ -79,6 +79,26 @@ class TestFileServiceInitialization:
         ]
         mock_makedirs.assert_has_calls(calls, any_order=False)
 
+    @patch("os.makedirs")
+    def test_init_handles_makedirs_permission_error(self, mock_makedirs, mock_config_manager):
+        """Test that init raises PermissionError if directory cannot be created"""
+        # Arrange
+        mock_makedirs.side_effect = PermissionError("Access denied")
+
+        # Act & Assert
+        with pytest.raises(PermissionError, match="Cannot create output directory"):
+            FileService(mock_config_manager)
+
+    @patch("os.makedirs")
+    def test_init_handles_makedirs_os_error(self, mock_makedirs, mock_config_manager):
+        """Test that init raises OSError if directory creation fails"""
+        # Arrange
+        mock_makedirs.side_effect = OSError("Disk error")
+
+        # Act & Assert
+        with pytest.raises(OSError, match="Failed to create output directory"):
+            FileService(mock_config_manager)
+
 
 class TestGetImageFiles:
     """Tests for _get_image_files method"""

@@ -12,6 +12,16 @@ logger = get_logger()
 
 class FileService:
     def __init__(self, config_manager):
+        """
+        Initialize FileService with configuration and create required directories.
+
+        Args:
+            config_manager: ConfigManager instance
+
+        Raises:
+            PermissionError: If directories cannot be created due to permissions
+            OSError: If directory creation fails
+        """
         self.config_manager = config_manager
         self.scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
         self.organized_folder = os.path.join(
@@ -19,8 +29,25 @@ class FileService:
             self.config_manager.get_setting("DocumentProcessing", "organized_subfolder"),
         )
 
-        os.makedirs(self.scan_folder, exist_ok=True)
-        os.makedirs(self.organized_folder, exist_ok=True)
+        try:
+            os.makedirs(self.scan_folder, exist_ok=True)
+            logger.info(f"[FILE SERVICE] Created scan folder: {self.scan_folder}")
+        except PermissionError as e:
+            logger.error(f"[FILE SERVICE] Permission denied: {self.scan_folder}")
+            raise PermissionError(f"Cannot create output directory: {self.scan_folder}") from e
+        except OSError as e:
+            logger.error(f"[FILE SERVICE] Failed to create directory: {e}")
+            raise OSError(f"Failed to create output directory: {e}") from e
+
+        try:
+            os.makedirs(self.organized_folder, exist_ok=True)
+            logger.info(f"[FILE SERVICE] Created organized folder: {self.organized_folder}")
+        except PermissionError as e:
+            logger.error(f"[FILE SERVICE] Permission denied: {self.organized_folder}")
+            raise PermissionError(f"Cannot create output directory: {self.organized_folder}") from e
+        except OSError as e:
+            logger.error(f"[FILE SERVICE] Failed to create directory: {e}")
+            raise OSError(f"Failed to create output directory: {e}") from e
 
     def _get_image_files(self) -> list[str]:
         """Scans the scan_folder for PNG and TIFF files."""
