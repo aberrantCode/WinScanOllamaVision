@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -210,6 +211,36 @@ class TestDatabaseConnection:
             # Table doesn't exist - also acceptable
             pass
         verify_conn.close()
+
+    def test_connection_handles_locked_database(self):
+        """Test that connection handles locked database error"""
+        # Arrange
+        with patch("sqlite3.connect") as mock_connect:
+            mock_connect.side_effect = sqlite3.OperationalError("database is locked")
+
+            # Act & Assert
+            with pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+                DatabaseConnection("/test/locked.db")
+
+    def test_connection_handles_readonly_directory(self):
+        """Test that connection handles permission errors on database file"""
+        # Arrange
+        with patch("sqlite3.connect") as mock_connect:
+            mock_connect.side_effect = sqlite3.OperationalError("unable to open database file")
+
+            # Act & Assert
+            with pytest.raises(sqlite3.OperationalError, match="Cannot open database"):
+                DatabaseConnection("/readonly/test.db")
+
+    def test_connection_handles_general_database_error(self):
+        """Test that connection handles general database errors"""
+        # Arrange
+        with patch("sqlite3.connect") as mock_connect:
+            mock_connect.side_effect = sqlite3.Error("Some database error")
+
+            # Act & Assert
+            with pytest.raises(sqlite3.Error, match="Failed to connect to database"):
+                DatabaseConnection("/test/error.db")
 
 
 def test_get_appdata_db_path_creates_directory():

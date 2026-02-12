@@ -49,15 +49,36 @@ class DatabaseConnection:
         self._connect()
 
     def _connect(self):
-        """Establish database connection with row factory and enable foreign keys."""
-        self.connection = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            timeout=30.0,
-        )
-        self.connection.row_factory = sqlite3.Row
-        # Enable foreign key constraints
-        self.connection.execute("PRAGMA foreign_keys = ON")
+        """
+        Establish database connection with row factory and enable foreign keys.
+
+        Raises:
+            sqlite3.OperationalError: If database is locked or cannot be opened
+            sqlite3.Error: If connection fails for other reasons
+        """
+        try:
+            self.connection = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                timeout=30.0,
+            )
+            self.connection.row_factory = sqlite3.Row
+            # Enable foreign key constraints
+            self.connection.execute("PRAGMA foreign_keys = ON")
+            logger.debug(f"[DB] Connected to: {self.db_path}")
+        except sqlite3.OperationalError as e:
+            logger.critical(f"[DB] Cannot open database: {self.db_path} - {e}")
+            error_msg = str(e).lower()
+            if "locked" in error_msg:
+                raise sqlite3.OperationalError(f"Database is locked: {self.db_path}") from e
+            elif "unable to open" in error_msg:
+                raise sqlite3.OperationalError(
+                    f"Cannot open database. Check permissions: {self.db_path}"
+                ) from e
+            raise
+        except sqlite3.Error as e:
+            logger.critical(f"[DB] Database error: {e}")
+            raise sqlite3.Error(f"Failed to connect to database: {e}") from e
 
     @classmethod
     def from_appdata(cls, filename: str = "metadata.db") -> "DatabaseConnection":
