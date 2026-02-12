@@ -150,8 +150,21 @@ class OllamaService:
 
             return cast(dict[str, Any], response.get("message", {}))
 
+        except httpx.ConnectError as e:
+            logger.error(f"[OLLAMA] Cannot connect to {self.base_url}: {e}")
+            raise ConnectionError(
+                f"Cannot connect to Ollama. Is it running at {self.base_url}?"
+            ) from e
+        except httpx.TimeoutException as e:
+            logger.error(f"[OLLAMA] Timeout after {self.timeout}s: {e}")
+            raise TimeoutError(
+                f"Ollama timed out after {self.timeout}s. Try smaller model or increase timeout."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[OLLAMA] HTTP error {e.response.status_code}: {e}")
+            raise ConnectionError(f"Ollama error {e.response.status_code}: {e}") from e
         except Exception as e:
-            logger.error(f"Error in chat_with_vision_model: {e}")
+            logger.error(f"[OLLAMA] Unexpected error: {e}", exc_info=True)
             raise ConnectionError(f"Failed to communicate with Ollama: {e}") from e
 
     # --- Specific Application Prompts ---
