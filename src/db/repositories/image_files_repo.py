@@ -60,7 +60,8 @@ class ImageFilesRepository:
         result = self.conn.fetch_one_dict(
             "SELECT id FROM image_files WHERE file_path = ?", (file_path,)
         )
-        return result["id"] if result else 0
+        # Use .get() for safe dictionary access
+        return result.get("id", 0) if result else 0
 
     def get_by_path(self, file_path: str) -> dict[str, Any] | None:
         """
@@ -323,6 +324,7 @@ class ImageFilesRepository:
                 m.belongs_to_same_doc,
                 m.confidence_score,
                 m.tax_related,
+                m.is_blank,
 
                 -- User preferences (from metadata table)
                 m.document_category,
@@ -413,6 +415,7 @@ class ImageFilesRepository:
                 m.belongs_to_same_doc,
                 m.confidence_score,
                 m.tax_related,
+                m.is_blank,
 
                 -- User preferences (from metadata table)
                 m.document_category,

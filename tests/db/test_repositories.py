@@ -1026,6 +1026,40 @@ class TestImageFilesRepository:
         assert results_provider_b[0]["file_path"] == "/test2/img2.png"
         assert results_provider_b[0]["provider_name"] == "provider_b"
 
+    def test_register_returns_zero_if_not_found(self, repo, conn):
+        """Test that register returns 0 if SELECT id query returns no result"""
+        # Arrange - Mock fetch_one_dict to return None (simulating no result)
+        with patch.object(conn, "fetch_one_dict", return_value=None):
+            # Act
+            result = repo.register(
+                file_path="/test/image1.png",
+                file_hash="hash123",
+                directory_path="/test",
+                filename="image1.png",
+                file_size=1024,
+                file_mtime=1234567890.0,
+            )
+
+            # Assert
+            assert result == 0
+
+    def test_register_handles_missing_id_field(self, repo, conn):
+        """Test that register safely handles missing 'id' field in result dict"""
+        # Arrange - Mock fetch_one_dict to return dict without 'id' key
+        with patch.object(conn, "fetch_one_dict", return_value={"other_field": "value"}):
+            # Act - should not raise KeyError
+            result = repo.register(
+                file_path="/test/image1.png",
+                file_hash="hash123",
+                directory_path="/test",
+                filename="image1.png",
+                file_size=1024,
+                file_mtime=1234567890.0,
+            )
+
+            # Assert
+            assert result == 0
+
 
 class TestPdfFilesRepository:
     """Tests for PdfFilesRepository"""
