@@ -359,6 +359,51 @@ class TestLoggingService:
         assert "/home/user" in service.log_file_path
         assert "AppData" in service.log_file_path
 
+    def test_initialize_handles_permission_error_fallback_to_temp(self):
+        """Test that logging falls back to temp directory when AppData is not writable"""
+        # Arrange
+        service = LoggingService()
+
+        # Act
+        with (
+            patch.dict(os.environ, {"APPDATA": "/readonly"}),
+            patch("os.makedirs") as mock_makedirs,
+            patch("services.logging_service.RotatingFileHandler") as mock_handler,
+        ):
+            # First call (AppData) raises PermissionError, second call (temp) succeeds
+            mock_makedirs.side_effect = [PermissionError("Access denied"), None]
+            mock_handler.return_value.level = 20
+            service.initialize(app_name="TestApp")
+
+        # Assert - should have fallen back to temp directory
+        assert service.logger is not None
+        import tempfile
+
+        assert tempfile.gettempdir() in service.log_file_path
+
+    def test_initialize_handles_file_handler_error_console_only(self):
+        """Test that logging falls back to console-only when file handler fails"""
+        # Arrange
+        service = LoggingService()
+
+        # Act
+        with (
+            patch.dict(os.environ, {"APPDATA": "/test"}),
+            patch("os.makedirs"),
+            patch("services.logging_service.RotatingFileHandler") as mock_handler,
+        ):
+            # RotatingFileHandler raises PermissionError
+            mock_handler.side_effect = PermissionError("Cannot write to log file")
+            service.initialize(app_name="TestApp")
+
+        # Assert - should have console handler only
+        assert service.logger is not None
+        handlers = service.logger.handlers
+        assert len(handlers) == 1
+        assert isinstance(handlers[0], logging.StreamHandler)
+        # Should have logged warning about console-only mode
+        assert service.log_file_path is not None  # Path set, but file handler failed
+
 
 class TestGetLoggerFunction:
     """Tests for get_logger convenience function"""

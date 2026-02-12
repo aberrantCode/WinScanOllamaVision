@@ -6,6 +6,8 @@ Logs are stored in the user's AppData directory.
 
 import logging
 import os
+import sys
+import tempfile
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
@@ -22,7 +24,7 @@ class LoggingService:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the logging service (only once)"""
         if not LoggingService._initialized:
             self.logger: logging.Logger | None = None
@@ -37,7 +39,7 @@ class LoggingService:
         backup_count: int = 5,
         console_output: bool = False,
         console_level: int | None = None,
-    ):
+    ) -> None:
         """
         Initialize the logging configuration.
 
@@ -59,10 +61,18 @@ class LoggingService:
         log_dir = os.path.join(appdata_root, app_name, "logs")
 
         # Create log directory if it doesn't exist
-        os.makedirs(log_dir, exist_ok=True)
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except PermissionError:
+            # Fall back to temp directory
+            log_dir = tempfile.gettempdir()
+            print(f"WARNING: Using temp directory for logs: {log_dir}", file=sys.stderr)
+        except OSError as e:
+            print(f"CRITICAL: Cannot initialize logging: {e}", file=sys.stderr)
+            raise RuntimeError(f"Failed to initialize logging service: {e}") from e
 
         # Set log file path
-        self.log_file_path = os.path.join(log_dir, "app.log")
+        self.log_file_path = os.path.join(log_dir, f"{app_name}_app.log")
 
         # Create logger
         self.logger = logging.getLogger(app_name)
@@ -71,20 +81,35 @@ class LoggingService:
         # Remove any existing handlers
         self.logger.handlers.clear()
 
-        # Create rotating file handler
-        file_handler = RotatingFileHandler(
-            self.log_file_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
-        )
-        file_handler.setLevel(log_level)
-
         # Create formatter
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %I:%M:%S %p"
         )
-        file_handler.setFormatter(formatter)
 
-        # Add file handler
-        self.logger.addHandler(file_handler)
+        # Try to create rotating file handler, fall back to console-only
+        try:
+            file_handler = RotatingFileHandler(
+                self.log_file_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+            )
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+        except PermissionError:
+            # Console-only fallback
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(log_level)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+            self.logger.warning("Cannot write to log file, using console only")
+            return  # Skip console output section below
+        except OSError as e:
+            # Console-only fallback
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(log_level)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+            self.logger.error(f"Failed to create log file handler: {e}, using console only")
+            return  # Skip console output section below
 
         # Optionally add console handler
         if console_output:
@@ -124,19 +149,19 @@ class LoggingService:
         """
         return self.log_file_path
 
-    def debug(self, message: str):
+    def debug(self, message: str) -> None:
         """Log debug message"""
         self.get_logger().debug(message)
 
-    def info(self, message: str):
+    def info(self, message: str) -> None:
         """Log info message"""
         self.get_logger().info(message)
 
-    def warning(self, message: str):
+    def warning(self, message: str) -> None:
         """Log warning message"""
         self.get_logger().warning(message)
 
-    def error(self, message: str, exc_info: bool = False):
+    def error(self, message: str, exc_info: bool = False) -> None:
         """
         Log error message.
 
@@ -146,7 +171,7 @@ class LoggingService:
         """
         self.get_logger().error(message, exc_info=exc_info)
 
-    def critical(self, message: str, exc_info: bool = False):
+    def critical(self, message: str, exc_info: bool = False) -> None:
         """
         Log critical message.
 
@@ -156,7 +181,7 @@ class LoggingService:
         """
         self.get_logger().critical(message, exc_info=exc_info)
 
-    def exception(self, message: str):
+    def exception(self, message: str) -> None:
         """
         Log exception with traceback.
 
@@ -165,7 +190,7 @@ class LoggingService:
         """
         self.get_logger().exception(message)
 
-    def clear_log_file(self):
+    def clear_log_file(self) -> None:
         """Clear the current log file"""
         if self.log_file_path and os.path.exists(self.log_file_path):
             try:
