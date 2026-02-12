@@ -12,6 +12,9 @@ from typing import Any, cast
 
 from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class BundlingService:
@@ -48,8 +51,19 @@ class BundlingService:
         # This includes company, document_type, page_number, etc. needed for bundling
         if file_paths:
             # Get all analyzed pages, then filter to requested paths
-            all_analyses = self.analysis_db.get_analyzed_pages()
-            analyses = [a for a in all_analyses if a["file_path"] in file_paths]
+            try:
+                all_analyses = self.analysis_db.get_analyzed_pages()
+                # Use .get() to safely access file_path
+                analyses = [a for a in all_analyses if a.get("file_path") in file_paths]
+
+                # Validate that we found the requested files
+                found_paths = {a.get("file_path") for a in analyses if a.get("file_path")}
+                missing = set(file_paths) - found_paths
+                if missing:
+                    logger.warning(f"[BUNDLING] Files not found in analysis: {missing}")
+            except Exception as e:
+                logger.error(f"[BUNDLING] Error filtering analyses: {e}")
+                raise ValueError(f"Invalid analysis data: {e}") from e
         else:
             analyses = self.analysis_db.get_analyzed_pages(directory_filter=directory)
 
@@ -57,8 +71,13 @@ class BundlingService:
             return []
 
         # NEW: Exclude files already in accepted/completed bundles
-        bundled_files = self.analysis_db.get_bundled_file_paths()
-        analyses = [a for a in analyses if a["file_path"] not in bundled_files]
+        try:
+            bundled_files = self.analysis_db.get_bundled_file_paths()
+            # Use .get() to safely access file_path
+            analyses = [a for a in analyses if a.get("file_path") not in bundled_files]
+        except Exception as e:
+            logger.error(f"[BUNDLING] Error excluding bundled files: {e}")
+            raise ValueError(f"Invalid analysis data: {e}") from e
 
         if not analyses:
             return []  # All files already bundled

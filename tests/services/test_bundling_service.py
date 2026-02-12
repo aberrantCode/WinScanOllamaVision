@@ -195,6 +195,67 @@ class TestGenerateBundleRecommendations:
         assert result[0]["grouping_method"] == "explicit_page_numbers"
         assert result[1]["grouping_method"] == "metadata_matching"
 
+    def test_generate_recommendations_handles_missing_file_path(self, service, mock_db):
+        """Test that generate_bundle_recommendations safely handles analyses missing file_path key"""
+        # Arrange - some analyses missing file_path key
+        file_paths = ["file1.png", "file2.png"]
+        mock_db.get_analyzed_pages.return_value = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 1,
+            },
+            {
+                # Missing file_path key
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 2,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 3,
+            },
+        ]
+        mock_db.get_bundled_file_paths.return_value = set()
+
+        # Act - should not raise KeyError
+        service.generate_bundle_recommendations(file_paths=file_paths)
+
+        # Assert - should have called get_analyzed_pages
+        mock_db.get_analyzed_pages.assert_called_once()
+
+    def test_generate_recommendations_validates_data_structure(self, service, mock_db):
+        """Test that generate_bundle_recommendations validates analysis data and warns about missing files"""
+        # Arrange
+        file_paths = ["file1.png", "file2.png", "missing.png"]
+        mock_db.get_analyzed_pages.return_value = [
+            {
+                "file_path": "file1.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 1,
+            },
+            {
+                "file_path": "file2.png",
+                "company": "TestCo",
+                "document_type": "invoice",
+                "page_number": 2,
+            },
+        ]
+        mock_db.get_bundled_file_paths.return_value = set()
+        mock_db.save_bundle_suggestion.return_value = 1
+
+        # Act - should log warning about missing.png
+        with patch("services.bundling_service.logger") as mock_logger:
+            service.generate_bundle_recommendations(file_paths=file_paths)
+
+            # Assert - should have logged warning about missing file
+            warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+            assert any("missing.png" in call.lower() for call in warning_calls)
+
 
 class TestGroupByPageNumbers:
     """Tests for _group_by_page_numbers method"""
