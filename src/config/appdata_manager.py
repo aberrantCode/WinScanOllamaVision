@@ -56,11 +56,24 @@ class AppDataManager:
 
         Returns:
             Tuple of (settings_path, database_path) in AppData directory
+
+        Raises:
+            PermissionError: If directory cannot be created due to permissions
+            OSError: If directory creation fails
         """
         # Create AppData directory if it doesn't exist
         if not os.path.exists(self.appdata_dir):
-            os.makedirs(self.appdata_dir)
-            logger.info(f"Created AppData directory: {self.appdata_dir}")
+            try:
+                os.makedirs(self.appdata_dir)
+                logger.info(f"Created AppData directory: {self.appdata_dir}")
+            except PermissionError as e:
+                logger.critical(f"[APPDATA] Permission denied: {self.appdata_dir}")
+                raise PermissionError(
+                    f"Cannot create application data directory. Check permissions: {self.appdata_dir}"
+                ) from e
+            except OSError as e:
+                logger.critical(f"[APPDATA] Failed to create directory: {e}")
+                raise OSError(f"Failed to initialize application data directory: {e}") from e
 
         # Initialize settings.ini
         self._initialize_settings()
@@ -71,12 +84,31 @@ class AppDataManager:
         return self.settings_path, self.database_path
 
     def _initialize_settings(self):
-        """Initialize or update settings.ini in AppData"""
+        """
+        Initialize or update settings.ini in AppData
+
+        Raises:
+            PermissionError: If settings file cannot be written
+            OSError: If file copy fails
+        """
         if not os.path.exists(self.settings_path):
             # First run: copy template from solution data directory
             if os.path.exists(self.template_settings):
-                shutil.copy2(self.template_settings, self.settings_path)
-                logger.info(f"Copied template settings to: {self.settings_path}")
+                try:
+                    shutil.copy2(self.template_settings, self.settings_path)
+                    logger.info(f"Copied template settings to: {self.settings_path}")
+                except FileNotFoundError:
+                    logger.warning(f"Template settings not found at {self.template_settings}")
+                    logger.info("Settings will be created with defaults by ConfigManager")
+                    # Don't raise - ConfigManager will create defaults
+                except PermissionError as e:
+                    logger.error("[APPDATA] Permission denied copying settings")
+                    raise PermissionError(
+                        f"Cannot write to application directory: {self.settings_path}"
+                    ) from e
+                except OSError as e:
+                    logger.error(f"[APPDATA] Failed to copy settings: {e}")
+                    raise OSError(f"Failed to initialize settings file: {e}") from e
             else:
                 logger.warning(f"Template settings not found at {self.template_settings}")
                 logger.info("Settings will be created with defaults by ConfigManager")
@@ -131,12 +163,31 @@ class AppDataManager:
             logger.info("Updated settings.ini with new options (user values preserved)")
 
     def _initialize_database(self):
-        """Initialize or migrate database in AppData"""
+        """
+        Initialize or migrate database in AppData
+
+        Raises:
+            PermissionError: If database file cannot be written
+            OSError: If file copy fails
+        """
         if not os.path.exists(self.database_path):
             # First run: copy template from solution data directory
             if os.path.exists(self.template_database):
-                shutil.copy2(self.template_database, self.database_path)
-                logger.info(f"Copied template database to: {self.database_path}")
+                try:
+                    shutil.copy2(self.template_database, self.database_path)
+                    logger.info(f"Copied template database to: {self.database_path}")
+                except FileNotFoundError:
+                    logger.warning(f"Template database not found at {self.template_database}")
+                    logger.info("Database will be created by MetadataDB/AnalysisDB")
+                    # Don't raise - DB classes will create schema
+                except PermissionError as e:
+                    logger.error("[APPDATA] Permission denied copying database")
+                    raise PermissionError(
+                        f"Cannot write to application directory: {self.database_path}"
+                    ) from e
+                except OSError as e:
+                    logger.error(f"[APPDATA] Failed to copy database: {e}")
+                    raise OSError(f"Failed to initialize database file: {e}") from e
             else:
                 logger.warning(f"Template database not found at {self.template_database}")
                 logger.info("Database will be created by MetadataDB/AnalysisDB")
@@ -214,13 +265,26 @@ class AppDataManager:
             return 1
 
     def _backup_database(self):
-        """Create a timestamped backup of the database"""
+        """
+        Create a timestamped backup of the database
+
+        Raises:
+            PermissionError: If backup file cannot be written
+            OSError: If file copy fails
+        """
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = f"{self.database_path}.backup_{timestamp}"
-        shutil.copy2(self.database_path, backup_path)
-        logger.info(f"Created database backup: {backup_path}")
+        try:
+            shutil.copy2(self.database_path, backup_path)
+            logger.info(f"Created database backup: {backup_path}")
+        except PermissionError as e:
+            logger.error(f"[APPDATA] Permission denied creating backup: {backup_path}")
+            raise PermissionError(f"Failed to create database backup: {backup_path}") from e
+        except OSError as e:
+            logger.error(f"[APPDATA] Failed to create backup: {e}")
+            raise OSError(f"Failed to create database backup: {e}") from e
 
     def get_settings_path(self) -> str:
         """Get path to settings.ini in AppData"""

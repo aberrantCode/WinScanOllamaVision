@@ -548,6 +548,129 @@ class TestAppDataManager:
         # Assert - test passes if no exception
         assert True
 
+    def test_initialize_handles_permission_error_makedirs(self, temp_dirs):
+        """Test that initialize raises PermissionError if cannot create AppData directory"""
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+
+            # Mock os.makedirs to raise PermissionError
+            with patch("os.makedirs", side_effect=PermissionError("Access denied")):  # noqa: SIM117
+                # Act & Assert
+                with pytest.raises(
+                    PermissionError, match="Cannot create application data directory"
+                ):
+                    manager.initialize()
+
+    def test_initialize_handles_os_error_makedirs(self, temp_dirs):
+        """Test that initialize raises OSError if makedirs fails"""
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+
+            # Mock os.makedirs to raise OSError
+            with patch("os.makedirs", side_effect=OSError("Disk error")):  # noqa: SIM117
+                # Act & Assert
+                with pytest.raises(
+                    OSError, match="Failed to initialize application data directory"
+                ):
+                    manager.initialize()
+
+    def test_copy_settings_handles_permission_error(self, temp_dirs):
+        """Test that settings copy handles PermissionError"""
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        # Create template settings
+        template_settings = os.path.join(solution_data_dir, "settings.ini")
+        config = configparser.ConfigParser()
+        config["TestSection"] = {"key": "value"}
+        with open(template_settings, "w") as f:
+            config.write(f)
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+
+            # Mock shutil.copy2 to raise PermissionError
+            with patch(  # noqa: SIM117
+                "config.appdata_manager.shutil.copy2", side_effect=PermissionError("Access denied")
+            ):
+                # Act & Assert
+                with pytest.raises(PermissionError, match="Cannot write to application directory"):
+                    manager.initialize()
+
+    def test_copy_settings_handles_os_error(self, temp_dirs):
+        """Test that settings copy handles OSError"""
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        # Create template settings
+        template_settings = os.path.join(solution_data_dir, "settings.ini")
+        config = configparser.ConfigParser()
+        config["TestSection"] = {"key": "value"}
+        with open(template_settings, "w") as f:
+            config.write(f)
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+
+            # Mock shutil.copy2 to raise OSError
+            with patch("config.appdata_manager.shutil.copy2", side_effect=OSError("Disk full")):  # noqa: SIM117
+                # Act & Assert
+                with pytest.raises(OSError, match="Failed to initialize settings file"):
+                    manager.initialize()
+
+    def test_copy_database_handles_permission_error(self, temp_dirs):
+        """Test that database copy handles PermissionError"""
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        # Create template database
+        template_db = os.path.join(solution_data_dir, "metadata.db")
+        with sqlite3.connect(template_db) as conn:
+            conn.execute("CREATE TABLE test_table (id INTEGER)")
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+
+            # Mock shutil.copy2 to raise PermissionError when copying database
+            original_copy2 = shutil.copy2
+
+            def selective_error(*args, **kwargs):
+                if "metadata.db" in str(args[0]) and "metadata.db" in str(args[1]):
+                    raise PermissionError("Access denied")
+                return original_copy2(*args, **kwargs)
+
+            with patch("config.appdata_manager.shutil.copy2", side_effect=selective_error):  # noqa: SIM117
+                # Act & Assert
+                with pytest.raises(PermissionError, match="Cannot write to application directory"):
+                    manager.initialize()
+
+    def test_backup_database_handles_errors(self, temp_dirs):
+        """Test that backup_database handles errors gracefully"""
+        # Arrange
+        appdata_root, solution_data_dir = temp_dirs
+
+        with patch.dict(os.environ, {"APPDATA": appdata_root}):
+            manager = AppDataManager(solution_data_dir)
+            manager.initialize()
+
+            # Create database
+            with sqlite3.connect(manager.database_path) as conn:
+                conn.execute("CREATE TABLE test_table (id INTEGER)")
+
+            # Mock shutil.copy2 to raise PermissionError
+            with patch(  # noqa: SIM117
+                "config.appdata_manager.shutil.copy2", side_effect=PermissionError("Access denied")
+            ):
+                # Act & Assert
+                with pytest.raises(PermissionError, match="Failed to create database backup"):
+                    manager._backup_database()
+
 
 class TestInitializeAppdataFunction:
     """Test suite for initialize_appdata convenience function"""
