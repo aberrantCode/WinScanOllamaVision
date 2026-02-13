@@ -5,6 +5,7 @@ Orchestrates automatic page analysis on startup with caching support.
 
 import glob
 import os
+import sqlite3
 import time
 from collections.abc import Callable
 from typing import Any
@@ -81,8 +82,34 @@ class AnalysisService:
                 )
                 self._log(f"[REGISTER] Registered new image: {filename}")
 
+        except FileNotFoundError as e:
+            self._log(
+                f"[REGISTER ERROR] File not found during registration "
+                f"{os.path.basename(image_path)}: {e}"
+            )
+            # Don't fail the scan if registration fails - continue with analysis
+        except PermissionError as e:
+            self._log(
+                f"[REGISTER ERROR] Permission denied during registration "
+                f"{os.path.basename(image_path)}: {e}"
+            )
+            # Don't fail the scan if registration fails - continue with analysis
+        except OSError as e:
+            self._log(
+                f"[REGISTER ERROR] OS error during registration {os.path.basename(image_path)}: {e}"
+            )
+            # Don't fail the scan if registration fails - continue with analysis
+        except sqlite3.Error as e:
+            self._log(
+                f"[REGISTER ERROR] Database error during registration "
+                f"{os.path.basename(image_path)}: {e}"
+            )
+            # Don't fail the scan if registration fails - continue with analysis
         except Exception as e:
-            self._log(f"[REGISTER ERROR] Failed to register {os.path.basename(image_path)}: {e}")
+            self._log(
+                f"[REGISTER ERROR] Unexpected error during registration "
+                f"{os.path.basename(image_path)}: {e}"
+            )
             # Don't fail the scan if registration fails - continue with analysis
 
     def analyze_single_file(self, file_path: str, force_reanalysis: bool = False) -> dict[str, Any]:
@@ -375,9 +402,24 @@ class AnalysisService:
                         normalized_metadata=normalized,
                     )
                     self._log("[ANALYSIS] Created normalized metadata record")
+            except KeyError as normalize_error:
+                self._log(
+                    f"[ANALYSIS WARNING] Missing required field in metadata: {normalize_error}"
+                )
+                # Don't fail the analysis if normalization fails
+            except ValueError as normalize_error:
+                self._log(
+                    f"[ANALYSIS WARNING] Invalid metadata value during normalization: {normalize_error}"
+                )
+                # Don't fail the analysis if normalization fails
+            except sqlite3.Error as normalize_error:
+                self._log(
+                    f"[ANALYSIS WARNING] Database error creating normalized metadata: {normalize_error}"
+                )
+                # Don't fail the analysis if normalization fails
             except Exception as normalize_error:
                 self._log(
-                    f"[ANALYSIS WARNING] Failed to create normalized metadata: {normalize_error}"
+                    f"[ANALYSIS WARNING] Unexpected error creating normalized metadata: {normalize_error}"
                 )
                 # Don't fail the analysis if normalization fails
 
@@ -389,12 +431,233 @@ class AnalysisService:
                 "analysis": result["metadata"],
             }
 
+        except ConnectionError as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            self._log(
+                f"[ANALYSIS EXCEPTION] LLM connection error analyzing "
+                f"{os.path.basename(image_path)}: {str(e)}"
+            )
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+
+            # Save exception as analysis record so it appears in UI
+            error_response = (
+                f"ERROR: LLM connection failed\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            )
+            try:
+                provider = self._get_provider()
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
+
+            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+
+        except TimeoutError as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            self._log(
+                f"[ANALYSIS EXCEPTION] LLM timeout analyzing {os.path.basename(image_path)}: {str(e)}"
+            )
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+
+            # Save exception as analysis record so it appears in UI
+            error_response = f"ERROR: LLM timeout\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            try:
+                provider = self._get_provider()
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
+
+            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+
+        except FileNotFoundError as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            self._log(
+                f"[ANALYSIS EXCEPTION] File not found {os.path.basename(image_path)}: {str(e)}"
+            )
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+
+            # Save exception as analysis record so it appears in UI
+            error_response = f"ERROR: File not found\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            try:
+                provider = self._get_provider()
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
+
+            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+
+        except PermissionError as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            self._log(
+                f"[ANALYSIS EXCEPTION] Permission denied {os.path.basename(image_path)}: {str(e)}"
+            )
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+
+            # Save exception as analysis record so it appears in UI
+            error_response = f"ERROR: Permission denied\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            try:
+                provider = self._get_provider()
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
+
+            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+
+        except OSError as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            self._log(
+                f"[ANALYSIS EXCEPTION] OS error analyzing {os.path.basename(image_path)}: {str(e)}"
+            )
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+
+            # Save exception as analysis record so it appears in UI
+            error_response = f"ERROR: OS error\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            try:
+                provider = self._get_provider()
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
+
+            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+
+        except sqlite3.Error as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            self._log(
+                f"[ANALYSIS EXCEPTION] Database error analyzing {os.path.basename(image_path)}: {str(e)}"
+            )
+            self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+
+            # Save exception as analysis record so it appears in UI
+            error_response = f"ERROR: Database error\n\n{str(e)}\n\nTraceback:\n{error_details}"
+            try:
+                provider = self._get_provider()
+                # Try to save error (might fail if DB is locked)
+                self.analysis_db.save_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider.provider_name,
+                    model_name="unknown",
+                    analysis_data={},  # Empty metadata
+                    raw_response=error_response,  # Error message with traceback
+                    processing_time_ms=0,
+                    prompt_text=metadata_prompt if "metadata_prompt" in locals() else None,
+                    had_error=True,  # Mark as error
+                )
+
+                # Update status to indicate error
+                self.analysis_db.update_image_status(image_path, "analyzed")
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
+
+            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+
         except Exception as e:
             import traceback
 
             error_details = traceback.format_exc()
             self._log(
-                f"[ANALYSIS EXCEPTION] Error analyzing {os.path.basename(image_path)}: {str(e)}"
+                f"[ANALYSIS EXCEPTION] Unexpected error analyzing "
+                f"{os.path.basename(image_path)}: {str(e)}"
             )
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
 
@@ -418,9 +681,12 @@ class AnalysisService:
 
                 # Update status to indicate error
                 self.analysis_db.update_image_status(image_path, "analyzed")
-            except Exception:
-                # If saving error also fails, just log and continue
-                pass
+            except sqlite3.Error as save_error:
+                self._log(f"[ANALYSIS EXCEPTION] Failed to save error to database: {save_error}")
+            except Exception as save_error:
+                self._log(
+                    f"[ANALYSIS EXCEPTION] Unexpected error saving error details: {save_error}"
+                )
 
             return {"success": False, "cached": False, "skipped": False, "error": str(e)}
 
@@ -524,8 +790,11 @@ class AnalysisService:
             # Reset status to pending before re-analysis
             self.analysis_db.update_analysis_metadata(file_path, {"status": "Pending"})
             self._log(f"[RE-ANALYSIS] Reset status to Pending for: {filename}")
+        except sqlite3.Error as e:
+            self._log(f"[RE-ANALYSIS WARNING] Database error resetting status: {e}")
+            # Continue anyway - status reset is not critical
         except Exception as e:
-            self._log(f"[RE-ANALYSIS WARNING] Could not reset status: {e}")
+            self._log(f"[RE-ANALYSIS WARNING] Unexpected error resetting status: {e}")
             # Continue anyway - status reset is not critical
 
         # Emit progress: Starting analysis
