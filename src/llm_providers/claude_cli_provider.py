@@ -121,23 +121,36 @@ class ClaudeCliProvider(BaseLLMProvider):
 
         except subprocess.TimeoutExpired:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[CLAUDE CLI] Timeout after {self.timeout}s")
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": f"Command timed out after {self.timeout} seconds",
+                "error": f"Claude CLI timed out after {self.timeout}s. Try increasing timeout in settings.",
+            }
+        except FileNotFoundError:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error("[CLAUDE CLI] Command not found - Claude CLI may not be installed")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": "Claude CLI not found. Install Claude CLI and ensure it's in your PATH.",
             }
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[CLAUDE CLI] Unexpected error: {e}", exc_info=True)
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": str(e),
+                "error": f"Claude CLI error: {e}",
             }
 
     def get_available_models(self) -> list[str]:

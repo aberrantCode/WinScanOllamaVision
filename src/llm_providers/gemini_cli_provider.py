@@ -121,23 +121,36 @@ class GeminiCliProvider(BaseLLMProvider):
 
         except subprocess.TimeoutExpired:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[GEMINI CLI] Timeout after {self.timeout}s")
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": f"Command timed out after {self.timeout} seconds",
+                "error": f"Gemini CLI timed out after {self.timeout}s. Try increasing timeout in settings.",
+            }
+        except FileNotFoundError:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error("[GEMINI CLI] Command not found - Gemini CLI may not be installed")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": "Gemini CLI not found. Install Gemini CLI and ensure it's in your PATH.",
             }
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[GEMINI CLI] Unexpected error: {e}", exc_info=True)
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": str(e),
+                "error": f"Gemini CLI error: {e}",
             }
 
     def get_available_models(self) -> list[str]:
