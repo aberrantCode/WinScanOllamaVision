@@ -89,8 +89,33 @@ class OllamaProvider(BaseLLMProvider):
                 "error": None,
             }
 
+        except ConnectionError as e:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[OLLAMA PROVIDER] Connection error during analysis: {e}")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "provider_name": "ollama",
+                "success": False,
+                "error": str(e),
+            }
+        except TimeoutError as e:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[OLLAMA PROVIDER] Timeout during analysis: {e}")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "provider_name": "ollama",
+                "success": False,
+                "error": str(e),
+            }
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.error(f"[OLLAMA PROVIDER] Unexpected error during analysis: {e}")
             return {
                 "response": "",
                 "metadata": {},
@@ -120,8 +145,11 @@ class OllamaProvider(BaseLLMProvider):
         try:
             models = self.service.list_models()
             return [model["name"] for model in models]
+        except ConnectionError as e:
+            logger.error(f"[OLLAMA PROVIDER] Connection error listing models: {e}")
+            return []
         except Exception as e:
-            logger.error(f"Error listing Ollama models: {e}")
+            logger.error(f"[OLLAMA PROVIDER] Unexpected error listing models: {e}")
             return []
 
     def test_connection(self) -> bool:
