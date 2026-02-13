@@ -245,5 +245,14 @@ class AnalysisRepository:
             "DELETE FROM analysis_results WHERE image_file_id = ?",
             (image_file_id,),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[ANALYSIS REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[ANALYSIS REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to delete analysis records: {e}") from e
         return cursor.rowcount
