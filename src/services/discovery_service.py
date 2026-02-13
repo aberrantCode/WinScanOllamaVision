@@ -50,6 +50,13 @@ class DiscoveryService:
         Returns:
             Count of newly registered files (not including existing files)
         """
+        # Validate inputs
+        if not isinstance(directories, list):
+            raise TypeError(f"directories must be list, got {type(directories).__name__}")
+        for directory in directories:
+            if not isinstance(directory, str):
+                raise TypeError(f"directories must contain strings, got {type(directory).__name__}")
+
         if not directories:
             self.logger.info("[DISCOVERY] No directories provided")
             return 0

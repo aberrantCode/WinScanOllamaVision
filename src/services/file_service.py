@@ -92,6 +92,20 @@ class FileService:
         Groups files by their creation/modification timestamp, assuming consecutive scans.
         Files must be in chronological order for best results.
         """
+        # Validate inputs
+        if not isinstance(files, list):
+            raise TypeError(f"files must be list, got {type(files).__name__}")
+        for file_path in files:
+            if not isinstance(file_path, str):
+                raise TypeError(f"files must contain strings, got {type(file_path).__name__}")
+
+        if not isinstance(time_delta_seconds, int):
+            raise TypeError(
+                f"time_delta_seconds must be int, got {type(time_delta_seconds).__name__}"
+            )
+        if time_delta_seconds <= 0:
+            raise ValueError(f"time_delta_seconds must be positive, got {time_delta_seconds}")
+
         if not files:
             return []
 

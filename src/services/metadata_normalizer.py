@@ -32,6 +32,7 @@ class MetadataNormalizer:
         - document_type: "invoice" → "Invoice"
         - document_date: "01/15/2024" → "2024-01-15T00:00:00Z"
         - rotation_needed: "90_cw" → 90
+        - is_blank: "true" → True
 
         Args:
             raw_metadata: Raw metadata from LLM response
@@ -39,6 +40,10 @@ class MetadataNormalizer:
         Returns:
             Normalized metadata dictionary
         """
+        # Validate input
+        if not isinstance(raw_metadata, dict):
+            raise TypeError(f"raw_metadata must be dict, got {type(raw_metadata).__name__}")
+
         return {
             "company": self.normalize_company(raw_metadata.get("company")),
             "document_type": self.normalize_document_type(raw_metadata.get("document_type")),
@@ -49,6 +54,7 @@ class MetadataNormalizer:
             "belongs_to_same_doc": self.normalize_boolean(raw_metadata.get("belongs_to_same_doc")),
             "confidence_score": self.normalize_confidence(raw_metadata.get("confidence_score")),
             "tax_related": self.normalize_boolean(raw_metadata.get("tax_related")),
+            "is_blank": self.normalize_boolean(raw_metadata.get("is_blank")),
         }
 
     def normalize_company(self, company: Any) -> str | None:

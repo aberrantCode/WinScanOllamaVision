@@ -47,6 +47,27 @@ class BundlingService:
         Returns:
             List of bundle suggestion dictionaries
         """
+        # Validate inputs
+        if file_paths is not None:
+            if not isinstance(file_paths, list):
+                raise TypeError(f"file_paths must be list, got {type(file_paths).__name__}")
+            for path in file_paths:
+                if not isinstance(path, str):
+                    raise TypeError(f"file_paths must contain strings, got {type(path).__name__}")
+
+        if directory is not None:
+            if not isinstance(directory, str):
+                raise TypeError(f"directory must be str, got {type(directory).__name__}")
+            if not directory.strip():
+                raise ValueError("directory cannot be empty")
+            if not os.path.exists(directory):
+                raise FileNotFoundError(f"Directory does not exist: {directory}")
+
+        if not isinstance(min_confidence, int | float):
+            raise TypeError(f"min_confidence must be float, got {type(min_confidence).__name__}")
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError(f"min_confidence must be between 0.0 and 1.0, got {min_confidence}")
+
         # Get analyzed pages with metadata
         # Note: get_analyzed_pages() returns image files joined with metadata table
         # This includes company, document_type, page_number, etc. needed for bundling
@@ -354,6 +375,17 @@ class BundlingService:
             bundle_id: Bundle ID
             pdf_path: Full path to generated PDF file
         """
+        # Validate inputs
+        if not isinstance(bundle_id, int):
+            raise TypeError(f"bundle_id must be int, got {type(bundle_id).__name__}")
+        if bundle_id <= 0:
+            raise ValueError(f"bundle_id must be positive, got {bundle_id}")
+
+        if not isinstance(pdf_path, str):
+            raise TypeError(f"pdf_path must be str, got {type(pdf_path).__name__}")
+        if not pdf_path or not pdf_path.strip():
+            raise ValueError("pdf_path cannot be empty")
+
         from services.logging_service import get_logger
 
         logger = get_logger()
@@ -590,6 +622,30 @@ class BundlingService:
         Raises:
             Exception: If PDF conversion fails
         """
+        # Validate inputs
+        if not isinstance(file_paths, list):
+            raise TypeError(f"file_paths must be list, got {type(file_paths).__name__}")
+        if not file_paths:
+            raise ValueError("file_paths cannot be empty")
+        for path in file_paths:
+            if not isinstance(path, str):
+                raise TypeError(f"file_paths must contain strings, got {type(path).__name__}")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Image file does not exist: {path}")
+
+        if not isinstance(output_path, str):
+            raise TypeError(f"output_path must be str, got {type(output_path).__name__}")
+        if not output_path or not output_path.strip():
+            raise ValueError("output_path cannot be empty")
+
+        if not isinstance(rotation_angle, int):
+            raise TypeError(f"rotation_angle must be int, got {type(rotation_angle).__name__}")
+        if rotation_angle not in {0, 90, 180, 270}:
+            raise ValueError(f"rotation_angle must be 0, 90, 180, or 270, got {rotation_angle}")
+
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError(f"metadata must be dict, got {type(metadata).__name__}")
+
         from PIL import Image
 
         images = []
