@@ -72,8 +72,17 @@ class FileService:
                 img.save(png_path, "PNG")
             os.remove(tiff_path)  # Delete original TIFF after conversion
             return png_path
+        except FileNotFoundError:
+            logger.error(f"[FILE SERVICE] TIFF file not found: {tiff_path}")
+            return None
+        except PermissionError:
+            logger.error(f"[FILE SERVICE] Permission denied converting TIFF: {tiff_path}")
+            return None
+        except OSError as e:
+            logger.error(f"[FILE SERVICE] OS error converting TIFF {tiff_path}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error converting TIFF {tiff_path} to PNG: {e}")
+            logger.error(f"[FILE SERVICE] Unexpected error converting TIFF {tiff_path}: {e}")
             return None
 
     def group_files_by_timestamp(
@@ -93,8 +102,19 @@ class FileService:
                 # Use st_mtime as it's often more reliable for 'last modified' by scanner
                 m_time = os.path.getmtime(f)
                 file_data.append({"path": f, "mtime": m_time})
+            except FileNotFoundError:
+                logger.warning(f"[FILE SERVICE] File not found when getting mtime: {f}. Skipping.")
+                continue
+            except PermissionError:
+                logger.warning(f"[FILE SERVICE] Permission denied getting mtime: {f}. Skipping.")
+                continue
+            except OSError as e:
+                logger.warning(f"[FILE SERVICE] OS error getting mtime for {f}: {e}. Skipping.")
+                continue
             except Exception as e:
-                logger.warning(f"Could not get mtime for {f}: {e}. Skipping file.")
+                logger.warning(
+                    f"[FILE SERVICE] Unexpected error getting mtime for {f}: {e}. Skipping."
+                )
                 continue
 
         # Sort files by modification time
@@ -208,10 +228,15 @@ class FileService:
                                 # An alternative might be fill=None, stroke=None, but oc is cleaner for searchability
 
                 logger.debug(f"Added {img_path} to PDF.")
+            except FileNotFoundError:
+                logger.error(f"[FILE SERVICE] Image file not found for PDF: {img_path}")
+                # Skip this page and continue with others
+            except PermissionError:
+                logger.error(f"[FILE SERVICE] Permission denied reading image for PDF: {img_path}")
+                # Skip this page and continue with others
             except Exception as e:
-                logger.error(f"Error processing image {img_path} for PDF: {e}")
-                # Decide if we want to fail the whole PDF or just skip the page
-                # For now, print error and continue, will result in fewer pages
+                logger.error(f"[FILE SERVICE] Error processing image {img_path} for PDF: {e}")
+                # Skip this page and continue with others
 
         if not doc.page_count:
             logger.warning("No pages were added to the PDF document.")
@@ -228,8 +253,12 @@ class FileService:
             try:
                 os.remove(f_path)
                 logger.info(f"Deleted: {f_path}")
-            except Exception as e:
-                logger.error(f"Error deleting file {f_path}: {e}")
+            except FileNotFoundError:
+                logger.warning(f"[FILE SERVICE] File already deleted: {f_path}")
+            except PermissionError:
+                logger.error(f"[FILE SERVICE] Permission denied deleting file: {f_path}")
+            except OSError as e:
+                logger.error(f"[FILE SERVICE] OS error deleting file {f_path}: {e}")
 
     def move_pdf_to_organized(self, pdf_path: str, new_filename: str) -> str | None:
         """Moves the created PDF to the organized folder with the new filename."""
@@ -238,6 +267,15 @@ class FileService:
             shutil.move(pdf_path, final_path)
             logger.info(f"Moved PDF to {final_path}")
             return final_path
+        except FileNotFoundError:
+            logger.error(f"[FILE SERVICE] PDF file not found: {pdf_path}")
+            return None
+        except PermissionError:
+            logger.error(f"[FILE SERVICE] Permission denied moving PDF to {self.organized_folder}")
+            return None
+        except OSError as e:
+            logger.error(f"[FILE SERVICE] OS error moving PDF {pdf_path}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error moving PDF {pdf_path} to {final_path}: {e}")
+            logger.error(f"[FILE SERVICE] Unexpected error moving PDF {pdf_path}: {e}")
             return None
