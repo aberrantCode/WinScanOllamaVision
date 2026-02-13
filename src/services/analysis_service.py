@@ -123,6 +123,16 @@ class AnalysisService:
         Returns:
             Dictionary with analysis result
         """
+        # Validate inputs
+        if not isinstance(file_path, str):
+            raise TypeError(f"file_path must be str, got {type(file_path).__name__}")
+        if not file_path or not file_path.strip():
+            raise ValueError("file_path cannot be empty")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File does not exist: {file_path}")
+        if not isinstance(force_reanalysis, bool):
+            raise TypeError(f"force_reanalysis must be bool, got {type(force_reanalysis).__name__}")
+
         # Register the file first (if not already registered)
         self._register_image_file(file_path)
 
@@ -717,6 +727,19 @@ class AnalysisService:
         Returns:
             Dictionary with analysis statistics
         """
+        # Validate inputs
+        if not isinstance(file_paths, list):
+            raise TypeError(f"file_paths must be list, got {type(file_paths).__name__}")
+        if not file_paths:
+            raise ValueError("file_paths cannot be empty")
+        for path in file_paths:
+            if not isinstance(path, str):
+                raise TypeError(f"All file paths must be str, got {type(path).__name__}")
+            if not path or not path.strip():
+                raise ValueError("file_path cannot be empty")
+        if not isinstance(force_reanalysis, bool):
+            raise TypeError(f"force_reanalysis must be bool, got {type(force_reanalysis).__name__}")
+
         stats = {"total_files": len(file_paths), "analyzed": 0, "cached": 0, "errors": 0}
 
         try:
@@ -780,6 +803,14 @@ class AnalysisService:
         Returns:
             Dictionary with analysis result (same format as _analyze_single_page)
         """
+        # Validate inputs
+        if not isinstance(file_path, str):
+            raise TypeError(f"file_path must be str, got {type(file_path).__name__}")
+        if not file_path or not file_path.strip():
+            raise ValueError("file_path cannot be empty")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File does not exist: {file_path}")
+
         filename = os.path.basename(file_path)
 
         try:
