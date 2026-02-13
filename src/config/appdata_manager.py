@@ -50,6 +50,26 @@ class AppDataManager:
         self.template_settings = os.path.join(self.solution_data_dir, "settings.ini")
         self.template_database = os.path.join(self.solution_data_dir, "metadata.db")
 
+    def _check_disk_space(self, file_path: str, required_bytes: int) -> bool:
+        """
+        Check if sufficient disk space is available.
+
+        Args:
+            file_path: Path to check disk space for
+            required_bytes: Minimum bytes required
+
+        Returns:
+            True if sufficient space (with 2x safety margin), False otherwise
+        """
+        try:
+            dir_path = os.path.dirname(file_path) or "."
+            usage = shutil.disk_usage(dir_path)
+            available = usage.free
+            return available > required_bytes * 2  # 2x safety margin
+        except Exception:
+            # If check fails, assume sufficient space (fail open)
+            return True
+
     def initialize(self) -> tuple[str, str]:
         """
         Initialize AppData directory and ensure all files are present and up-to-date
@@ -94,6 +114,17 @@ class AppDataManager:
         if not os.path.exists(self.settings_path):
             # First run: copy template from solution data directory
             if os.path.exists(self.template_settings):
+                # Check disk space before copying (estimate 50KB for settings)
+                estimated_size = 50 * 1024  # 50KB
+                if not self._check_disk_space(self.settings_path, estimated_size):
+                    logger.error(
+                        f"[APPDATA] Insufficient disk space for settings: {self.settings_path}"
+                    )
+                    raise OSError(
+                        f"Insufficient disk space to initialize settings. "
+                        f"At least {estimated_size * 2} bytes required."
+                    )
+
                 try:
                     shutil.copy2(self.template_settings, self.settings_path)
                     logger.info(f"Copied template settings to: {self.settings_path}")
@@ -153,6 +184,17 @@ class AppDataManager:
 
         # Save updated config if changes were made
         if changes_made:
+            # Check disk space before updating (estimate 50KB for settings)
+            estimated_size = 50 * 1024  # 50KB
+            if not self._check_disk_space(self.settings_path, estimated_size):
+                logger.error(
+                    f"[APPDATA] Insufficient disk space to update settings: {self.settings_path}"
+                )
+                raise OSError(
+                    f"Insufficient disk space to update settings. "
+                    f"At least {estimated_size * 2} bytes required."
+                )
+
             # Create backup first
             backup_path = self.settings_path + ".backup"
             shutil.copy2(self.settings_path, backup_path)
@@ -173,6 +215,17 @@ class AppDataManager:
         if not os.path.exists(self.database_path):
             # First run: copy template from solution data directory
             if os.path.exists(self.template_database):
+                # Check disk space before copying (estimate 10MB for database)
+                estimated_size = 10 * 1024 * 1024  # 10MB
+                if not self._check_disk_space(self.database_path, estimated_size):
+                    logger.error(
+                        f"[APPDATA] Insufficient disk space for database: {self.database_path}"
+                    )
+                    raise OSError(
+                        f"Insufficient disk space to initialize database. "
+                        f"At least {estimated_size * 2} bytes required."
+                    )
+
                 try:
                     shutil.copy2(self.template_database, self.database_path)
                     logger.info(f"Copied template database to: {self.database_path}")
@@ -270,12 +323,22 @@ class AppDataManager:
 
         Raises:
             PermissionError: If backup file cannot be written
-            OSError: If file copy fails
+            OSError: If file copy fails or disk is full
         """
         from datetime import datetime
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = f"{self.database_path}.backup_{timestamp}"
+
+        # Check disk space before creating backup (estimate 10MB for database)
+        estimated_size = 10 * 1024 * 1024  # 10MB
+        if not self._check_disk_space(backup_path, estimated_size):
+            logger.error(f"[APPDATA] Insufficient disk space for backup: {backup_path}")
+            raise OSError(
+                f"Insufficient disk space to create database backup. "
+                f"At least {estimated_size * 2} bytes required."
+            )
+
         try:
             shutil.copy2(self.database_path, backup_path)
             logger.info(f"Created database backup: {backup_path}")

@@ -24,6 +24,26 @@ class ConfigManager:
         self.config = configparser.ConfigParser(interpolation=None)
         self._load_config()
 
+    def _check_disk_space(self, file_path: str, required_bytes: int) -> bool:
+        """
+        Check if sufficient disk space is available.
+
+        Args:
+            file_path: Path to check disk space for
+            required_bytes: Minimum bytes required
+
+        Returns:
+            True if sufficient space (with 2x safety margin), False otherwise
+        """
+        try:
+            dir_path = os.path.dirname(file_path) or "."
+            usage = shutil.disk_usage(dir_path)
+            available = usage.free
+            return available > required_bytes * 2  # 2x safety margin
+        except Exception:
+            # If check fails, assume sufficient space (fail open)
+            return True
+
     def _load_config(self):
         """
         Load configuration from file, handling corrupted files gracefully.
@@ -151,8 +171,19 @@ class ConfigManager:
 
         Raises:
             PermissionError: If config file cannot be written
-            OSError: If file operations fail
+            OSError: If file operations fail or disk is full
         """
+        # Estimate config file size (typically <10KB, use 50KB as safe estimate)
+        estimated_size = 50 * 1024  # 50KB
+
+        # Check disk space before writing
+        if not self._check_disk_space(self.config_file, estimated_size):
+            logger.error(f"[CONFIG] Insufficient disk space to save config: {self.config_file}")
+            raise OSError(
+                f"Insufficient disk space to save configuration. "
+                f"At least {estimated_size * 2} bytes required."
+            )
+
         try:
             # Atomic write: write to temp file first
             temp_file = f"{self.config_file}.tmp"
