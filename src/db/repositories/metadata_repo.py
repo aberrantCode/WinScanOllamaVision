@@ -1,8 +1,12 @@
 """Repository for normalized user-approved metadata."""
 
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class MetadataRepository:
@@ -44,10 +48,10 @@ class MetadataRepository:
                 image_file_id, analysis_result_id,
                 company, document_type, document_date,
                 page_number, total_pages, belongs_to_same_doc,
-                rotation, confidence_score, tax_related,
+                rotation, confidence_score, tax_related, is_blank,
                 output_filename, document_category,
                 auto_approved, last_edited_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ai')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ai')
         """,
             (
                 image_file_id,
@@ -61,11 +65,21 @@ class MetadataRepository:
                 normalized_metadata.get("rotation"),
                 normalized_metadata.get("confidence_score"),
                 normalized_metadata.get("tax_related"),
+                normalized_metadata.get("is_blank"),
                 output_filename,
                 document_category,
             ),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[METADATA REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[METADATA REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to create metadata record: {e}") from e
 
         # Get last inserted row ID
         metadata_id = cursor.lastrowid
@@ -92,6 +106,7 @@ class MetadataRepository:
             "rotation",
             "confidence_score",
             "tax_related",
+            "is_blank",
             "output_filename",
             "document_category",
         }
@@ -117,7 +132,16 @@ class MetadataRepository:
             f"UPDATE metadata SET {set_clause} WHERE image_file_id = ?",
             tuple(values),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[METADATA REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[METADATA REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update metadata: {e}") from e
 
     def get_by_image_file_id(self, image_file_id: int) -> dict[str, Any] | None:
         """
@@ -189,7 +213,16 @@ class MetadataRepository:
                 (bundle_id, image_file_id, sequence),
             )
 
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[METADATA REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[METADATA REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to link images to PDF: {e}") from e
 
     def get_analysis_history(self, image_file_id: int) -> list[dict[str, Any]]:
         """
@@ -263,7 +296,16 @@ class MetadataRepository:
             image_file_id: Image file ID
         """
         self.conn.execute("DELETE FROM metadata WHERE image_file_id = ?", (image_file_id,))
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[METADATA REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[METADATA REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to delete metadata record: {e}") from e
 
     def get_unique_companies(self) -> list[str]:
         """
