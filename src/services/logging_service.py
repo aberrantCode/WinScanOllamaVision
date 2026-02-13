@@ -197,8 +197,12 @@ class LoggingService:
                 with open(self.log_file_path, "w"):
                     pass  # Context manager ensures file is properly closed
                 self.info("Log file cleared")
+            except PermissionError as e:
+                self.error(f"Permission denied clearing log file: {e}", exc_info=True)
+            except OSError as e:
+                self.error(f"OS error clearing log file: {e}", exc_info=True)
             except Exception as e:
-                self.error(f"Failed to clear log file: {e}", exc_info=True)
+                self.error(f"Unexpected error clearing log file: {e}", exc_info=True)
 
 
 # Convenience function for getting the logging service
