@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import re
+import sqlite3
 from collections import defaultdict
 from typing import Any, cast
 
@@ -61,8 +62,14 @@ class BundlingService:
                 missing = set(file_paths) - found_paths
                 if missing:
                     logger.warning(f"[BUNDLING] Files not found in analysis: {missing}")
+            except KeyError as e:
+                logger.error(f"[BUNDLING] Missing required field in analysis data: {e}")
+                raise ValueError(f"Invalid analysis data - missing field: {e}") from e
+            except sqlite3.Error as e:
+                logger.error(f"[BUNDLING] Database error filtering analyses: {e}")
+                raise sqlite3.Error(f"Database error during analysis filtering: {e}") from e
             except Exception as e:
-                logger.error(f"[BUNDLING] Error filtering analyses: {e}")
+                logger.error(f"[BUNDLING] Unexpected error filtering analyses: {e}")
                 raise ValueError(f"Invalid analysis data: {e}") from e
         else:
             analyses = self.analysis_db.get_analyzed_pages(directory_filter=directory)
@@ -75,8 +82,14 @@ class BundlingService:
             bundled_files = self.analysis_db.get_bundled_file_paths()
             # Use .get() to safely access file_path
             analyses = [a for a in analyses if a.get("file_path") not in bundled_files]
+        except KeyError as e:
+            logger.error(f"[BUNDLING] Missing required field excluding bundled files: {e}")
+            raise ValueError(f"Invalid analysis data - missing field: {e}") from e
+        except sqlite3.Error as e:
+            logger.error(f"[BUNDLING] Database error excluding bundled files: {e}")
+            raise sqlite3.Error(f"Database error retrieving bundled files: {e}") from e
         except Exception as e:
-            logger.error(f"[BUNDLING] Error excluding bundled files: {e}")
+            logger.error(f"[BUNDLING] Unexpected error excluding bundled files: {e}")
             raise ValueError(f"Invalid analysis data: {e}") from e
 
         if not analyses:
@@ -399,11 +412,25 @@ class BundlingService:
                 try:
                     self.analysis_db.link_metadata_to_pdf(source_image_ids, pdf_file_id)
                     logger.info(f"Linked metadata for {len(source_image_ids)} images to PDF")
+                except sqlite3.Error as link_error:
+                    logger.warning(
+                        f"[BUNDLING] Database error linking metadata to PDF: {link_error}"
+                    )
                 except Exception as link_error:
-                    logger.warning(f"Failed to link metadata to PDF: {link_error}")
+                    logger.warning(
+                        f"[BUNDLING] Unexpected error linking metadata to PDF: {link_error}"
+                    )
 
+        except sqlite3.Error as e:
+            logger.error(f"[BUNDLING] Database error registering PDF file: {str(e)}", exc_info=True)
+        except PermissionError as e:
+            logger.error(f"[BUNDLING] Permission denied registering PDF file: {str(e)}")
+        except OSError as e:
+            logger.error(f"[BUNDLING] OS error registering PDF file: {str(e)}", exc_info=True)
         except Exception as e:
-            logger.error(f"Failed to register PDF file: {str(e)}", exc_info=True)
+            logger.error(
+                f"[BUNDLING] Unexpected error registering PDF file: {str(e)}", exc_info=True
+            )
 
         # Save PDF path to bundle
         self.analysis_db.update_bundle_pdf_path(bundle_id, pdf_path)
@@ -585,8 +612,18 @@ class BundlingService:
                     img = img.convert("RGB")  # type: ignore[assignment]
 
                 images.append(img)
+            except FileNotFoundError as e:
+                logger.error(f"[BUNDLING] Image file not found: {file_path}")
+                raise FileNotFoundError(f"Failed to load image {file_path}: {str(e)}") from e
+            except PermissionError as e:
+                logger.error(f"[BUNDLING] Permission denied loading image: {file_path}")
+                raise PermissionError(f"Failed to load image {file_path}: {str(e)}") from e
+            except OSError as e:
+                logger.error(f"[BUNDLING] OS error loading image: {file_path}")
+                raise OSError(f"Failed to load image {file_path}: {str(e)}") from e
             except Exception as e:
-                raise Exception(f"Failed to load image {file_path}: {str(e)}") from e
+                logger.error(f"[BUNDLING] Unexpected error loading image: {file_path}")
+                raise ValueError(f"Failed to load image {file_path}: {str(e)}") from e
 
         # Save as PDF
         if images:
@@ -599,8 +636,15 @@ class BundlingService:
                     resolution=100.0,
                     quality=95,
                 )
+            except PermissionError as e:
+                logger.error(f"[BUNDLING] Permission denied saving PDF: {output_path}")
+                raise PermissionError(f"Failed to save PDF: {str(e)}") from e
+            except OSError as e:
+                logger.error(f"[BUNDLING] OS error saving PDF (disk space?): {output_path}")
+                raise OSError(f"Failed to save PDF: {str(e)}") from e
             except Exception as e:
-                raise Exception(f"Failed to save PDF: {str(e)}") from e
+                logger.error(f"[BUNDLING] Unexpected error saving PDF: {output_path}")
+                raise ValueError(f"Failed to save PDF: {str(e)}") from e
         else:
             raise Exception("No images to convert")
 
