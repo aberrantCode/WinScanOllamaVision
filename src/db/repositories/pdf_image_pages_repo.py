@@ -4,9 +4,13 @@ Repository for pdf_image_pages junction table.
 Manages the many-to-many relationship between PDFs and images.
 """
 
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class PdfImagePagesRepository:
@@ -40,7 +44,16 @@ class PdfImagePagesRepository:
             """,
             (pdf_file_id, image_file_id, page_number),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[PDF IMAGE PAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[PDF IMAGE PAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to add page to PDF: {e}") from e
         return cursor.lastrowid if cursor.lastrowid else 0
 
     def get_images_for_pdf(self, pdf_file_id: int) -> list[dict[str, Any]]:
@@ -102,7 +115,16 @@ class PdfImagePagesRepository:
             "DELETE FROM pdf_image_pages WHERE pdf_file_id = ? AND page_number = ?",
             (pdf_file_id, page_number),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[PDF IMAGE PAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[PDF IMAGE PAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to remove page from PDF: {e}") from e
 
     def remove_all_pages(self, pdf_file_id: int) -> None:
         """
@@ -115,7 +137,16 @@ class PdfImagePagesRepository:
             "DELETE FROM pdf_image_pages WHERE pdf_file_id = ?",
             (pdf_file_id,),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[PDF IMAGE PAGES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[PDF IMAGE PAGES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to remove all pages from PDF: {e}") from e
 
     def get_page_count(self, pdf_file_id: int) -> int:
         """
