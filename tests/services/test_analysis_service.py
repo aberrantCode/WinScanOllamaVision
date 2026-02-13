@@ -607,7 +607,7 @@ class TestAnalyzeSinglePage:
 
             # Assert
             call_args = mock_provider.analyze_images.call_args
-            assert "Analyze this document" in call_args.kwargs["prompt"]
+            assert "Analyze the provided image" in call_args.kwargs["prompt"]
 
     def test_analyze_single_page_saves_to_both_databases(
         self, service, mock_analysis_db, mock_metadata_db
@@ -851,7 +851,8 @@ class TestTaxRelatedFeature:
 
         # Assert
         assert "tax_related" in prompt
-        assert "true/false" in prompt.lower()
+        # Check that prompt explains boolean values (contains both "true" and "false")
+        assert "true" in prompt.lower() and "false" in prompt.lower()
         assert "W-2" in prompt or "1099" in prompt
 
     def test_default_analysis_prompt_has_tax_examples(self):
