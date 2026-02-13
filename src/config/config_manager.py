@@ -302,9 +302,43 @@ class ConfigManager:
         return value.lower() in ("true", "1", "yes", "on")
 
     def get_int(self, section: str, key: str, default: int = 0) -> int:
-        """Get an integer setting"""
+        """
+        Get an integer setting with validation.
+
+        Args:
+            section: Config section name
+            key: Setting key
+            default: Default value if not found or invalid
+
+        Returns:
+            Integer value or default if invalid
+        """
         value = self.get_setting(section, key, str(default))
         try:
             return int(value)
         except ValueError:
+            logger.warning(
+                f"[CONFIG] Invalid integer [{section}] {key}='{value}', using default {default}"
+            )
+            return default
+
+    def get_float(self, section: str, key: str, default: float = 0.0) -> float:
+        """
+        Get a float setting with validation.
+
+        Args:
+            section: Config section name
+            key: Setting key
+            default: Default value if not found or invalid
+
+        Returns:
+            Float value or default if invalid
+        """
+        value = self.get_setting(section, key, str(default))
+        try:
+            return float(value)
+        except ValueError:
+            logger.warning(
+                f"[CONFIG] Invalid float [{section}] {key}='{value}', using default {default}"
+            )
             return default
