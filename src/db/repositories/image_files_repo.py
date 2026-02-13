@@ -4,9 +4,13 @@ Image files repository for tracking file discovery and lifecycle.
 Manages image file registration, status transitions, and lifecycle tracking.
 """
 
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class ImageFilesRepository:
@@ -54,7 +58,16 @@ class ImageFilesRepository:
         """,
             (file_path, file_hash, directory_path, filename, file_size, file_mtime),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to register image file: {e}") from e
 
         # Get the ID of the inserted/updated record
         result = self.conn.fetch_one_dict(
@@ -134,7 +147,16 @@ class ImageFilesRepository:
         """,
             (status, file_path),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update image status: {e}") from e
 
     def update_last_seen(self, file_path: str) -> None:
         """
@@ -151,7 +173,16 @@ class ImageFilesRepository:
         """,
             (file_path,),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update last seen timestamp: {e}") from e
 
     def update_hash(self, file_path: str, file_hash: str) -> None:
         """
@@ -169,7 +200,16 @@ class ImageFilesRepository:
         """,
             (file_hash, file_path),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update file hash: {e}") from e
 
     def mark_deleted(self, file_path: str) -> None:
         """
@@ -186,7 +226,16 @@ class ImageFilesRepository:
         """,
             (file_path,),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to mark image as deleted: {e}") from e
 
     def update_rotation(self, file_path: str, rotation: int) -> None:
         """
@@ -212,7 +261,16 @@ class ImageFilesRepository:
         """,
             (image_file["id"], rotation),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update rotation: {e}") from e
 
     def get_rotation(self, file_path: str) -> int:
         """
@@ -257,7 +315,16 @@ class ImageFilesRepository:
         """  # nosec B608
 
         cursor = self.conn.execute(query, tuple(file_paths))
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to mark images as deleted: {e}") from e
         return cursor.rowcount if cursor else 0
 
     def set_output_filename(self, file_path: str, output_filename: str) -> None:
@@ -282,7 +349,16 @@ class ImageFilesRepository:
         """,
             (output_filename, image_file["id"]),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to set output filename: {e}") from e
 
     def get_all_with_analysis(
         self, directory_filter: str | None = None, provider_filter: str | None = None
