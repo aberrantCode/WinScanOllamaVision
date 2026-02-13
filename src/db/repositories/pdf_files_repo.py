@@ -4,9 +4,13 @@ PDF files repository for tracking generated PDFs.
 Manages PDF file registration, generation status, and metadata.
 """
 
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class PdfFilesRepository:
@@ -63,7 +67,16 @@ class PdfFilesRepository:
                 file_size,
             ),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[PDF FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[PDF FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to register PDF file: {e}") from e
 
         # Get the ID of the inserted/updated record
         result = self.conn.fetch_one_dict(
@@ -115,7 +128,16 @@ class PdfFilesRepository:
         """,
             (status, pdf_path),
         )
-        self.conn.commit()
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[PDF FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[PDF FILES REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to update generation status: {e}") from e
 
     def update_searchability(self, pdf_path: str, is_searchable: bool) -> None:
         """
@@ -139,7 +161,16 @@ class PdfFilesRepository:
                 """,
                     (is_searchable, pdf_path),
                 )
-                self.conn.commit()
+                try:
+                    self.conn.commit()
+                except sqlite3.OperationalError as e:
+                    logger.error(f"[PDF FILES REPO] Database locked: {e}")
+                    self.conn.rollback()
+                    raise sqlite3.OperationalError("Database is locked. Try again.") from e
+                except sqlite3.Error as e:
+                    logger.error(f"[PDF FILES REPO] Database error: {e}")
+                    self.conn.rollback()
+                    raise sqlite3.Error(f"Failed to update searchability: {e}") from e
 
     def get_all(self) -> list[dict[str, Any]]:
         """
