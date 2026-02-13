@@ -164,10 +164,10 @@ class GeminiCliProvider(BaseLLMProvider):
 
     def test_connection(self) -> bool:
         """
-        Test Gemini CLI availability.
+        Test Gemini CLI availability with error handling.
 
         Returns:
-            True if CLI is available
+            True if connection successful, False otherwise
         """
         try:
             # Try to run 'gemini --version' or similar check
@@ -179,7 +179,14 @@ class GeminiCliProvider(BaseLLMProvider):
                 timeout=10,
             )
             return result.returncode == 0
-        except Exception:
+        except FileNotFoundError:
+            logger.warning("[GEMINI CLI] Connection test failed: command not found")
+            return False
+        except subprocess.TimeoutExpired:
+            logger.warning("[GEMINI CLI] Connection test failed: timeout")
+            return False
+        except Exception as e:
+            logger.error(f"[GEMINI CLI] Unexpected error during connection test: {e}")
             return False
 
     def validate_config(self) -> tuple[bool, str | None]:
