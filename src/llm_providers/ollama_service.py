@@ -30,7 +30,16 @@ class OllamaService:
         try:
             response = self.client.list()
             return cast(list[dict[str, Any]], response.get("models", []))
+        except httpx.ConnectError as e:
+            logger.error(f"[OLLAMA SERVICE] Cannot connect to Ollama server: {e}")
+            raise ConnectionError(
+                f"Failed to connect to Ollama server at {self.base_url}. Is it running?"
+            ) from e
+        except httpx.TimeoutException as e:
+            logger.error(f"[OLLAMA SERVICE] Timeout connecting to Ollama: {e}")
+            raise ConnectionError(f"Ollama server timeout at {self.base_url}") from e
         except Exception as e:
+            logger.error(f"[OLLAMA SERVICE] Unexpected error listing models: {e}")
             raise ConnectionError(
                 f"Failed to connect to Ollama server. Is it running? Error: {e}"
             ) from e
@@ -84,11 +93,25 @@ class OllamaService:
 
             # Verify model was pulled
             if not any(m["name"].startswith(model_name) for m in self.list_models()):
-                raise Exception(
+                raise ConnectionError(
                     f"Model '{model_name}' did not appear in list_models after pull operation."
                 )
+        except httpx.ConnectError as e:
+            logger.error(f"[OLLAMA SERVICE] Cannot connect to Ollama during model pull: {e}")
+            raise ConnectionError(
+                f"Failed to connect to Ollama server at {self.base_url}. Is it running?"
+            ) from e
+        except httpx.TimeoutException as e:
+            logger.error(f"[OLLAMA SERVICE] Timeout during model pull: {e}")
+            raise ConnectionError(
+                f"Model pull timed out after {self.timeout}s. Try increasing timeout or check network."
+            ) from e
+        except ConnectionError:
+            # Re-raise ConnectionError from verify step or list_models call
+            raise
         except Exception as e:
-            raise Exception(f"An unexpected error occurred during model pull: {e}") from e
+            logger.error(f"[OLLAMA SERVICE] Unexpected error during model pull: {e}", exc_info=True)
+            raise ConnectionError(f"An unexpected error occurred during model pull: {e}") from e
 
     def chat_with_vision_model(
         self, model_name: str, image_paths: list[str], prompt: str, format_json: bool = False
@@ -286,8 +309,60 @@ Respond ONLY with valid JSON in this format:
                 "document_date": None,
                 "additional": {},
             }
+        except ConnectionError as e:
+            logger.error(
+                f"[OLLAMA SERVICE] Connection error in validate_grouping_with_page_number: {e}"
+            )
+            return {
+                "belongs": False,
+                "doc_page_count": 1,
+                "do_not_belong": list(range(2, len(image_paths) + 1)),
+                "page_number": None,
+                "total_pages": None,
+                "page_position": None,
+                "confidence": "low",
+                "company": None,
+                "document_type": None,
+                "document_date": None,
+                "additional": {},
+            }
+        except TimeoutError as e:
+            logger.error(f"[OLLAMA SERVICE] Timeout in validate_grouping_with_page_number: {e}")
+            return {
+                "belongs": False,
+                "doc_page_count": 1,
+                "do_not_belong": list(range(2, len(image_paths) + 1)),
+                "page_number": None,
+                "total_pages": None,
+                "page_position": None,
+                "confidence": "low",
+                "company": None,
+                "document_type": None,
+                "document_date": None,
+                "additional": {},
+            }
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"[OLLAMA SERVICE] JSON decode error in validate_grouping_with_page_number: {e}"
+            )
+            return {
+                "belongs": False,
+                "doc_page_count": 1,
+                "do_not_belong": list(range(2, len(image_paths) + 1)),
+                "page_number": None,
+                "total_pages": None,
+                "page_position": None,
+                "confidence": "low",
+                "company": None,
+                "document_type": None,
+                "document_date": None,
+                "additional": {},
+            }
         except Exception as e:
-            logger.error(f"Error in validate_grouping_with_page_number: {e}", exc_info=True)
+            logger.error(
+                f"[OLLAMA SERVICE] Unexpected error in validate_grouping_with_page_number: {e}",
+                exc_info=True,
+            )
             return {
                 "belongs": False,
                 "doc_page_count": 1,
@@ -409,8 +484,14 @@ Rules:
 
             logger.debug(f"Manually extracted: company={company}, title={title}, date={date}")
             return {"company": company, "title": title, "date": date}
+        except ConnectionError as e:
+            logger.error(f"[OLLAMA SERVICE] Connection error in extract_document_info: {e}")
+            return {"company": None, "title": None, "date": None}
+        except TimeoutError as e:
+            logger.error(f"[OLLAMA SERVICE] Timeout in extract_document_info: {e}")
+            return {"company": None, "title": None, "date": None}
         except Exception as e:
-            logger.error(f"Error in extract_document_info: {e}")
+            logger.error(f"[OLLAMA SERVICE] Unexpected error in extract_document_info: {e}")
             # Silently handle extraction errors - return None values
             return {"company": None, "title": None, "date": None}
 
@@ -479,8 +560,22 @@ Provide the CORRECT order as indices."""
                 return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
 
             return {"ordered_indices": ordered_indices, "confidence": confidence}
+        except ConnectionError as e:
+            logger.error(f"[OLLAMA SERVICE] Connection error in infer_page_order_from_content: {e}")
+            return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
+        except TimeoutError as e:
+            logger.error(f"[OLLAMA SERVICE] Timeout in infer_page_order_from_content: {e}")
+            return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"[OLLAMA SERVICE] JSON decode error in infer_page_order_from_content: {e}"
+            )
+            return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
         except Exception as e:
-            logger.error(f"Error in infer_page_order_from_content: {e}")
+            logger.error(
+                f"[OLLAMA SERVICE] Unexpected error in infer_page_order_from_content: {e}",
+                exc_info=True,
+            )
             return {"ordered_indices": list(range(len(image_paths))), "confidence": "low"}
 
     def extract_text_and_coords(
@@ -530,11 +625,19 @@ Example:
             else:
                 # Silently handle unexpected format
                 return {"pages": []}
+        except ConnectionError as e:
+            logger.error(f"[OLLAMA SERVICE] Connection error in extract_text_and_coords: {e}")
+            return {"pages": []}
+        except TimeoutError as e:
+            logger.error(f"[OLLAMA SERVICE] Timeout in extract_text_and_coords: {e}")
+            return {"pages": []}
         except json.JSONDecodeError as e:
             # Log JSON decode errors and return empty result
-            logger.warning(f"JSON decode error in extract_page_info_list: {e}")
+            logger.warning(f"[OLLAMA SERVICE] JSON decode error in extract_text_and_coords: {e}")
             return {"pages": []}
         except Exception as e:
             # Log extraction errors and return empty result
-            logger.error(f"Unexpected error in extract_page_info_list: {e}", exc_info=True)
+            logger.error(
+                f"[OLLAMA SERVICE] Unexpected error in extract_text_and_coords: {e}", exc_info=True
+            )
             return {"pages": []}
