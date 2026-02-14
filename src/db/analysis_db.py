@@ -11,9 +11,13 @@ from db.connection import DatabaseConnection, get_appdata_db_path
 from db.repositories import (
     AnalysisRepository,
     AuditRepository,
+    BundleImagesRepository,
     BundleRepository,
     DirectoryRepository,
     ErrorRepository,
+    ImageFilesRepository,
+    MetadataRepository,
+    PdfFilesRepository,
     ProviderRepository,
     RotationRepository,
 )
@@ -44,9 +48,13 @@ class AnalysisDB:
         self._providers = ProviderRepository(self.connection)
         self._directories = DirectoryRepository(self.connection)
         self._bundles = BundleRepository(self.connection)
+        self._bundle_images = BundleImagesRepository(self.connection)
         self._errors = ErrorRepository(self.connection)
         self._rotation = RotationRepository(self.connection)
         self._audit = AuditRepository(self.connection)
+        self._image_files = ImageFilesRepository(self.connection)
+        self._metadata = MetadataRepository(self.connection)
+        self._pdf_files = PdfFilesRepository(self.connection)
 
     # ==================== Analysis Results Methods ====================
 
@@ -61,29 +69,76 @@ class AnalysisDB:
         processing_time_ms: int,
     ) -> None:
         """Save comprehensive page analysis results."""
-        self._analysis.save(
-            file_path,
-            file_hash,
-            provider_name,
-            model_name,
-            analysis_data,
-            raw_response,
-            processing_time_ms,
+        # Get or create image_file record
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            # Register new image file
+            directory_path = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            file_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else 0.0
+
+            image_file_id = self._image_files.register(
+                file_path, file_hash, directory_path, filename, file_size, file_mtime
+            )
+        else:
+            image_file_id = image_file["id"]
+
+        # Save analysis result to analysis_results table
+        analysis_id = self._analysis.save(
+            image_file_id=image_file_id,
+            provider_name=provider_name,
+            model_name=model_name,
+            prompt_text=analysis_data.get("prompt", ""),
+            response_text=raw_response,
+            confidence_score=analysis_data.get("confidence_score"),
+            processing_time_ms=processing_time_ms,
+            had_error=False,
+            extracted_metadata=analysis_data,
+            model_options=None,
+        )
+
+        # Save normalized metadata to metadata table
+        self._metadata.create_from_analysis(
+            image_file_id=image_file_id,
+            analysis_result_id=analysis_id,
+            normalized_metadata=analysis_data,
+            output_filename=analysis_data.get("output_filename"),
+            document_category=analysis_data.get("document_category"),
         )
 
     def get_analysis(self, file_path: str) -> dict[str, Any] | None:
         """Retrieve analysis results for a file."""
-        return self._analysis.get_by_path(file_path)
+        # Get image_file_id from file_path
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            return None
+
+        # Get latest analysis result
+        return self._analysis.get_latest_by_image_file_id(image_file["id"])
+
+    def get_analysis_with_metadata(self, file_path: str) -> dict[str, Any] | None:
+        """Retrieve analysis results with normalized metadata for a file."""
+        # Get all data in one query using the efficient join
+        results = self._image_files.get_batch_with_analysis([file_path])
+        return results.get(file_path)
 
     def update_analysis_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
         """Update metadata fields for an existing analysis."""
-        self._analysis.update_metadata(file_path, metadata)
+        # Get image_file_id from file_path
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            return
+
+        # Update metadata table (not analysis_results)
+        self._metadata.update_from_user(image_file["id"], metadata)
 
     def get_analyzed_pages(
         self, directory_filter: str | None = None, provider_filter: str | None = None
     ) -> list[dict[str, Any]]:
         """Get list of analyzed pages with optional filters."""
-        return self._analysis.get_all(directory_filter, provider_filter)
+        # Use image_files repository to get all images with their analysis data
+        return self._image_files.get_all_with_analysis(directory_filter, provider_filter)
 
     # ==================== Provider Methods ====================
 
@@ -130,7 +185,17 @@ class AnalysisDB:
         self, file_paths: list[str], bundle_metadata: dict[str, Any], confidence_score: float
     ) -> int | None:
         """Save a document bundle suggestion."""
-        return self._bundles.save_suggestion(file_paths, bundle_metadata, confidence_score)
+        # Create bundle record (without file_paths - that's in junction table)
+        bundle_id = self._bundles.save_suggestion(bundle_metadata, confidence_score)
+
+        if bundle_id and file_paths:
+            # Add images to bundle via junction table
+            for sequence, file_path in enumerate(file_paths, start=1):
+                image_file = self._image_files.get_by_path(file_path)
+                if image_file:
+                    self._bundle_images.add_image(bundle_id, image_file["id"], sequence)
+
+        return bundle_id
 
     def get_bundle_suggestions(
         self, status_filter: str = "suggested", min_confidence: float | None = None
@@ -146,13 +211,12 @@ class AnalysisDB:
 
     def update_bundle_metadata(self, bundle_id: int, metadata: dict[str, Any]) -> None:
         """Update bundle metadata fields."""
-        self._bundles.update_metadata(
-            bundle_id,
-            company=metadata.get("company"),
-            document_type=metadata.get("document_type"),
-            document_date=metadata.get("document_date"),
-            bundle_name=metadata.get("bundle_name"),
-        )
+        # Update bundle_name if present
+        if "bundle_name" in metadata:
+            self._bundles.update_bundle_name(bundle_id, metadata["bundle_name"])
+
+        # Note: company, document_type, document_date are stored in metadata table,
+        # not in document_bundles table. They are per-image metadata.
 
     def get_bundled_file_paths(self) -> set[str]:
         """Get all file paths that are part of accepted or completed bundles."""
@@ -160,7 +224,29 @@ class AnalysisDB:
 
     def update_bundle_pdf_path(self, bundle_id: int, pdf_path: str) -> None:
         """Update bundle with generated PDF path."""
-        self._bundles.update_pdf_path(bundle_id, pdf_path)
+        # Register PDF file in pdf_files table (linked to bundle)
+        pdf_filename = os.path.basename(pdf_path)
+        file_hash = None
+        file_size = os.path.getsize(pdf_path) if os.path.exists(pdf_path) else None
+
+        # Count pages would need PDF parsing - for now use 0 as placeholder
+        # This should be passed in or calculated by the caller
+        page_count = 0
+
+        self._pdf_files.register(
+            pdf_path=pdf_path,
+            pdf_filename=pdf_filename,
+            bundle_id=bundle_id,
+            page_count=page_count,
+            file_hash=file_hash,
+            file_size=file_size,
+        )
+
+    # ==================== Image Status Methods ====================
+
+    def update_image_status(self, file_path: str, status: str) -> None:
+        """Update image file status."""
+        self._image_files.update_status(file_path, status)
 
     # ==================== Rotation Methods ====================
 
@@ -282,8 +368,14 @@ class AnalysisDB:
         cursor.execute("SELECT COUNT(*) FROM analysis_results")
         total = cursor.fetchone()[0]
 
-        # Average processing time
-        cursor.execute("SELECT AVG(processing_time_ms) FROM analysis_results")
+        # Average processing time (exclude cache hits < 1000ms)
+        cursor.execute(
+            """
+            SELECT AVG(processing_time_ms)
+            FROM analysis_results
+            WHERE processing_time_ms >= 1000
+        """
+        )
         avg_time = cursor.fetchone()[0] or 0
 
         # Provider breakdown

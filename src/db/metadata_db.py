@@ -8,7 +8,12 @@ import hashlib
 from typing import Any
 
 from db.connection import DatabaseConnection, get_appdata_db_path
-from db.repositories import MetadataRepository, RotationRepository
+from db.repositories import (
+    ArchivedMetadataRepository,
+    ImageFilesRepository,
+    MetadataRepository,
+    RotationRepository,
+)
 from db.schema import create_all_tables
 from services.logging_service import get_logger
 
@@ -37,6 +42,8 @@ class MetadataDB:
         # Initialize repositories
         self._metadata = MetadataRepository(self.connection)
         self._rotation = RotationRepository(self.connection)
+        self._archived = ArchivedMetadataRepository(self.connection)
+        self._image_files = ImageFilesRepository(self.connection)
 
         # Field history cache
         self._companies_cache: list[str] | None = None
@@ -84,38 +91,80 @@ class MetadataDB:
         processing_time_ms: int | None = None,
     ) -> None:
         """Save or update metadata for a file."""
-        self._metadata.save_metadata(file_path, metadata, model_used, processing_time_ms)
+        # Get or register image file
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            return
+
+        # Update metadata via repository
+        self._metadata.update_from_user(image_file["id"], metadata)
+        self.invalidate_field_history_cache()
 
     def get_metadata(self, file_path: str) -> dict[str, Any] | None:
         """Retrieve metadata for a file."""
-        return self._metadata.get_metadata(file_path)
+        return self._metadata.get_by_image_path(file_path)
 
     def delete_metadata(self, file_path: str) -> None:
         """Delete metadata for a file."""
-        self._metadata.delete_metadata(file_path)
+        image_file = self._image_files.get_by_path(file_path)
+        if image_file:
+            self._metadata.delete_by_image_file_id(image_file["id"])
+            self.invalidate_field_history_cache()
 
     def archive_document(
         self, pdf_path: str, source_files: list[str], document_metadata: dict[str, Any]
     ) -> None:
         """Archive metadata for a completed document."""
-        self._metadata.archive_document(pdf_path, source_files, document_metadata)
+        self._archived.archive_document(pdf_path, source_files, document_metadata)
         self.invalidate_field_history_cache()
 
     def get_archived_document(self, pdf_path: str) -> dict[str, Any] | None:
         """Retrieve archived metadata for a PDF."""
-        return self._metadata.get_archived_document(pdf_path)
+        return self._archived.get_archived_document(pdf_path)
 
     def get_statistics(self) -> dict[str, Any]:
         """Get database statistics."""
-        return self._metadata.get_statistics()
+        # Combine statistics from both metadata and archived repositories
+        metadata_stats = self._metadata.get_stats()
+        archived_stats = self._archived.get_statistics()
+
+        return {
+            **metadata_stats,
+            **archived_stats,
+        }
 
     def cleanup_orphaned_metadata(self) -> int:
         """Remove metadata for files that no longer exist."""
-        return self._metadata.cleanup_orphaned_metadata()
+        # Get all metadata records
+        all_metadata = self._metadata.get_all()
+
+        deleted_count = 0
+        for meta in all_metadata:
+            file_path = meta.get("file_path")
+            if file_path:
+                import os
+
+                if not os.path.exists(file_path):
+                    image_file = self._image_files.get_by_path(file_path)
+                    if image_file:
+                        self._metadata.delete_by_image_file_id(image_file["id"])
+                        deleted_count += 1
+
+        self.invalidate_field_history_cache()
+        return deleted_count
 
     def create_backup(self, backup_path: str | None = None) -> str:
         """Create database backup."""
-        return self._metadata.create_backup(backup_path)
+        import shutil
+
+        if backup_path is None:
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = self.db_path.replace(".db", f"_backup_{timestamp}.db")
+
+        shutil.copy2(self.db_path, backup_path)
+        return backup_path
 
     def save_rotation(self, file_path: str, rotation_degrees: int) -> None:
         """Save rotation angle for a file."""

@@ -15,7 +15,8 @@ class ConfigManager:
             config_file = os.path.join(appdata_dir, "settings.ini")
 
         self.config_file = config_file
-        self.config = configparser.ConfigParser()
+        # Disable interpolation to allow % characters in prompts
+        self.config = configparser.ConfigParser(interpolation=None)
         self._load_config()
 
     def _load_config(self):
@@ -82,6 +83,15 @@ class ConfigManager:
                 "enabled": "true",
                 "incremental": "true",
                 "batch_size": "10",
+            }
+
+        # Discovery and scheduling settings
+        if "Discovery" not in self.config:
+            self.config["Discovery"] = {
+                "enabled": "true",
+                "interval_minutes": "60",
+                "auto_analyze_after_discovery": "false",
+                "last_run": "",
             }
 
         # Theme and appearance settings

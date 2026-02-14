@@ -17,14 +17,16 @@ from PyQt6.QtCore import (
     QModelIndex,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QColor, QFont
+from PyQt6.QtGui import QAction, QColor, QFont, QPixmap, QTransform
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -38,6 +40,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 
 
 class FileDetailsTableModel(QAbstractTableModel):
@@ -56,12 +60,13 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("document_type", "Type", True),
         ("document_date", "Date", True),
         ("tax_related", "Tax Related", True),
+        ("is_blank", "Is Blank", True),
         ("page_number", "Page", True),
         ("total_pages", "Total", True),
         ("rotation", "Rotation", True),
         ("file_size", "Size", True),
         ("modified_time", "Modified", True),
-        ("analysis_time", "Analyzed", False),
+        ("analysis_time", "Analyzed", True),
         ("processing_duration", "Duration", False),
         ("model_used", "Model", False),
         ("provider", "Provider", False),
@@ -179,7 +184,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             return self._format_datetime(value)
         elif col_key == "processing_duration":
             return self._format_duration(value)
-        elif col_key in ("cache_hit", "tax_related"):
+        elif col_key in ("cache_hit", "tax_related", "is_blank"):
             return "Yes" if value else "No"
         elif col_key == "rotation":
             # Display rotation as degrees (0°, 90°, 180°, 270°)
@@ -262,7 +267,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "rotation",
         ):
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        elif col_key in ("cache_hit", "tax_related"):
+        elif col_key in ("cache_hit", "tax_related", "is_blank"):
             return Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
         return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
@@ -276,6 +281,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "document_type": "Type of document (Invoice, Receipt, etc.)",
             "document_date": "Date extracted from document",
             "tax_related": "Whether document is related to taxes (W-2, 1099, tax returns, etc.)",
+            "is_blank": "Whether the page appears to be blank or has no significant content",
             "page_number": "Page number (if detected)",
             "total_pages": "Total pages in document (if detected)",
             "rotation": "Suggested rotation in degrees (0, 90, 180, 270)",
@@ -307,16 +313,10 @@ class FileDetailsTableModel(QAbstractTableModel):
 
     @staticmethod
     def _format_datetime(dt: Any) -> str:
-        """Format datetime for display."""
-        if isinstance(dt, str):
-            try:
-                dt = datetime.fromisoformat(dt)
-            except (ValueError, TypeError):
-                return str(dt)
-
-        if isinstance(dt, datetime):
-            return dt.strftime("%Y-%m-%d %H:%M")
-
+        """Format datetime for display (converts UTC to local timezone)."""
+        if not dt:
+            return "N/A"
+        # Simple string conversion for now
         return str(dt)
 
     @staticmethod
@@ -409,6 +409,14 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
                 return False
 
         elif self._quick_filter == "needs_review":
+            # Filter to images that need review: Failed, Analyzed, or low confidence
+            status = row_data.get("status", "")
+
+            # Include if status is Failed (error) or Analyzed (awaiting review)
+            if status in ("Failed", "Analyzed"):
+                return True
+
+            # Also include if confidence is low (< 80)
             confidence = row_data.get("confidence", 100)
             try:
                 return float(confidence) < 80
@@ -445,20 +453,24 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
             return status == "Failed" or bool(error_msg)
 
         elif self._quick_filter == "missing_metadata":
-            # Check if any key metadata field is missing or N/A
+            # Check if BOTH company AND date are missing (at least one of these must be present)
             company = row_data.get("company", "")
-            document_type = row_data.get("document_type", "")
             document_date = row_data.get("document_date", "")
 
-            # Missing if any field is empty, None, or 'N/A'
+            # Missing if field is empty, None, or 'N/A'
             company_missing = not company or company in ("N/A", "None", "")
-            type_missing = not document_type or document_type in ("N/A", "None", "")
             date_missing = not document_date or document_date in ("N/A", "None", "")
 
-            return company_missing or type_missing or date_missing
+            # Only considered missing metadata if BOTH company AND date are missing
+            return company_missing and date_missing
 
         elif self._quick_filter == "cached_only":
             return bool(row_data.get("cache_hit"))
+
+        elif self._quick_filter == "blank_pages":
+            # Filter to pages marked as blank (is_blank = True)
+            is_blank = row_data.get("is_blank", False)
+            return bool(is_blank)
 
         return True
 
@@ -500,13 +512,20 @@ class FileDetailsDialog(QDialog):
 
     re_analyze_requested = pyqtSignal(str)  # Emits file path
     metadata_saved = pyqtSignal(str)  # Emits file path when metadata is saved
+    record_deleted = pyqtSignal(str)  # Emits file path when record is deleted
 
     def __init__(
-        self, file_data: dict[str, Any], parent=None, analysis_db=None, config_manager=None
+        self,
+        file_data: dict[str, Any],
+        parent=None,
+        analysis_db=None,
+        metadata_db=None,
+        config_manager=None,
     ):
         super().__init__(parent)
         self.file_data = file_data
         self.analysis_db = analysis_db  # Store database reference
+        self.metadata_db = metadata_db  # Store metadata database reference
         self.setWindowTitle(
             f"File Details - {os.path.basename(file_data.get('filename', 'Unknown'))}"
         )
@@ -518,7 +537,8 @@ class FileDetailsDialog(QDialog):
         logger = get_logger()
         logger.debug(
             f"[DIALOG INIT] FileDetailsDialog opened for {file_data.get('filename')} - "
-            f"rotation_needed in file_data: {file_data.get('rotation_needed')}"
+            f"rotation (image_files): {file_data.get('rotation')}, "
+            f"rotation_needed (analysis_results): {file_data.get('rotation_needed')}"
         )
 
         # Get theme from parent
@@ -570,6 +590,8 @@ class FileDetailsDialog(QDialog):
                 "text_secondary": "#B0B0B0",
                 "border": "#4A4A4A",
                 "accent": "#3B82F6",
+                "button_bg": "#3A3A3A",
+                "button_hover": "#4A4A4A",
             }
         else:
             return {
@@ -579,12 +601,13 @@ class FileDetailsDialog(QDialog):
                 "text_secondary": "#374151",
                 "border": "#E5E7EB",
                 "accent": "#3B82F6",
+                "button_bg": "#F3F4F6",
+                "button_hover": "#EFF6FF",
             }
 
     def _init_ui(self):
         """Initialize the user interface with image preview and accordion sections."""
         from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QPixmap
         from PyQt6.QtWidgets import QScrollArea, QSplitter
 
         main_layout = QVBoxLayout(self)
@@ -619,17 +642,14 @@ class FileDetailsDialog(QDialog):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(15, 15, 15, 15)
 
-        # Image preview label
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setStyleSheet(f"""
-            QLabel {{
-                background-color: {self.theme_colors["bg_primary"]};
-                border: 2px solid {self.theme_colors["border"]};
-                border-radius: 8px;
-                padding: 10px;
-            }}
-        """)
+        # Image display area (with overlay controls)
+        # Create unified image preview widget
+        self.image_preview = ImagePreviewWidget(
+            toolbar_size=ToolbarSize.COMPACT,
+            toolbar_position=ToolbarPosition.BOTTOM_CENTER,
+            theme_colors=self.theme_colors,
+        )
+        self.image_preview.setMinimumSize(400, 400)
 
         # Load and display image (path already corrected in __init__)
         file_path = self.file_data.get("full_path")
@@ -637,35 +657,35 @@ class FileDetailsDialog(QDialog):
         if file_path and os.path.exists(file_path):
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                # Store base pixmap (never modified) and working pixmap for transformations
+                # Store base pixmap (never modified)
                 self.base_pixmap = pixmap
                 self.original_pixmap = pixmap
                 self.current_rotation = "none"
 
-                # Calculate available dimensions (50% of dialog width minus margins/padding/border)
-                # Dialog width: 1050, 50% = 525, minus margins (15*2) and border/padding (~20) = ~480
-                available_width = 480
-                available_height = 800 - 150  # Dialog height minus margins and bottom section
-
-                # Apply zoom based on configured mode
-                scaled_pixmap = self._scale_image_to_mode(pixmap, available_width, available_height)
-                self.image_label.setPixmap(scaled_pixmap)
+                # Load into preview widget with fit to window
+                self.image_preview.set_pixmap(pixmap, apply_fit="window")
             else:
                 self.base_pixmap = None
                 self.original_pixmap = None
                 self.current_rotation = "none"
-                self.image_label.setText("Failed to load image")
-                self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
+                self.image_preview.image_label.setText("Failed to load image")
+                self.image_preview.image_label.setStyleSheet(
+                    f"color: {self.theme_colors['text_secondary']};"
+                )
         else:
             self.base_pixmap = None
             self.original_pixmap = None
             self.current_rotation = "none"
-            self.image_label.setText(f"Image not found\n{file_path or 'No path'}")
-            self.image_label.setStyleSheet(f"color: {self.theme_colors['text_secondary']};")
+            self.image_preview.image_label.setText(f"Image not found\n{file_path or 'No path'}")
+            self.image_preview.image_label.setStyleSheet(
+                f"color: {self.theme_colors['text_secondary']};"
+            )
 
-        left_layout.addWidget(self.image_label)
+        image_area = self.image_preview  # For compatibility with existing splitter code
+        left_layout.addWidget(image_area)
 
         # Store references for dynamic resizing
+        self.image_area = image_area  # Store for compatibility
         self.left_panel = left_panel
         self.splitter = splitter
 
@@ -708,9 +728,15 @@ class FileDetailsDialog(QDialog):
         )
         accordion_layout.addWidget(analysis_section)
 
+        # LLM Prompt Section
+        llm_prompt_section = self._create_accordion_section(
+            "📝 LLM Prompt", self._create_llm_prompt_content()
+        )
+        accordion_layout.addWidget(llm_prompt_section)
+
         # Raw Response Section
         raw_response_section = self._create_accordion_section(
-            "💬 Raw LLM Response", self._create_raw_response_content()
+            "💬 LLM Response", self._create_raw_response_content()
         )
         accordion_layout.addWidget(raw_response_section)
 
@@ -769,6 +795,34 @@ class FileDetailsDialog(QDialog):
         """
 
         # Action buttons with consistent styling
+        # Delete Record button (with red styling for destructive action)
+        delete_button_style = """
+            QPushButton {
+                background: #991B1B;
+                color: #E0E0E0;
+                border: 1px solid #7F1D1D;
+                border-radius: 6px;
+                padding: 10px 20px;
+                font-weight: 600;
+                min-height: 36px;
+            }
+            QPushButton:hover {
+                background: #7F1D1D;
+                border-color: #991B1B;
+            }
+            QPushButton:pressed {
+                background: #450A0A;
+                color: white;
+            }
+        """
+        self.delete_btn = QPushButton("🗑️ Delete Record")
+        self.delete_btn.setStyleSheet(delete_button_style)
+        self.delete_btn.setToolTip(
+            "Delete this record from the database (file will NOT be deleted)"
+        )
+        self.delete_btn.clicked.connect(self._delete_record)
+        bottom_layout.addWidget(self.delete_btn)
+
         self.open_doc_btn = QPushButton("📄 Open Document")
         self.open_doc_btn.setStyleSheet(button_style)
         self.open_doc_btn.clicked.connect(self._view_document)
@@ -880,16 +934,10 @@ class FileDetailsDialog(QDialog):
             return str(size) if size else "N/A"
 
     def _format_dt(self, dt: Any) -> str:
-        """Format datetime."""
+        """Format datetime (converts UTC to local timezone)."""
         if not dt:
             return "N/A"
-        if isinstance(dt, str):
-            try:
-                dt = datetime.fromisoformat(dt)
-            except (ValueError, TypeError):
-                return str(dt)
-        if isinstance(dt, datetime):
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        # Simple string conversion for now
         return str(dt)
 
     def _format_duration(self, duration: Any) -> str:
@@ -914,7 +962,6 @@ class FileDetailsDialog(QDialog):
     ):
         """Create a collapsible accordion section."""
         from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QFrame
 
         section = QWidget()
         section_layout = QVBoxLayout(section)
@@ -1065,6 +1112,24 @@ class FileDetailsDialog(QDialog):
         Raises:
             ValueError: If field_name is not in the allowed whitelist.
         """
+        if not self.metadata_db:
+            return []
+
+        # Use MetadataDB methods for known fields
+        try:
+            if field_name == "company":
+                return self.metadata_db.get_unique_companies()
+            elif field_name == "document_type":
+                return self.metadata_db.get_unique_titles()
+            elif field_name == "document_category":
+                return self.metadata_db.get_unique_categories()
+        except Exception as e:
+            from services.logging_service import get_logger
+
+            get_logger().error(f"Error getting distinct values for {field_name}: {e}")
+            return []
+
+        # Fallback for other fields - route to correct table based on schema
         if not self.analysis_db:
             return []
 
@@ -1076,14 +1141,41 @@ class FileDetailsDialog(QDialog):
             return []
 
         try:
-            # Safe to interpolate now that field_name is validated against whitelist
-            query = f"SELECT DISTINCT {field_name} FROM analysis_results WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
+            # Route field to correct table after Migration 16 schema refactoring
+            if field_name in ("provider_name", "model_name"):
+                # Analysis provenance fields - from analysis_results table
+                table = "analysis_results"
+            elif field_name in ("document_date", "page_number", "total_pages", "confidence_score"):
+                # Document metadata fields - from metadata table
+                table = "metadata"
+            elif field_name == "file_path":
+                # File system fields - from image_files table
+                table = "image_files"
+            else:
+                # Unknown field - skip
+                return []
+
+            # Safe to interpolate now that field_name is validated and table is hardcoded
+            query = f"SELECT DISTINCT {field_name} FROM {table} WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
             result = self.analysis_db.connection.execute(query).fetchall()
             return [row[0] for row in result if row[0]]
         except Exception as e:
             from services.logging_service import get_logger
 
             get_logger().error(f"Error getting distinct values for {field_name}: {e}")
+            return []
+
+    def _get_distinct_categories(self):
+        """Get distinct document categories from metadata table."""
+        if not self.metadata_db:
+            return []
+
+        try:
+            return self.metadata_db.get_unique_categories()
+        except Exception as e:
+            from services.logging_service import get_logger
+
+            get_logger().error(f"Error getting distinct categories: {e}")
             return []
 
     def _create_metadata_content(self):
@@ -1112,12 +1204,14 @@ class FileDetailsDialog(QDialog):
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
 
-            # Label
+            # Label (fixed width for perfect alignment)
             lbl = QLabel(f"<b>{label}:</b>")
             lbl.setStyleSheet(
                 f"color: {self.theme_colors['text_secondary']}; background: transparent; border: none;"
             )
-            lbl.setMinimumWidth(130)
+            lbl.setFixedWidth(
+                160
+            )  # Fixed width ensures perfect alignment (increased for "Document Category")
             row_layout.addWidget(lbl)
 
             # Input field (text, dropdown, or checkbox)
@@ -1237,43 +1331,28 @@ class FileDetailsDialog(QDialog):
             # Store reference for later access
             self.metadata_inputs[field_name] = input_widget
 
-        # Extract rotation from metadata or raw response if available
-        rotation_value = self.file_data.get("rotation_needed", "")
-
-        # Debug logging
+        # Extract rotation - prioritize user-saved rotation from image_files table
         from services.logging_service import get_logger
 
         logger = get_logger()
-        logger.debug(
-            f"[METADATA CONTENT] Extracting rotation - "
-            f"rotation_needed from file_data: '{rotation_value}'"
-        )
 
-        if not rotation_value:
-            raw_response = str(self.file_data.get("raw_response", ""))
-            if "rotation" in raw_response.lower() or "rotate" in raw_response.lower():
-                import re
-
-                rotation_match = re.search(
-                    r'"rotation[^"]*":\s*"?([^",}]+)"?', raw_response, re.IGNORECASE
+        # ALWAYS get rotation from image_files table (authoritative source via MetadataDB)
+        # Never use analysis_results.rotation_needed as it's just for historical reference
+        rotation_value = "none"  # Default
+        if self.metadata_db:
+            file_path = self.file_data.get("full_path")
+            if file_path:
+                rotation_degrees = self.metadata_db.get_image_rotation(file_path)
+                # Convert degrees back to rotation_needed format
+                rotation_value = {
+                    0: "none",
+                    90: "90_cw",
+                    270: "90_ccw",
+                    180: "180",
+                }.get(rotation_degrees, "none")  # Default to "none" if unexpected value
+                logger.debug(
+                    f"[METADATA CONTENT] Loaded rotation from image_files: {rotation_degrees}° = '{rotation_value}'"
                 )
-                if rotation_match:
-                    rotation_value = rotation_match.group(1).strip()
-                    logger.debug(
-                        f"[METADATA CONTENT] Extracted rotation from raw response: '{rotation_value}'"
-                    )
-
-        # Normalize rotation value
-        if rotation_value and rotation_value not in ["none", "90_cw", "90_ccw", "180"]:
-            logger.debug(
-                f"[METADATA CONTENT] Normalizing invalid rotation '{rotation_value}' to 'none'"
-            )
-            rotation_value = "none"
-
-        # Ensure rotation_value is never empty - default to "none"
-        if not rotation_value:
-            rotation_value = "none"
-            logger.debug("[METADATA CONTENT] Empty rotation value, defaulting to 'none'")
 
         # Store initial rotation for later application
         self.initial_rotation = rotation_value
@@ -1284,8 +1363,19 @@ class FileDetailsDialog(QDialog):
         # Get distinct values from database
         distinct_document_types = self._get_distinct_values("document_type")
         distinct_companies = self._get_distinct_values("company")
+        distinct_categories = self._get_distinct_categories()
 
         # Add all metadata fields (always show all fields, even if empty)
+        # Document Category FIRST (user's top priority field)
+        add_editable_row(
+            "Document Category",
+            "document_category",
+            self.file_data.get("document_category"),
+            "Category (optional)",
+            widget_type="editable_dropdown",
+            distinct_values=distinct_categories,
+        )
+
         add_editable_row(
             "Document Type",
             "document_type",
@@ -1355,6 +1445,14 @@ class FileDetailsDialog(QDialog):
             "tax_related",
             self.file_data.get("tax_related", False),
             widget_type="checkbox",
+        )
+
+        # Output filename field (user's desired PDF filename)
+        add_editable_row(
+            "Output Filename",
+            "output_filename",
+            self.file_data.get("output_filename"),
+            "Desired PDF filename (optional)",
         )
 
         # Store original values and connect change tracking
@@ -1427,9 +1525,85 @@ class FileDetailsDialog(QDialog):
 
         return widget
 
+    def _create_llm_prompt_content(self):
+        """Create LLM prompt content widget with copy button."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Header with copy button
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        header_layout.addStretch()
+
+        # Copy button (icon only)
+        copy_btn = QPushButton("📋")
+        copy_btn.setToolTip("Copy prompt to clipboard")
+        copy_btn.setFixedSize(32, 32)
+        copy_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.theme_colors["bg_secondary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
+                border-radius: 4px;
+                font-size: 16px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.theme_colors["accent"]};
+                color: {self.theme_colors["bg_primary"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.theme_colors["border"]};
+            }}
+        """)
+        copy_btn.clicked.connect(self._copy_prompt_to_clipboard)
+        header_layout.addWidget(copy_btn)
+        layout.addWidget(header)
+
+        # Text edit for prompt
+        prompt_text = self.file_data.get("prompt_text", "No prompt available")
+
+        self.prompt_text_edit = QTextEdit()
+        self.prompt_text_edit.setPlainText(str(prompt_text))
+        self.prompt_text_edit.setReadOnly(True)
+        self.prompt_text_edit.setFont(QFont("Consolas", 9))
+        self.prompt_text_edit.setMinimumHeight(150)
+        self.prompt_text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {self.theme_colors["bg_primary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
+                border-radius: 4px;
+                padding: 8px;
+            }}
+        """)
+        layout.addWidget(self.prompt_text_edit)
+
+        return container
+
+    def _copy_prompt_to_clipboard(self):
+        """Copy LLM prompt text to clipboard."""
+        if hasattr(self, "prompt_text_edit"):
+            prompt_text = self.prompt_text_edit.toPlainText()
+            clipboard = QApplication.clipboard()
+            clipboard.setText(prompt_text)
+            # Show brief feedback
+            if hasattr(self, "status_label"):
+                self.status_label.setText("✓ Prompt copied to clipboard")
+                self.status_label.show()
+                QTimer.singleShot(2000, self.status_label.hide)
+
     def _create_raw_response_content(self):
         """Create raw LLM response content widget."""
-        raw_response = self.file_data.get("raw_response", "No raw response available")
+        # Migration 16: raw_response renamed to response_text
+        raw_response = self.file_data.get("response_text") or self.file_data.get(
+            "raw_response", "No raw response available"
+        )
+
         text_edit = QTextEdit()
         text_edit.setPlainText(str(raw_response))
         text_edit.setReadOnly(True)
@@ -1476,99 +1650,17 @@ class FileDetailsDialog(QDialog):
             return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
 
     def _on_splitter_moved(self, pos, index):
-        """Rescale image when splitter is moved."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
-            return
-
-        # Get current dimensions of left panel
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-
-        # Calculate available dimensions for image (subtract margins and padding)
-        # Margins: 15*2, border/padding: ~20
-        available_width = left_width - 50
-        available_height = left_height - 50
-
-        # Don't scale if dimensions are too small
-        if available_width < 100 or available_height < 100:
-            return
-
-        # Rescale image according to configured mode
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
-
-    def showEvent(self, event):  # noqa: N802
-        """Handle first show to apply initial zoom setting."""
-        super().showEvent(event)
-
-        # Only apply on first show
-        if not hasattr(self, "_first_show_done"):
-            self._first_show_done = True
-
-            # Rescale image after window is shown and layout is calculated
-            if hasattr(self, "original_pixmap") and self.original_pixmap is not None:
-                # Use QTimer to ensure layout has been fully calculated
-                from PyQt6.QtCore import QTimer
-
-                QTimer.singleShot(10, self._apply_initial_zoom)
-
-    def _apply_initial_zoom(self):
-        """Apply the configured zoom setting after window is shown."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
-            return
-
-        if not hasattr(self, "left_panel"):
-            return
-
-        # Get current dimensions of left panel
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-
-        # Calculate available dimensions for image (subtract margins and padding)
-        available_width = left_width - 50
-        available_height = left_height - 50
-
-        # Don't scale if dimensions are too small
-        if available_width < 100 or available_height < 100:
-            return
-
-        # Rescale image according to configured mode
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        """Handle splitter movement - no automatic rescaling with manual zoom controls."""
+        # With manual zoom controls, we don't automatically rescale on splitter movement
+        # Users can use fit buttons (W, H, F) if they want to adjust zoom
+        pass
 
     def resizeEvent(self, event):  # noqa: N802
-        """Handle window resize to adjust image scale."""
+        """Handle window resize - reposition overlay controls."""
         super().resizeEvent(event)
-
-        # Only rescale if we have an image loaded
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
-            return
-
-        # Only rescale if left panel exists (dialog fully initialized)
-        if not hasattr(self, "left_panel"):
-            return
-
-        # Get current dimensions of left panel
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-
-        # Calculate available dimensions for image (subtract margins and padding)
-        available_width = left_width - 50
-        available_height = left_height - 50
-
-        # Don't scale if dimensions are too small
-        if available_width < 100 or available_height < 100:
-            return
-
-        # Rescale image according to configured mode
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        # Reposition overlay controls at bottom-left when window is resized
+        if hasattr(self, "overlay_controls") and hasattr(self, "image_area"):
+            self._position_overlay_controls()
 
     def _copy_json(self):
         """Copy JSON data to clipboard."""
@@ -1630,19 +1722,11 @@ class FileDetailsDialog(QDialog):
         # Update file_data dictionary
         self.file_data.update(updated_metadata)
 
-        # Save to database - traverse parent chain to find database instances
+        # Save to database - use both databases
         try:
-            # Find parent widget with database instances
-            parent_widget = self.parent()
-            analysis_db = None
-            metadata_db = None
-
-            while parent_widget:
-                if hasattr(parent_widget, "analysis_db") and hasattr(parent_widget, "metadata_db"):
-                    analysis_db = parent_widget.analysis_db
-                    metadata_db = parent_widget.metadata_db
-                    break
-                parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+            # Use the database instances passed to constructor
+            analysis_db = self.analysis_db
+            metadata_db = self.metadata_db
 
             if analysis_db and metadata_db:
                 file_path = self.file_data.get("full_path")
@@ -1657,6 +1741,8 @@ class FileDetailsDialog(QDialog):
                         "total_pages": updated_metadata.get("total_pages", ""),
                         "rotation_needed": updated_metadata.get("rotation_needed", ""),
                         "tax_related": updated_metadata.get("tax_related", False),
+                        "output_filename": updated_metadata.get("output_filename", ""),
+                        "document_category": updated_metadata.get("document_category", ""),
                     }
 
                     # Debug logging before database save
@@ -1668,22 +1754,55 @@ class FileDetailsDialog(QDialog):
                         f"rotation_needed: '{metadata.get('rotation_needed')}'"
                     )
 
-                    # Update analysis database
+                    # Update analysis database (legacy)
                     analysis_db.update_analysis_metadata(file_path, metadata)
 
-                    # Also update metadata database for backward compatibility
-                    metadata_db.save_metadata(
-                        file_path=file_path,
-                        metadata=metadata,
-                        model_used=self.file_data.get("model_used", "manual_edit"),
-                        processing_time_ms=0,
-                    )
-
-                    # Reload fresh data from database to ensure file_data is up-to-date
+                    # Save rotation to image_files table (via MetadataDB)
+                    rotation_needed = metadata.get("rotation_needed", "none")
+                    rotation_degrees = {
+                        "none": 0,
+                        "90_cw": 90,
+                        "90_ccw": 270,
+                        "180": 180,
+                    }.get(rotation_needed, 0)
                     from services.logging_service import get_logger
 
                     logger = get_logger()
+                    logger.debug(
+                        f"Converted rotation_needed to rotation_degrees: {rotation_degrees}"
+                    )
+                    metadata_db.update_image_rotation(file_path, rotation_degrees)
 
+                    # Update normalized metadata table (user edit) via MetadataDB
+                    try:
+                        image_file = metadata_db.get_image_file(file_path)
+                        if image_file:
+                            metadata_updates = {
+                                "company": metadata.get("company"),
+                                "document_type": metadata.get("document_type"),
+                                "document_date": metadata.get("document_date"),
+                                "page_number": int(metadata["page_number"])
+                                if metadata.get("page_number")
+                                else None,
+                                "total_pages": int(metadata["total_pages"])
+                                if metadata.get("total_pages")
+                                else None,
+                                "rotation": rotation_degrees,
+                                "tax_related": metadata.get("tax_related", False),
+                                "output_filename": metadata.get("output_filename"),
+                                "document_category": metadata.get("document_category"),
+                            }
+                            # Use metadata_db for normalized metadata operations
+                            metadata_db.update_normalized_metadata(
+                                image_file["id"], metadata_updates
+                            )
+                            logger.debug(
+                                "Updated normalized metadata table via MetadataDB (user edit)"
+                            )
+                    except Exception as meta_error:
+                        logger.warning(f"Failed to update normalized metadata: {meta_error}")
+
+                    # Reload fresh data from database to ensure file_data is up-to-date
                     fresh_analysis = analysis_db.get_analysis(file_path)
                     if fresh_analysis:
                         logger.debug(
@@ -1700,6 +1819,8 @@ class FileDetailsDialog(QDialog):
                             "rotation_needed",
                             "tax_related",
                             "confidence",
+                            "output_filename",
+                            "document_category",
                         ]:
                             if key in fresh_analysis:
                                 self.file_data[key] = fresh_analysis[key]
@@ -1707,6 +1828,13 @@ class FileDetailsDialog(QDialog):
                         logger.debug(
                             f"Updated file_data - rotation_needed: {self.file_data.get('rotation_needed')}"
                         )
+
+                    # CRITICAL: Also reload rotation from image_files table (authoritative source via MetadataDB)
+                    fresh_rotation = metadata_db.get_image_rotation(file_path)
+                    self.file_data["rotation"] = fresh_rotation
+                    logger.debug(
+                        f"Reloaded rotation from image_files: {fresh_rotation}° (authoritative source)"
+                    )
 
                     # Emit signal so parent can refresh its data
                     self.metadata_saved.emit(file_path)
@@ -1721,10 +1849,17 @@ class FileDetailsDialog(QDialog):
                         self, "Missing File Path", "Cannot save metadata: file path not found."
                     )
             else:
+                # Determine which database is missing
+                missing_dbs = []
+                if not analysis_db:
+                    missing_dbs.append("analysis_db")
+                if not metadata_db:
+                    missing_dbs.append("metadata_db")
+
                 QMessageBox.warning(
                     self,
                     "Database Not Available",
-                    "Cannot save metadata: database connection not available.",
+                    f"Cannot save metadata: {', '.join(missing_dbs)} not available.",
                 )
 
         except Exception as e:
@@ -1767,145 +1902,147 @@ class FileDetailsDialog(QDialog):
         return None
 
     def _re_analyze(self):
-        """Re-analyze this file with live progress updates."""
-        from PyQt6.QtCore import QThread, pyqtSignal
-
+        """Queue this file for re-analysis and close dialog."""
         file_path = self.file_data.get("full_path") or self.file_data.get("filename")
         if not file_path:
             QMessageBox.warning(self, "No File Path", "Cannot re-analyze: file path not found.")
             return
 
-        # Disable all buttons and edit controls
-        self._set_controls_enabled(False)
+        # Emit signal to parent (AnalysisStatusWindow will queue the job)
+        self.re_analyze_requested.emit(file_path)
 
-        # Show status label
-        self.status_label.setVisible(True)
-        self.status_label.setText("Starting analysis...")
+        # Close the dialog so user can see analysis progress in main window
+        self.accept()
 
-        # Find parent's config manager and database instances
-        parent_widget = self.parent()
-        config_manager = None
-        analysis_db = None
-        metadata_db = None
-
-        while parent_widget:
-            if hasattr(parent_widget, "config_manager"):
-                config_manager = parent_widget.config_manager
-            if hasattr(parent_widget, "analysis_db"):
-                analysis_db = parent_widget.analysis_db
-            if hasattr(parent_widget, "metadata_db"):
-                metadata_db = parent_widget.metadata_db
-            if config_manager and analysis_db and metadata_db:
-                break
-            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
-
-        if not config_manager:
-            QMessageBox.warning(
-                self, "Config Not Available", "Cannot re-analyze: configuration not available."
-            )
-            self._set_controls_enabled(True)
-            self.status_label.setVisible(False)
+    def _delete_record(self):
+        """Delete this record from the database (same as context menu delete)."""
+        file_path = self.file_data.get("full_path") or self.file_data.get("filename")
+        if not file_path:
+            QMessageBox.warning(self, "No File Path", "Cannot delete: file path not found.")
             return
 
-        # Create analysis thread
-        class _ReAnalysisThread(QThread):
-            progress = pyqtSignal(str)  # Status text updates
-            finished = pyqtSignal(dict)  # Analysis result
+        # Create custom dialog with checkbox for file deletion
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Delete Record")
+        dialog.setMinimumWidth(450)
 
-            def __init__(self, file_path, config_manager):
-                super().__init__()
-                self.file_path = file_path
-                self.config_manager = config_manager
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(15)
 
-            def run(self):
-                from db.analysis_db import AnalysisDB
-                from db.metadata_db import MetadataDB
-                from services.analysis_service import AnalysisService
+        # Warning icon and message
+        message_layout = QHBoxLayout()
+        icon_label = QLabel("⚠️")
+        icon_label.setStyleSheet("font-size: 32pt;")
+        message_layout.addWidget(icon_label)
 
+        message_text = QLabel(
+            f"Delete this record from the database?\n\n"
+            f"File: {os.path.basename(file_path)}\n"
+            f"Path: {file_path}"
+        )
+        message_text.setWordWrap(True)
+        message_layout.addWidget(message_text, 1)
+        layout.addLayout(message_layout)
+
+        # Checkbox for deleting physical file (checked by default)
+        delete_file_checkbox = QCheckBox("Also delete the file from disk")
+        delete_file_checkbox.setChecked(True)
+        delete_file_checkbox.setStyleSheet("font-weight: 600; color: #DC2626;")
+        layout.addWidget(delete_file_checkbox)
+
+        # Warning label
+        warning_label = QLabel("⚠️ Warning: Deleting the file from disk cannot be undone!")
+        warning_label.setStyleSheet("color: #DC2626; font-size: 9pt;")
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #DC2626;
+                color: white;
+                font-weight: 600;
+                padding: 8px 20px;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #B91C1C;
+            }
+        """)
+        delete_btn.clicked.connect(dialog.accept)
+        delete_btn.setDefault(True)
+        button_layout.addWidget(delete_btn)
+
+        layout.addLayout(button_layout)
+
+        # Show dialog and get result
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Get checkbox state
+        delete_physical_file = delete_file_checkbox.isChecked()
+
+        # Check if we have database access
+        if not self.analysis_db:
+            QMessageBox.warning(
+                self,
+                "Database Not Available",
+                "Cannot delete record: database connection not available.",
+            )
+            return
+
+        try:
+            # Delete using the same logic as context menu delete
+            # 1. Mark image as deleted in image_files table (soft delete)
+            self.analysis_db.mark_image_deleted(file_path)
+
+            # 2. Delete from metadata table
+            self.analysis_db.delete_metadata_by_path(file_path)
+
+            # 3. Delete physical file if checkbox was checked
+            if delete_physical_file and os.path.exists(file_path):
                 try:
-                    # Create thread-local database instances
-                    thread_analysis_db = AnalysisDB()
-                    thread_metadata_db = MetadataDB()
-                    thread_analysis_service = AnalysisService(
-                        self.config_manager, thread_analysis_db, thread_metadata_db
+                    os.remove(file_path)
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.info(f"Deleted physical file: {file_path}")
+                except Exception as file_error:
+                    # Show warning but don't fail the whole operation
+                    QMessageBox.warning(
+                        self,
+                        "File Deletion Failed",
+                        f"Database record deleted, but failed to delete the physical file:\n\n{str(file_error)}",
                     )
 
-                    # Use centralized re-analysis method (resets status and forces fresh analysis)
-                    # Pass progress callback to emit updates
-                    result = thread_analysis_service.re_analyze_file(
-                        self.file_path, progress_callback=self.progress.emit
-                    )
+            # 4. Emit signal to notify parent to refresh
+            self.record_deleted.emit(file_path)
 
-                    # Close thread-local connections
-                    thread_analysis_db.close()
-                    thread_metadata_db.close()
+            # 5. Close the dialog
+            self.accept()
 
-                    self.finished.emit(result)
+        except Exception as e:
+            from services.logging_service import get_logger
 
-                except Exception as e:
-                    import traceback
+            logger = get_logger()
+            logger.error(f"Error deleting record: {e}", exc_info=True)
+            QMessageBox.critical(self, "Delete Failed", f"Failed to delete record:\n\n{str(e)}")
 
-                    self.finished.emit(
-                        {"success": False, "error": str(e), "traceback": traceback.format_exc()}
-                    )
-
-        # Create and start thread
-        self._analysis_thread = _ReAnalysisThread(file_path, config_manager)
-        self._analysis_thread.progress.connect(self._on_analysis_progress)
-        self._analysis_thread.finished.connect(self._on_analysis_finished)
-        self._analysis_thread.start()
-
-    def _on_analysis_progress(self, status_text: str):
-        """Handle progress updates from analysis thread."""
-        self.status_label.setText(status_text)
-
-    def _on_analysis_finished(self, result: dict):
-        """Handle analysis completion."""
-        if result.get("success"):
-            self.status_label.setText("Analysis complete! Updating fields...")
-
-            # Extract metadata from result
-            metadata = result.get("metadata", {})
-
-            # Update file_data
-            self.file_data.update(
-                {
-                    "company": metadata.get("company", ""),
-                    "document_type": metadata.get("document_type", ""),
-                    "document_date": metadata.get("document_date", ""),
-                    "page_number": metadata.get("page_number", ""),
-                    "total_pages": metadata.get("total_pages", ""),
-                    "confidence": result.get("confidence_score", 0) * 100,
-                    "raw_response": result.get("response", ""),
-                }
-            )
-
-            # Update input fields
-            self._update_metadata_fields()
-
-            # Apply rotation if needed
-            rotation = metadata.get("rotation_needed", "none")
-            if rotation and rotation != "none":
-                self._apply_rotation(rotation)
-
-            # Hide status after 2 seconds
-            from PyQt6.QtCore import QTimer
-
-            QTimer.singleShot(2000, lambda: self.status_label.setVisible(False))
-
-        else:
-            error_msg = result.get("error", "Unknown error")
-            self.status_label.setText(f"Analysis failed: {error_msg}")
-            QMessageBox.critical(
-                self, "Analysis Failed", f"Failed to re-analyze file:\n\n{error_msg}"
-            )
-
-        # Re-enable all controls
-        self._set_controls_enabled(True)
+    # Note: Analysis progress/completion handlers removed - now handled by queue system in AnalysisStatusWindow
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable all buttons and edit controls."""
         # Buttons
+        self.delete_btn.setEnabled(enabled)
         self.open_doc_btn.setEnabled(enabled)
         self.save_metadata_btn.setEnabled(enabled)
         self.copy_json_btn.setEnabled(enabled)
@@ -1936,11 +2073,9 @@ class FileDetailsDialog(QDialog):
                 input_widget.setChecked(bool(value))
 
     def _apply_rotation(self, rotation: str):
-        """Apply rotation to the displayed image."""
+        """Apply metadata rotation to the base image (permanent rotation)."""
         if not hasattr(self, "base_pixmap") or self.base_pixmap is None:
             return
-
-        from PyQt6.QtGui import QTransform
 
         # Update current rotation tracker
         self.current_rotation = rotation
@@ -1950,30 +2085,26 @@ class FileDetailsDialog(QDialog):
 
         angle = rotation_map.get(rotation, 0)
 
-        # Always work from the base (unrotated) pixmap
-        if angle == 0:
-            # No rotation - use base pixmap directly
-            self.original_pixmap = self.base_pixmap
-        else:
-            # Create rotation transform
-            transform = QTransform()
-            transform.rotate(angle)
+        # Load the original unrotated pixmap from file
+        file_path = self.file_data.get("full_path")
+        if file_path and os.path.exists(file_path):
+            from PyQt6.QtGui import QPixmap
 
-            # Apply rotation to base pixmap (never mutate base_pixmap)
-            self.original_pixmap = self.base_pixmap.transformed(
-                transform, Qt.TransformationMode.SmoothTransformation
-            )
+            original = QPixmap(file_path)
 
-        # Scale according to configured zoom mode
-        left_width = self.left_panel.width()
-        left_height = self.left_panel.height()
-        available_width = left_width - 50
-        available_height = left_height - 50
+            if angle == 0:
+                # No rotation - use original directly
+                self.base_pixmap = original
+            else:
+                # Apply metadata rotation to create new base pixmap
+                transform = QTransform()
+                transform.rotate(angle)
+                self.base_pixmap = original.transformed(
+                    transform, Qt.TransformationMode.SmoothTransformation
+                )
 
-        scaled_pixmap = self._scale_image_to_mode(
-            self.original_pixmap, available_width, available_height
-        )
-        self.image_label.setPixmap(scaled_pixmap)
+        # Reset and update the image preview widget
+        self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window")
 
     def _store_original_metadata_values(self):
         """Store the original values of all metadata fields for change tracking."""
@@ -2125,11 +2256,12 @@ class FileDetailsGrid(QWidget):
 
     re_analyze_requested = pyqtSignal(list)  # Emits list of file paths
 
-    def __init__(self, parent=None, analysis_db=None):
+    def __init__(self, parent=None, analysis_db=None, metadata_db=None):
         super().__init__(parent)
 
-        # Store database reference
+        # Store database references
         self.analysis_db = analysis_db
+        self.metadata_db = metadata_db
 
         # Get theme from parent
         self.is_dark_mode = False
@@ -2232,6 +2364,7 @@ class FileDetailsGrid(QWidget):
             "has_errors": QPushButton("❌ Has Errors"),
             "missing_metadata": QPushButton("📋 Missing Metadata"),
             "cached_only": QPushButton("⚡ Cached Only"),
+            "blank_pages": QPushButton("⬜ Blank Pages"),
         }
 
         button_style = f"""
@@ -2842,6 +2975,32 @@ class FileDetailsGrid(QWidget):
 
         menu.addSeparator()
 
+        # Status change options
+        if len(selection) == 1:
+            # Single selection: "Mark Reviewed"
+            mark_reviewed_action = QAction("✓ Mark Reviewed", menu)
+            mark_reviewed_action.triggered.connect(
+                lambda: self._change_status_for_selected("reviewed")
+            )
+            menu.addAction(mark_reviewed_action)
+        else:
+            # Multiple selection: "Change Status" submenu
+            from db.image_status import ImageStatus
+
+            change_status_menu = QMenu("Change Status", menu)
+            change_status_menu.setStyleSheet(menu.styleSheet())  # Apply same theme
+
+            for status in ImageStatus:
+                status_action = QAction(status.display_name, change_status_menu)
+                status_action.triggered.connect(
+                    lambda checked=False, s=status.value: self._change_status_for_selected(s)
+                )
+                change_status_menu.addAction(status_action)
+
+            menu.addMenu(change_status_menu)
+
+        menu.addSeparator()
+
         export_action = QAction("Export Selected to CSV", menu)
         export_action.triggered.connect(lambda: self._export_csv(selected_only=True))
         menu.addAction(export_action)
@@ -2849,6 +3008,14 @@ class FileDetailsGrid(QWidget):
         copy_action = QAction("Copy to Clipboard (TSV)", menu)
         copy_action.triggered.connect(self._copy_to_clipboard)
         menu.addAction(copy_action)
+
+        copy_filename_action = QAction("Copy file name", menu)
+        copy_filename_action.triggered.connect(self._copy_filename_to_clipboard)
+        menu.addAction(copy_filename_action)
+
+        copy_filepath_action = QAction("Copy file path", menu)
+        copy_filepath_action.triggered.connect(self._copy_filepath_to_clipboard)
+        menu.addAction(copy_filepath_action)
 
         menu.addSeparator()
 
@@ -2932,14 +3099,23 @@ class FileDetailsGrid(QWidget):
 
         if row_data:
             dialog = FileDetailsDialog(
-                row_data, self, analysis_db=self.analysis_db, config_manager=self.config_manager
+                row_data,
+                self,
+                analysis_db=self.analysis_db,
+                metadata_db=self.metadata_db,
+                config_manager=self.config_manager,
             )
             dialog.re_analyze_requested.connect(lambda path: self.re_analyze_requested.emit([path]))
             dialog.metadata_saved.connect(self._on_metadata_saved)
+            dialog.record_deleted.connect(self._on_record_deleted)
             dialog.exec()
 
     def _on_metadata_saved(self, file_path: str):
         """Handle metadata saved signal - refresh the row data for the updated file."""
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
         if not self.analysis_db:
             return
 
@@ -2948,17 +3124,56 @@ class FileDetailsGrid(QWidget):
         if not fresh_analysis:
             return
 
+        # Also get the rotation field from image_files table (not in analysis_results) via MetadataDB
+        rotation_degrees = self.metadata_db.get_image_rotation(file_path)
+        fresh_analysis["rotation"] = rotation_degrees
+        logger.debug(
+            f"[GRID UPDATE] Updating row for {file_path} with rotation={rotation_degrees}°"
+        )
+
         # Find and update the row in the model
         for row in range(self.model.rowCount()):
             row_data = self.model.get_row_data(row)
             if row_data and row_data.get("full_path") == file_path:
                 # Update the row data with fresh values
+                old_rotation = row_data.get("rotation")
                 for key, value in fresh_analysis.items():
                     row_data[key] = value
+                logger.debug(
+                    f"[GRID UPDATE] Row {row} updated: rotation changed from {old_rotation}° to {row_data.get('rotation')}°"
+                )
+
                 # Notify model that data changed
                 self.model.dataChanged.emit(
                     self.model.index(row, 0), self.model.index(row, self.model.columnCount() - 1)
                 )
+
+                # Force proxy model to refresh - critical for view to update
+                self.proxy_model.invalidate()
+
+                # Force table view to update display
+                self.table_view.viewport().update()
+
+                logger.debug(
+                    f"[GRID UPDATE] Emitted dataChanged signal for row {row}, invalidated proxy model"
+                )
+                break
+
+    def _on_record_deleted(self, file_path: str):
+        """Handle record deleted signal - remove the specific row from grid."""
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
+        # Find and remove the row from the model data
+        for i, row_data in enumerate(self.model._data):
+            if row_data.get("full_path") == file_path:
+                # Remove the row from model data
+                self.model.beginRemoveRows(self.model.index(i, 0).parent(), i, i)
+                self.model._data.pop(i)
+                self.model.endRemoveRows()
+
+                logger.debug(f"Removed row for deleted record: {file_path}")
                 break
 
     def _clear_error_for_selected(self):
@@ -3116,6 +3331,121 @@ class FileDetailsGrid(QWidget):
 
         QMessageBox.information(self, "Copied", f"{len(selection)} rows copied to clipboard")
 
+    def _copy_filename_to_clipboard(self):
+        """Copy selected filenames to clipboard."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        filenames = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+
+            if row_data:
+                filename = row_data.get("filename", "")
+                if filename:
+                    filenames.append(os.path.basename(filename))
+
+        if filenames:
+            clipboard_text = ", ".join(filenames)
+            QApplication.clipboard().setText(clipboard_text)
+
+    def _copy_filepath_to_clipboard(self):
+        """Copy selected file paths to clipboard."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        file_paths = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+
+            if row_data:
+                file_path = row_data.get("full_path", "")
+                if file_path:
+                    file_paths.append(file_path)
+
+        if file_paths:
+            clipboard_text = ", ".join(file_paths)
+            QApplication.clipboard().setText(clipboard_text)
+
+    def _change_status_for_selected(self, new_status: str):
+        """Change status for selected images."""
+        selection = self.table_view.selectionModel().selectedRows()
+        if not selection:
+            return
+
+        # Get database instance from parent chain
+        parent_widget = self.parent()
+        analysis_db = None
+
+        while parent_widget:
+            if hasattr(parent_widget, "analysis_db"):
+                analysis_db = parent_widget.analysis_db
+                break
+            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+        if not analysis_db:
+            QMessageBox.warning(
+                self,
+                "Database Not Available",
+                "Cannot update status: database connection not available.",
+            )
+            return
+
+        # Collect file paths from selected rows
+        file_paths = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+            if row_data and row_data.get("full_path"):
+                file_paths.append(row_data["full_path"])
+
+        if not file_paths:
+            QMessageBox.warning(self, "No Records", "No valid records found to update.")
+            return
+
+        # Update status in database
+        updated_count = 0
+        errors = []
+
+        for file_path in file_paths:
+            try:
+                analysis_db.update_image_status(file_path, new_status)
+                updated_count += 1
+            except Exception as e:
+                errors.append(f"{file_path}: {str(e)}")
+
+        # Refresh the grid
+        parent = self.parent()
+        if parent and hasattr(parent, "_refresh_file_grid"):
+            parent._refresh_file_grid()  # type: ignore[attr-defined]
+        else:
+            # Fallback: reload from database
+            try:
+                data = analysis_db.get_all_with_analysis()
+                self.refresh_data(data)
+            except Exception:
+                pass
+
+        # Show result message
+        if updated_count > 0:
+            from db.image_status import ImageStatus
+
+            display_status = ImageStatus(new_status).value
+            message = f"Successfully updated {updated_count} image(s) to status '{display_status}'."
+            if errors:
+                message += f"\n\nErrors ({len(errors)}):\n" + "\n".join(errors[:5])
+                if len(errors) > 5:
+                    message += f"\n... and {len(errors) - 5} more errors"
+            QMessageBox.information(self, "Status Update Complete", message)
+        elif errors:
+            QMessageBox.warning(
+                self, "Update Failed", "No records were updated.\n\n" + "\n".join(errors[:10])
+            )
+
     def _delete_selected(self):
         """Delete selected rows from database."""
         selection = self.table_view.selectionModel().selectedRows()
@@ -3134,16 +3464,14 @@ class FileDetailsGrid(QWidget):
             # Get database instances from parent chain
             parent_widget = self.parent()
             analysis_db = None
-            metadata_db = None
 
             while parent_widget:
-                if hasattr(parent_widget, "analysis_db") and hasattr(parent_widget, "metadata_db"):
+                if hasattr(parent_widget, "analysis_db"):
                     analysis_db = parent_widget.analysis_db
-                    metadata_db = parent_widget.metadata_db
                     break
                 parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
 
-            if not analysis_db or not metadata_db:
+            if not analysis_db:
                 QMessageBox.warning(
                     self,
                     "Database Not Available",
@@ -3165,25 +3493,18 @@ class FileDetailsGrid(QWidget):
                 QMessageBox.warning(self, "No Records", "No valid records found to delete.")
                 return
 
-            # Delete from both databases
+            # Delete from all databases
             deleted_count = 0
             errors = []
 
             for file_path in file_paths:
                 try:
-                    # Delete from analysis_db using direct SQL
-                    cursor = analysis_db.connection.connection.cursor()
-                    cursor.execute("DELETE FROM analysis_results WHERE file_path = ?", (file_path,))
-                    analysis_db.connection.commit()
+                    # 1. Mark image as deleted in image_files table (soft delete)
+                    # This will CASCADE to analysis_results via foreign key
+                    analysis_db.mark_image_deleted(file_path)
 
-                    # Delete from metadata_db
-                    if hasattr(metadata_db, "delete_metadata"):
-                        metadata_db.delete_metadata(file_path)
-                    else:
-                        # Fallback: direct SQL deletion
-                        cursor = metadata_db.connection.cursor()
-                        cursor.execute("DELETE FROM metadata WHERE file_path = ?", (file_path,))
-                        metadata_db.connection.commit()
+                    # 2. Delete from metadata table (using AnalysisDB facade)
+                    analysis_db.delete_metadata_by_path(file_path)
 
                     deleted_count += 1
                 except Exception as e:

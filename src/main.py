@@ -89,6 +89,108 @@ if __name__ == "__main__":
         startup_window.show()
         logger.info("StartupWindow.show() called.")
 
+        # Discovery on startup (if enabled)
+        scan_on_startup = config_manager.get_bool("SourceDirectories", "scan_on_startup", True)
+        if scan_on_startup:
+            logger.info("Scan on startup enabled - triggering discovery")
+            from PyQt6.QtCore import QTimer
+
+            from services.discovery_scheduler import DiscoveryScheduler
+            from services.discovery_worker import DiscoveryWorker
+            from ui.toast_notifier import ToastNotifier
+
+            # Get directories from config (not database)
+            directories = config_manager.get_directories()
+
+            if directories:
+
+                def start_discovery():
+                    """Start discovery after window is fully rendered"""
+                    # Show status message on startup window
+                    startup_window._show_status_label("🔍 Discovering new files...")
+
+                    # Create discovery worker
+                    discovery_worker = DiscoveryWorker(config_manager, directories)
+                    toast_notifier = ToastNotifier()
+
+                    def on_discovery_finished(count):
+                        """Handle startup discovery completion"""
+                        logger.info(f"Startup discovery finished - {count} new files registered")
+
+                        # Update status label with result
+                        if count == 0:
+                            startup_window._show_status_label(
+                                "✓ Discovery complete - No new files found"
+                            )
+                        elif count == 1:
+                            startup_window._show_status_label(
+                                "✓ Discovery complete - 1 new file found"
+                            )
+                        else:
+                            startup_window._show_status_label(
+                                f"✓ Discovery complete - {count} new files found"
+                            )
+
+                        # Show toast notification
+                        toast_notifier.show_discovery_toast(count)
+
+                        # Check if auto-analyze is enabled
+                        auto_analyze = config_manager.get_bool(
+                            "Discovery", "auto_analyze_after_discovery", False
+                        )
+
+                        if auto_analyze and count > 0:
+                            logger.info("Auto-analyze enabled - launching analysis")
+                            # Hide discovery status before launching analysis
+                            QTimer.singleShot(2000, startup_window._hide_status_label)
+                            # Trigger analysis on newly discovered files
+                            startup_window.manual_analyze_documents()
+                        else:
+                            # Hide status after 5 seconds
+                            QTimer.singleShot(5000, startup_window._hide_status_label)
+
+                    def on_discovery_error(error):
+                        """Handle startup discovery error"""
+                        logger.error(f"Startup discovery error: {error}")
+                        startup_window._show_status_label(f"⚠ Discovery error: {error[:50]}")
+                        # Hide error message after 10 seconds
+                        QTimer.singleShot(10000, startup_window._hide_status_label)
+
+                    # Connect signals
+                    discovery_worker.finished.connect(on_discovery_finished)
+                    discovery_worker.error.connect(on_discovery_error)
+
+                    # Start discovery worker
+                    discovery_worker.start()
+                    logger.info("Startup discovery worker started")
+
+                    # Store reference to prevent garbage collection
+                    startup_window._startup_discovery_worker = discovery_worker
+
+                # Delay discovery start to ensure window is fully rendered (500ms)
+                QTimer.singleShot(500, start_discovery)
+            else:
+                logger.info("No directories configured for startup discovery")
+        else:
+            logger.info("Scan on startup disabled")
+
+        # Initialize periodic discovery scheduler (if enabled)
+        discovery_enabled = config_manager.get_bool("Discovery", "enabled", True)
+        if discovery_enabled:
+            logger.info("Periodic discovery enabled - initializing scheduler")
+            from services.discovery_scheduler import DiscoveryScheduler
+
+            discovery_scheduler = DiscoveryScheduler(config_manager)
+
+            # Start scheduler
+            discovery_scheduler.start()
+            logger.info("Discovery scheduler started")
+
+            # Store reference in startup window to prevent garbage collection
+            startup_window._discovery_scheduler = discovery_scheduler  # type: ignore[attr-defined]
+        else:
+            logger.info("Periodic discovery disabled")
+
         # Check for unanalyzed files and optionally start analysis
         # DISABLED: User can now use the "Analyze Documents" button to manually trigger analysis
         # def check_unanalyzed():

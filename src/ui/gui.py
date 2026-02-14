@@ -36,7 +36,11 @@ from PyQt6.QtWidgets import (
 try:
     import fitz
 except ImportError:
-    print("Error: PyMuPDF (fitz) is not installed. Please run 'pip install PyMuPDF'.")
+    import logging
+
+    logging.getLogger(__name__).critical(
+        "PyMuPDF (fitz) is not installed. Please run 'pip install PyMuPDF'."
+    )
     sys.exit(1)
 
 from config.config_manager import ConfigManager
@@ -45,10 +49,13 @@ from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
 from services.bundling_service import BundlingService
 from services.file_service import FileService
+from services.logging_service import get_logger
 from ui.analysis_status_window import AnalysisStatusWindow
 from ui.bundle_widgets import BundleSuggestionsView
 from ui.settings_window_enhanced import EnhancedSettingsWindow
 from ui.styles import show_critical, show_information, show_question, show_warning
+
+logger = get_logger()
 
 
 class ProgressBannerWidget(QWidget):
@@ -1493,8 +1500,8 @@ class MetadataDisplayWidget(QWidget):
             self._show_no_analysis()
             return
 
-        # Get analysis from database
-        analysis = self.analysis_db.get_analysis(file_path)
+        # Get analysis WITH metadata from database
+        analysis = self.analysis_db.get_analysis_with_metadata(file_path)
 
         if not analysis:
             self._show_no_analysis()
@@ -1559,11 +1566,10 @@ class MetadataDisplayWidget(QWidget):
         else:
             self.page_label.setText("Page: --")
 
-        # Rotation status
-        rotation_needed = analysis.get("rotation_needed", False)
-        suggested_rotation = analysis.get("suggested_rotation", 0)
-        if rotation_needed and suggested_rotation:
-            self.rotation_label.setText(f"Rotation: {suggested_rotation}° suggested")
+        # Rotation status (stored as degrees in metadata table)
+        rotation_degrees = analysis.get("rotation", 0)
+        if rotation_degrees and rotation_degrees != 0:
+            self.rotation_label.setText(f"Rotation: {rotation_degrees}° suggested")
             self.rotation_label.setStyleSheet(
                 "font-size: 10pt; color: #F59E0B; background: transparent; border: none;"
             )
@@ -1629,18 +1635,19 @@ class MetadataDisplayWidget(QWidget):
 class ConvertImagesWindow(QMainWindow):
     processing_finished = pyqtSignal()
 
-    def __init__(self):
-        super().__init__()
-        self.config_manager = ConfigManager()
+    def __init__(self, parent=None, config_manager=None, analysis_db=None, metadata_db=None):
+        super().__init__(parent)
+        self.config_manager = config_manager if config_manager is not None else ConfigManager()
         timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
         self.ollama_service = OllamaService(
             base_url=self.config_manager.get_setting("Ollama", "base_url"), timeout=timeout
         )
         self.file_service = FileService(self.config_manager)
-        self.metadata_db = MetadataDB()  # Initialize metadata database for caching
+        # Use shared database instances when provided (no ownership)
+        self.metadata_db = metadata_db if metadata_db is not None else MetadataDB()
+        self.analysis_db = analysis_db if analysis_db is not None else AnalysisDB()
 
         # Phase 7: Bundle suggestion services
-        self.analysis_db = AnalysisDB()
         self.bundling_service = BundlingService(self.analysis_db)
 
         # Analysis service for pre-processing files
@@ -1775,7 +1782,7 @@ class ConvertImagesWindow(QMainWindow):
         self.main_layout.addWidget(self.thumbnail_scroll)
 
         # ===== PHASE 7: Bundle Suggestions View =====
-        self.bundle_suggestions_view = BundleSuggestionsView()
+        self.bundle_suggestions_view = BundleSuggestionsView(analysis_db=self.analysis_db)
         self.bundle_suggestions_view.bundle_accepted.connect(self._on_bundle_accepted)
         self.bundle_suggestions_view.bundle_modified.connect(self._on_bundle_modified)
         self.bundle_suggestions_view.bundle_rejected.connect(self._on_bundle_rejected)
@@ -2474,13 +2481,13 @@ class ConvertImagesWindow(QMainWindow):
 
         try:
             # Get current rotation from database
-            current_rotation = self.metadata_db.get_rotation(self.current_page_path)
+            current_rotation = self.analysis_db.get_image_rotation(self.current_page_path)
 
             # Calculate new rotation (cumulative)
             new_rotation = (current_rotation + degrees) % 360
 
             # Save rotation to database (NOT to file!)
-            self.metadata_db.save_rotation(self.current_page_path, new_rotation)
+            self.analysis_db.update_image_rotation(self.current_page_path, new_rotation)
 
             # Update in-memory state
             self.rotation_states[self.current_page_path] = new_rotation
@@ -2488,16 +2495,13 @@ class ConvertImagesWindow(QMainWindow):
             # Refresh preview with rotation applied
             self._refresh_preview_zoom()
 
-            print(
-                f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation}° (display-only, source file unchanged)"
+            logger.info(
+                f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation} degrees (display-only, source file unchanged)"
             )
 
         except Exception as e:
             show_warning(self, "Rotation Failed", f"Could not save rotation: {e}")
-            print(f"[Rotation] Error: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"[Rotation] Error: {e}", exc_info=True)
 
     # ===== VISUAL FEEDBACK METHODS (PHASE 6) =====
 
@@ -3451,9 +3455,9 @@ class ConvertImagesWindow(QMainWindow):
         if hasattr(self, "created_pdf_path") and os.path.exists(self.created_pdf_path):
             try:
                 os.remove(self.created_pdf_path)
-                print(f"Deleted preview PDF: {self.created_pdf_path}")
+                logger.debug(f"Deleted preview PDF: {self.created_pdf_path}")
             except Exception as e:
-                print(f"Warning: Could not delete preview PDF: {e}")
+                logger.warning(f"Could not delete preview PDF: {e}")
 
         # Return to Step 3
         self._setup_step3_ui()
@@ -3488,7 +3492,7 @@ class ConvertImagesWindow(QMainWindow):
 
         # Safety check: ensure we're still in Step 3 (Ordering)
         if not hasattr(self, "current_step") or self.current_step != WorkflowStep.ORDERING:
-            print("⚠ Content ordering completed but UI has moved to a different step")
+            logger.warning("Content ordering completed but UI has moved to a different step")
             return
 
         if isinstance(result, Exception):
@@ -3515,7 +3519,7 @@ class ConvertImagesWindow(QMainWindow):
                         f"✓ Pages reordered by content analysis (confidence: {confidence}). Review and approve."
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
         except Exception as e:
             show_critical(self, "Ordering Error", f"Failed to apply content-based ordering: {e}")
 
@@ -3949,7 +3953,7 @@ class ConvertImagesWindow(QMainWindow):
                     f"Found {len(analyzed_files)} analyzed file(s). Generating bundle suggestions..."
                 )
 
-            print(f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling")
+            logger.info(f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling")
 
             # Generate bundle suggestions immediately (no analysis needed)
             self._load_and_show_bundle_suggestions()
@@ -3969,7 +3973,7 @@ class ConvertImagesWindow(QMainWindow):
 
             # Check if this file has already been processed (in page_states)
             if next_file in self.page_states:
-                print(f"⚠ Skipping already processed file: {os.path.basename(next_file)}")
+                logger.debug(f"Skipping already processed file: {os.path.basename(next_file)}")
                 self.current_file_index += 1
                 continue
 
@@ -4071,11 +4075,11 @@ Files being sent to Ollama:
         self.last_ollama_response_type = "Page Validation"
 
         # Check metadata cache first (avoid unnecessary Ollama calls)
-        cached_metadata = self.metadata_db.get_metadata(next_file)
+        cached_metadata = self.metadata_db.get_normalized_metadata_by_path(next_file)
 
         if cached_metadata and cached_metadata.get("belongs_to_same_doc") is not None:
             # Use cached metadata instead of calling Ollama
-            print(f"✓ Using cached metadata for {os.path.basename(next_file)}")
+            logger.debug(f"Using cached metadata for {os.path.basename(next_file)}")
 
             # Convert cached data to expected format
             result = {
@@ -4095,7 +4099,7 @@ Files being sent to Ollama:
             return
 
         # No cache or stale cache - call Ollama
-        print(f"⟳ Fetching fresh metadata for {os.path.basename(next_file)}")
+        logger.info(f"Fetching fresh metadata for {os.path.basename(next_file)}")
 
         # Start spinner animation
         if hasattr(self, "step1_spinner_timer"):
@@ -4128,7 +4132,7 @@ Files being sent to Ollama:
 
         # Safety check: ensure we're still in Step 1 (Stitching)
         if not hasattr(self, "current_step") or self.current_step != WorkflowStep.STITCHING:
-            print("⚠ Page validation completed but UI has moved to a different step")
+            logger.warning("Page validation completed but UI has moved to a different step")
             return
 
         # Hide cancel request button, keep abort visible
@@ -4136,7 +4140,7 @@ Files being sent to Ollama:
             try:
                 self.cancel_request_button.setVisible(False)
             except RuntimeError:
-                print("⚠ Step 1 UI no longer exists")
+                logger.warning("Step 1 UI no longer exists")
                 return
 
         # Extract validation result and comprehensive metadata
@@ -4180,25 +4184,8 @@ Files being sent to Ollama:
                 response_parts.append(f"Type: {document_type}")
             self.last_ollama_response = "\n".join(response_parts)
 
-        # Save metadata to cache database (for future runs)
-        if not isinstance(result, Exception) and start_time is not None:
-            import time
-
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            selected_model = self.config_manager.get_setting("Ollama", "model")
-
-            try:
-                self.metadata_db.save_metadata(
-                    evaluated_file,
-                    result,
-                    model_used=selected_model,
-                    processing_time_ms=processing_time_ms,
-                )
-                print(
-                    f"✓ Cached metadata for {os.path.basename(evaluated_file)} ({processing_time_ms}ms)"
-                )
-            except Exception as e:
-                print(f"⚠ Failed to cache metadata: {e}")
+        # REMOVED: No longer saving to active_metadata (legacy cache table)
+        # Metadata caching is now handled by analysis_results table via AnalysisService
 
         # Store page metadata for ordering step
         metadata = {
@@ -4230,7 +4217,7 @@ Files being sent to Ollama:
                         f"Group has {len(self.current_group)} page(s). Use buttons to override."
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
             return
 
         if belongs:
@@ -4252,7 +4239,7 @@ Files being sent to Ollama:
                         f"({files_remaining} remaining)"
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
 
             # Auto-load next page
             if self.current_file_index < len(self.all_files):
@@ -4266,7 +4253,7 @@ Files being sent to Ollama:
                             f"Click Exclude to finish stitching."
                         )
                     except RuntimeError:
-                        print("⚠ Status label no longer exists")
+                        logger.warning("Status label no longer exists")
         else:
             # Ollama says NO - mark as excluded visually, let user decide
             self._update_thumbnail_state(evaluated_file, "excluded")
@@ -4293,7 +4280,7 @@ Files being sent to Ollama:
                         f"Use buttons to Include, Skip, or Finish Group."
                     )
                 except RuntimeError:
-                    print("⚠ Status label no longer exists")
+                    logger.warning("Status label no longer exists")
 
             # Start auto-approval on Approve button if group is not empty
             if (
@@ -4304,7 +4291,7 @@ Files being sent to Ollama:
                 try:
                     self._start_auto_approval(self.exclude_button, "Approve")
                 except RuntimeError:
-                    print("⚠ Exclude button no longer exists")
+                    logger.warning("Exclude button no longer exists")
 
     def _on_include_current_page(self):
         """User clicked Include button - change excluded page to included or include new page"""
@@ -4656,9 +4643,9 @@ Files being sent to Ollama:
                 cursor = self.metadata_db.conn.cursor()
                 cursor.execute("DELETE FROM active_metadata WHERE file_path = ?", (current_page,))
                 self.metadata_db.conn.commit()
-                print(f"✓ Cleared cached metadata for {os.path.basename(current_page)}")
+                logger.debug(f"Cleared cached metadata for {os.path.basename(current_page)}")
         except Exception as e:
-            print(f"⚠ Error clearing cache: {e}")
+            logger.warning(f"Error clearing cache: {e}")
 
         # Remove from page_metadata_list
         self.page_metadata_list = [
@@ -4736,7 +4723,7 @@ Files being sent to Ollama:
             return
 
         # Phase 8: Apply rotation from database (display-only, source file unchanged)
-        rotation_degrees = self.metadata_db.get_rotation(image_path)
+        rotation_degrees = self.analysis_db.get_image_rotation(image_path)
         if rotation_degrees != 0:
             # Create transform for rotation
             transform = QTransform()
@@ -4888,8 +4875,8 @@ Files being sent to Ollama:
         """Add a thumbnail to the thumbnail strip with status indicator"""
         # Check if this image is already in the thumbnail strip
         if image_path in self.page_states:
-            print(
-                f"⚠ Skipping duplicate thumbnail: {os.path.basename(image_path)} (already in strip)"
+            logger.debug(
+                f"Skipping duplicate thumbnail: {os.path.basename(image_path)} (already in strip)"
             )
             return
 
@@ -4897,7 +4884,7 @@ Files being sent to Ollama:
         for i in range(self.thumbnail_layout.count()):
             widget = self.thumbnail_layout.itemAt(i).widget()
             if widget and widget.property("image_path") == image_path:
-                print(f"⚠ Thumbnail already exists in layout: {os.path.basename(image_path)}")
+                logger.debug(f"Thumbnail already exists in layout: {os.path.basename(image_path)}")
                 return
 
         self.page_states[image_path] = state
@@ -4991,7 +4978,7 @@ Files being sent to Ollama:
         pixmap = QPixmap(image_path)
 
         # Phase 8: Apply rotation from database (display-only)
-        rotation_degrees = self.metadata_db.get_rotation(image_path)
+        rotation_degrees = self.analysis_db.get_image_rotation(image_path)
         if rotation_degrees != 0:
             transform = QTransform()
             transform.rotate(rotation_degrees)
@@ -5161,12 +5148,10 @@ Files being sent to Ollama:
         # DEBUG: Verify current_group contents
         import os
 
-        print("\n=== DEBUG: Metadata Extraction ===")
-        print(f"current_group length: {len(self.current_group)}")
+        logger.debug("Metadata Extraction - current_group length: %d", len(self.current_group))
         for i, img_path in enumerate(self.current_group, 1):
             exists = os.path.exists(img_path) if img_path else False
-            print(f"  Image {i}: exists={exists} | path={img_path}")
-        print("=================================\n")
+            logger.debug("  Image %d: exists=%s | path=%s", i, exists, img_path)
 
         # Store the request prompt for debugging (with file paths)
         file_list = "\n".join(
@@ -5205,14 +5190,14 @@ Files being sent to Ollama:
 
         # Safety check: ensure UI elements still exist (user may have navigated away)
         if not hasattr(self, "cancel_ollama_button") or not self.cancel_ollama_button:
-            print("⚠ Metadata extraction completed but UI has changed - ignoring result")
+            logger.warning("Metadata extraction completed but UI has changed - ignoring result")
             return
 
         # Try to access button, but handle gracefully if deleted
         try:
             self.cancel_ollama_button.setEnabled(False)
         except RuntimeError:
-            print("⚠ Metadata extraction completed but Step 2 UI no longer exists")
+            logger.warning("Metadata extraction completed but Step 2 UI no longer exists")
             return
 
         if isinstance(result, Exception):
@@ -5242,7 +5227,7 @@ Files being sent to Ollama:
             if hasattr(self, "date_edit") and self.date_edit:
                 self.date_edit.setText(result.get("date", "") or "")
         except RuntimeError as e:
-            print(f"⚠ UI elements deleted during metadata update: {e}")
+            logger.warning(f"UI elements deleted during metadata update: {e}")
             return
 
         # Store raw response for debugging
@@ -5256,7 +5241,7 @@ Files being sent to Ollama:
             if hasattr(self, "continue_button") and self.continue_button:
                 self.continue_button.setEnabled(True)
         except RuntimeError as e:
-            print(f"⚠ Button access failed: {e}")
+            logger.warning(f"Button access failed: {e}")
             return
 
         self.status_label.setText("✓ Metadata extracted successfully. Review and click Approve.")
@@ -5344,7 +5329,7 @@ Files being sent to Ollama:
             # Phase 8: Build rotation map from database for PDF generation
             rotation_map = {}
             for img_path in self.current_group:
-                rotation_degrees = self.metadata_db.get_rotation(img_path)
+                rotation_degrees = self.analysis_db.get_image_rotation(img_path)
                 if rotation_degrees != 0:
                     rotation_map[img_path] = rotation_degrees
 
@@ -5496,13 +5481,15 @@ Files being sent to Ollama:
                     document_metadata=document_metadata,
                 )
 
-                print(f"✓ Archived metadata for {os.path.basename(self.created_pdf_path)}")
-                print(f"  - {len(self.current_group)} source files")
-                print(f"  - Company: {document_metadata.get('company')}")
-                print(f"  - Type: {document_metadata.get('title')}")
+                logger.info(
+                    f"Archived metadata for {os.path.basename(self.created_pdf_path)} - "
+                    f"{len(self.current_group)} source files, "
+                    f"Company: {document_metadata.get('company')}, "
+                    f"Type: {document_metadata.get('title')}"
+                )
 
             except Exception as e:
-                print(f"⚠ Failed to archive metadata: {e}")
+                logger.warning(f"Failed to archive metadata: {e}")
                 # Don't fail the whole operation if archival fails
 
             # Reset UI state before processing
@@ -5568,7 +5555,7 @@ Files being sent to Ollama:
 
     def _on_analysis_complete_proceed_to_bundling(self, stats):
         """Analysis complete - proceed to bundle suggestions"""
-        print(f"[ConvertImages] Analysis complete: {stats}")
+        logger.info(f"[ConvertImages] Analysis complete: {stats}")
         if hasattr(self, "status_label") and self.status_label:
             self.status_label.setText(
                 f"Analysis complete. Generating bundle suggestions for {len(self.all_files)} file(s)..."
@@ -5580,13 +5567,13 @@ Files being sent to Ollama:
         """Generate and display bundle suggestions using guided workflow"""
         try:
             # Generate bundle suggestions using BundlingService
-            print(
+            logger.info(
                 f"[Bundle Suggestions] Generating recommendations for {len(self.all_files)} files..."
             )
             bundles = self.bundling_service.generate_bundle_recommendations(self.all_files)
 
             if bundles and len(bundles) > 0:
-                print(
+                logger.info(
                     f"[Bundle Suggestions] Launching guided workflow with {len(bundles)} suggestions"
                 )
 
@@ -5594,9 +5581,9 @@ Files being sent to Ollama:
                 workflow_bundles = self._prepare_bundles_for_workflow(bundles)
 
                 # Show GuidedBundleWorkflow instead of BundleSuggestionsView
-                from ui.guided_bundle_workflow import GuidedBundleWorkflow
+                from ui.verify_documents_window import BundleReviewWindow
 
-                self.bundle_workflow = GuidedBundleWorkflow(
+                self.bundle_workflow = BundleReviewWindow(
                     bundles=workflow_bundles,
                     start_index=0,
                     prototype_mode=False,
@@ -5620,17 +5607,16 @@ Files being sent to Ollama:
 
             else:
                 # No bundles found, skip to manual workflow
-                print("[Bundle Suggestions] No bundles generated, skipping to manual workflow")
+                logger.info(
+                    "[Bundle Suggestions] No bundles generated, skipping to manual workflow"
+                )
                 self.status_label.setText(
                     "No bundle suggestions generated. Proceeding to manual stitching..."
                 )
                 QTimer.singleShot(1000, self._on_skip_to_manual_workflow)
 
         except Exception as e:
-            print(f"[Bundle Suggestions] Error generating suggestions: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"[Bundle Suggestions] Error generating suggestions: {e}", exc_info=True)
             # Fall back to manual workflow
             show_warning(
                 self,
@@ -5649,6 +5635,12 @@ Files being sent to Ollama:
             # Format analyses for workflow
             formatted_analyses = []
             for analysis in analyses:
+                # Convert rotation degrees to rotation_needed format for workflow
+                rotation_degrees = analysis.get("rotation", 0)
+                rotation_needed = {0: "none", 90: "90_cw", 180: "180", 270: "90_ccw"}.get(
+                    rotation_degrees, "none"
+                )
+
                 formatted_analyses.append(
                     {
                         "document_type": analysis.get("document_type"),
@@ -5656,7 +5648,7 @@ Files being sent to Ollama:
                         "document_date": analysis.get("document_date"),
                         "page_number": analysis.get("page_number"),
                         "total_pages": analysis.get("total_pages"),
-                        "rotation_needed": analysis.get("rotation_needed", "none"),
+                        "rotation_needed": rotation_needed,  # Converted from degrees
                         "confidence_score": analysis.get("confidence_score", 0.0),
                         "tax_related": analysis.get("tax_related", False),
                         "analysis_id": analysis.get("id"),
@@ -5683,7 +5675,7 @@ Files being sent to Ollama:
 
     def _on_bundle_accepted_from_workflow(self, bundle):
         """Handle bundle acceptance from guided workflow."""
-        print(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
+        logger.info(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
         # The workflow already handled PDF conversion and database updates
         # Just track it in completed groups
         file_paths = bundle.get("file_paths", [])
@@ -5704,7 +5696,7 @@ Files being sent to Ollama:
         bundle_id = bundle.get("bundle_id")
         if bundle_id:
             # Already marked as rejected in database by workflow
-            print(f"Bundle rejected from workflow: {bundle_id}")
+            logger.info(f"Bundle rejected from workflow: {bundle_id}")
 
     def _on_workflow_completed(self, stats):
         """Handle workflow completion."""
@@ -5717,15 +5709,15 @@ Files being sent to Ollama:
         if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
             try:
                 self._analysis_status_window._refresh_all()
-                print("[Auto-refresh] Updated metrics after bundle operation")
+                logger.debug("[Auto-refresh] Updated metrics after bundle operation")
             except Exception as e:
-                print(f"[Auto-refresh] Failed to refresh metrics: {e}")
+                logger.warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     # ===== PHASE 7: Bundle Suggestion Handlers =====
 
     def _on_bundle_accepted(self, bundle_data):
         """Handle bundle acceptance - add to completed groups"""
-        print(
+        logger.info(
             f"[Bundle] Accepted: {bundle_data.get('document_type')} - {bundle_data.get('company')}"
         )
         file_paths = bundle_data.get("file_paths", [])
@@ -5809,7 +5801,7 @@ Files being sent to Ollama:
 
     def _on_bundle_modified(self, bundle_data):
         """Handle bundle modification - launch bundle review window"""
-        print(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
+        logger.info(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
 
         bundle_id = bundle_data.get("id")
         if not bundle_id:
@@ -5841,7 +5833,7 @@ Files being sent to Ollama:
         bundle_id = result_data.get("bundle_id")
         file_paths = result_data.get("file_paths", [])
 
-        print(f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages")
+        logger.info(f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages")
 
         # Remove this bundle from display
         self._remove_bundle_card(bundle_id)
@@ -5862,7 +5854,7 @@ Files being sent to Ollama:
         """Handle bundle review rejection."""
         bundle_id = bundle_data.get("bundle_id")
 
-        print(f"[Bundle Review] Rejected bundle {bundle_id}")
+        logger.info(f"[Bundle Review] Rejected bundle {bundle_id}")
 
         # Mark bundle as rejected in database
         from services.bundling_service import BundlingService
@@ -5895,7 +5887,7 @@ Files being sent to Ollama:
 
     def _on_bundle_rejected(self, bundle_data):
         """Handle bundle rejection - pages remain in pool for manual processing"""
-        print(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
+        logger.info(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
         file_paths = bundle_data.get("file_paths", [])
 
         # Display confirmation
@@ -6030,7 +6022,7 @@ Files being sent to Ollama:
 
     def _show_bundle_view(self):
         """Show bundle suggestions view and hide three-column layout"""
-        print("[Bundle View] Showing bundle suggestions view")
+        logger.info("[Bundle View] Showing bundle suggestions view")
 
         # Stop and clear any loading UI
         if hasattr(self, "loading_spinner_timer") and self.loading_spinner_timer.isActive():
@@ -6067,7 +6059,7 @@ Files being sent to Ollama:
 
     def _show_manual_view(self):
         """Show three-column manual stitching view and hide bundle suggestions"""
-        print("[Manual View] Showing three-column layout")
+        logger.info("[Manual View] Showing three-column layout")
 
         # Hide bundle suggestions view
         self.bundle_suggestions_view.setVisible(False)
@@ -6085,7 +6077,7 @@ Files being sent to Ollama:
 
     def _on_skip_to_manual_workflow(self):
         """Skip bundle suggestions and go to manual stitching"""
-        print("[Bundle] Skipping to manual workflow")
+        logger.info("[Bundle] Skipping to manual workflow")
 
         # Setup Step 1 UI if not already done
         if self.current_step != WorkflowStep.STITCHING:
@@ -6116,43 +6108,106 @@ class StartupWindow(QWidget):
         self.analysis_service = None
         self.analysis_worker = None
         self.analysis_start_time = None
-        self.analysis_db = AnalysisDB()  # Initialize database for stats
+        # Shared database instances - created once, passed to all child windows
+        self.analysis_db = AnalysisDB()
+        self.metadata_db = MetadataDB()
         self._init_ui()
 
     def _init_ui(self):
         # Branded blue background (intentional - this is the landing page)
         self.setStyleSheet("background-color: #2563EB; color: white;")
 
-        # Define button styles once to avoid duplication
-        primary_button_style = """
+        # Define refined, professional button styles with glow and shadow
+        # Discovery/Analysis buttons - Enhanced blue for visibility on blue background
+        discovery_button_style = """
             QPushButton {
-                background-color: #2563EB;
+                background-color: rgba(59, 130, 246, 0.3);
                 color: white;
-                border: 2px solid #1E40AF;
-                border-radius: 5px;
-                padding: 10px;
+                border: 2px solid rgba(96, 165, 250, 0.8);
+                border-radius: 8px;
+                padding: 10px 15px;
+                font-size: 11pt;
+                font-weight: 500;
+                text-align: left;
             }
             QPushButton:hover {
-                background-color: #1D4ED8;
+                background-color: rgba(96, 165, 250, 0.4);
+                border: 2px solid rgba(147, 197, 253, 1.0);
+            }
+            QPushButton:pressed {
+                background-color: rgba(59, 130, 246, 0.5);
             }
         """
 
-        danger_button_style = """
+        # Conversion buttons - Enhanced emerald to match visibility
+        conversion_button_style = """
             QPushButton {
-                background-color: #DC2626;
+                background-color: rgba(16, 185, 129, 0.3);
                 color: white;
-                border: 2px solid #B91C1C;
-                border-radius: 5px;
-                padding: 10px;
+                border: 2px solid rgba(52, 211, 153, 0.8);
+                border-radius: 8px;
+                padding: 10px 15px;
+                font-size: 11pt;
+                font-weight: 500;
+                text-align: left;
             }
             QPushButton:hover {
-                background-color: #B91C1C;
+                background-color: rgba(52, 211, 153, 0.4);
+                border: 2px solid rgba(110, 231, 183, 1.0);
+            }
+            QPushButton:pressed {
+                background-color: rgba(16, 185, 129, 0.5);
             }
         """
 
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setContentsMargins(20, 20, 20, 20)
+
+        # Top-right floating icon buttons
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.addStretch()
+
+        # Configure icon button (floating, no background)
+        self.floating_settings_button = QPushButton("⚙️")
+        self.floating_settings_button.setFixedSize(32, 32)
+        self.floating_settings_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 18pt;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                font-size: 20pt;
+            }
+        """)
+        self.floating_settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.floating_settings_button.clicked.connect(self.show_settings_window)
+        top_bar_layout.addWidget(self.floating_settings_button)
+
+        # Small spacing between icons
+        top_bar_layout.addSpacing(15)
+
+        # Exit icon button (floating, no background) - Door icon
+        self.floating_exit_button = QPushButton("🚪")
+        self.floating_exit_button.setFixedSize(32, 32)
+        self.floating_exit_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 18pt;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                font-size: 20pt;
+            }
+        """)
+        self.floating_exit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.floating_exit_button.clicked.connect(self.quit_application)
+        top_bar_layout.addWidget(self.floating_exit_button)
+
+        main_layout.addLayout(top_bar_layout)
 
         # Center content layout
         center_layout = QVBoxLayout()
@@ -6219,7 +6274,7 @@ class StartupWindow(QWidget):
                     self.movie.setScaledSize(scaled_size)
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(scaled_size)
-                    self.movie.setSpeed(20)  # 20% of original speed (5x slower)
+                    self.movie.setSpeed(100)  # Normal speed (100%)
                     # Play continuously
                     self.movie.start()
                     self._is_analyzing = False
@@ -6229,6 +6284,7 @@ class StartupWindow(QWidget):
                     self.movie.setScaledSize(default_size)
                     self.scanner_label.setMovie(self.movie)
                     self.scanner_label.setFixedSize(default_size)
+                    self.movie.setSpeed(100)  # Normal speed (100%)
                     # Play continuously
                     self.movie.start()
                     self._is_analyzing = False
@@ -6247,45 +6303,58 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
-        # Analyze Documents button
-        analyze_button = QPushButton("🔍 Analyze Documents")
+        # Discover button (topmost) - Blue gradient
+        discover_button = QPushButton("📁  Discover")
+        discover_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        discover_button.setMinimumHeight(48)
+        discover_button.setStyleSheet(discovery_button_style)
+        discover_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        discover_button.clicked.connect(self.manual_discover_images)
+        button_layout.addWidget(discover_button)
+
+        # Analyze button - Blue gradient
+        analyze_button = QPushButton("🔍  Analyze")
         analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        analyze_button.setMinimumHeight(60)
-        analyze_button.setStyleSheet(primary_button_style)
+        analyze_button.setMinimumHeight(48)
+        analyze_button.setStyleSheet(discovery_button_style)
+        analyze_button.setCursor(Qt.CursorShape.PointingHandCursor)
         analyze_button.clicked.connect(self.manual_analyze_documents)
         button_layout.addWidget(analyze_button)
 
-        process_button = QPushButton("Convert Scans")
+        # Bundle button - Emerald gradient
+        process_button = QPushButton("📄  Bundle")
         process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        process_button.setMinimumHeight(60)
-        process_button.setStyleSheet(primary_button_style)
+        process_button.setMinimumHeight(48)
+        process_button.setStyleSheet(conversion_button_style)
+        process_button.setCursor(Qt.CursorShape.PointingHandCursor)
         process_button.clicked.connect(self.show_processing_window)
         button_layout.addWidget(process_button)
 
-        self.extract_button = QPushButton("Convert PDFs")
+        # Export button - Emerald gradient
+        self.extract_button = QPushButton("📑  Export")
         self.extract_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.extract_button.setMinimumHeight(60)
+        self.extract_button.setMinimumHeight(48)
         self.extract_button.setEnabled(True)
-        self.extract_button.setStyleSheet(primary_button_style)
+        self.extract_button.setStyleSheet(conversion_button_style)
+        self.extract_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.extract_button.clicked.connect(self._process_pdfs)
         button_layout.addWidget(self.extract_button)
 
-        settings_button = QPushButton("Change Settings")
-        settings_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        settings_button.setMinimumHeight(60)
-        settings_button.setStyleSheet(primary_button_style)
-        settings_button.clicked.connect(self.show_settings_window)
-        button_layout.addWidget(settings_button)
-
-        quit_button = QPushButton("Quit")
-        quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        quit_button.setMinimumHeight(60)
-        quit_button.setStyleSheet(danger_button_style)
-        quit_button.clicked.connect(self.quit_application)
-        button_layout.addWidget(quit_button)
-
         button_layout.addStretch()
         content_layout.addLayout(button_layout)
+
+        # Add extra spacing to the right of buttons (60px + 20px main margin = 80px total)
+        content_layout.addSpacing(60)
+
+        # Status label for showing discovery/analysis status at the bottom
+        # Always visible to prevent layout shifts, but content is hidden when inactive
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setFixedHeight(40)  # Fixed height to prevent layout shifts
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(True)  # Always visible (space reserved)
+        self._hide_status_label()  # Start with hidden content
+        main_layout.addWidget(self.status_label)
 
         self.setFixedSize(800, 600)
 
@@ -6294,6 +6363,22 @@ class StartupWindow(QWidget):
         self.pdf_check_timer.start(5000)
 
     # Removed _on_movie_state_changed method
+
+    def _show_status_label(self, text):
+        """Show status label with content (prevents layout shifts)"""
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(
+            "color: white; font-size: 11pt; padding: 8px; "
+            "background-color: rgba(30, 64, 175, 0.8); "
+            "border: 1px solid rgba(255, 255, 255, 0.3); "
+            "border-radius: 5px; "
+            "font-weight: bold;"
+        )
+
+    def _hide_status_label(self):
+        """Hide status label content (keeps space to prevent layout shifts)"""
+        self.status_label.setText("")
+        self.status_label.setStyleSheet("background-color: transparent; border: none;")
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
@@ -6332,15 +6417,12 @@ class StartupWindow(QWidget):
         """Launch workflow immediately with cached results, analyze new files in workflow."""
         from PyQt6.QtWidgets import QMessageBox
 
-        from config.config_manager import ConfigManager
-        from db.analysis_db import AnalysisDB
-        from db.metadata_db import MetadataDB
         from services.bundling_service import BundlingService
 
-        # Initialize services
-        config_manager = ConfigManager()
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
+        # Use shared database instances
+        analysis_db = self.analysis_db
+        metadata_db = self.metadata_db
+        config_manager = self.config_manager
         bundling_service = BundlingService(analysis_db)
 
         try:
@@ -6376,13 +6458,13 @@ class StartupWindow(QWidget):
                     return
 
             # Launch guided workflow IMMEDIATELY with cached bundles
-            from ui.guided_bundle_workflow import GuidedBundleWorkflow
+            from ui.verify_documents_window import BundleReviewWindow
 
             # Prepare bundles for workflow
             workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
 
             # Create and show workflow
-            workflow = GuidedBundleWorkflow(
+            workflow = BundleReviewWindow(
                 bundles=workflow_bundles,
                 start_index=0,
                 prototype_mode=False,
@@ -6408,26 +6490,18 @@ class StartupWindow(QWidget):
             QMessageBox.critical(self, "Workflow Failed", f"Failed to launch workflow:\n\n{str(e)}")
             self.show()
 
-        finally:
-            # Clean up
-            analysis_db.close()
-            metadata_db.close()
-
     def _run_full_analysis_then_launch(self):
         """Run full analysis with progress dialog, then launch workflow."""
         from PyQt6.QtCore import QApplication
         from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 
-        from config.config_manager import ConfigManager
-        from db.analysis_db import AnalysisDB
-        from db.metadata_db import MetadataDB
         from services.analysis_service import AnalysisService
         from services.bundling_service import BundlingService
 
-        # Initialize services
-        config_manager = ConfigManager()
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
+        # Use shared database instances
+        config_manager = self.config_manager
+        analysis_db = self.analysis_db
+        metadata_db = self.metadata_db
         analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
         bundling_service = BundlingService(analysis_db)
 
@@ -6499,13 +6573,13 @@ class StartupWindow(QWidget):
                 return
 
             # Launch guided workflow
-            from ui.guided_bundle_workflow import GuidedBundleWorkflow
+            from ui.verify_documents_window import BundleReviewWindow
 
             # Prepare bundles for workflow
             workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
 
             # Create and show workflow
-            workflow = GuidedBundleWorkflow(
+            workflow = BundleReviewWindow(
                 bundles=workflow_bundles,
                 start_index=0,
                 prototype_mode=False,
@@ -6533,11 +6607,6 @@ class StartupWindow(QWidget):
                 self, "Analysis Failed", f"Failed to analyze documents:\n\n{str(e)}"
             )
             self.show()
-
-        finally:
-            # Clean up
-            analysis_db.close()
-            metadata_db.close()
 
     def _prepare_workflow_bundles(self, bundles, analysis_db):
         """Prepare bundles for guided workflow."""
@@ -6588,7 +6657,9 @@ class StartupWindow(QWidget):
         )
 
     def show_settings_window(self):
-        settings_window = EnhancedSettingsWindow(self)
+        settings_window = EnhancedSettingsWindow(
+            self, analysis_db=self.analysis_db, metadata_db=self.metadata_db
+        )
         settings_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         settings_window.setWindowModality(Qt.WindowModality.ApplicationModal)
         settings_window.show()
@@ -6596,31 +6667,90 @@ class StartupWindow(QWidget):
         # Keep reference to prevent garbage collection
         self._settings_window = settings_window
 
+    def manual_discover_images(self):
+        """Manually trigger image discovery - finds and registers new files"""
+        from PyQt6.QtCore import QTimer
+
+        from services.discovery_worker import DiscoveryWorker
+        from ui.toast_notifier import ToastNotifier
+
+        # Get directories from config (not database)
+        directories = self.config_manager.get_directories()
+
+        if not directories:
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self,
+                "No Directories",
+                "No source directories configured.\n\nPlease add directories in Settings.",
+            )
+            return
+
+        # Show status message
+        self._show_status_label("🔍 Discovering new files...")
+
+        # Create and start discovery worker
+        self._discovery_worker = DiscoveryWorker(self.config_manager, directories)
+
+        # Create toast notifier
+        self._toast_notifier = ToastNotifier()
+
+        def on_finished(count):
+            """Handle discovery completion"""
+            # Update status label with result
+            if count == 0:
+                self._show_status_label("✓ Discovery complete - No new files found")
+            elif count == 1:
+                self._show_status_label("✓ Discovery complete - 1 new file found")
+            else:
+                self._show_status_label(f"✓ Discovery complete - {count} new files found")
+
+            # Show toast notification
+            self._toast_notifier.show_discovery_toast(count)
+
+            # Check if auto-analyze is enabled
+            auto_analyze = self.config_manager.get_bool(
+                "Discovery", "auto_analyze_after_discovery", False
+            )
+
+            if auto_analyze and count > 0:
+                # Hide discovery status before launching analysis
+                QTimer.singleShot(2000, self._hide_status_label)
+                # Launch analysis for newly discovered files
+                self.manual_analyze_documents()
+            else:
+                # Hide status after 5 seconds
+                QTimer.singleShot(5000, self._hide_status_label)
+
+        def on_error(error):
+            """Handle discovery error"""
+            # Show error in status label
+            self._show_status_label(f"⚠ Discovery error: {error[:50]}")
+            # Hide error message after 10 seconds
+            QTimer.singleShot(10000, self._hide_status_label)
+
+            # Also show modal error dialog
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(self, "Discovery Error", f"Failed to discover images:\n\n{error}")
+
+        # Connect signals
+        self._discovery_worker.finished.connect(on_finished)
+        self._discovery_worker.error.connect(on_error)
+
+        # Start discovery
+        self._discovery_worker.start()
+
     def manual_analyze_documents(self):
         """Manually trigger document analysis - opens status window with auto-start"""
         # Initialize analysis service if not already done
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from config.config_manager import ConfigManager
-            from db.analysis_db import AnalysisDB
-            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
-            config_manager = ConfigManager()
-            self.analysis_db = AnalysisDB()
-            self.metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(
-                config_manager, self.analysis_db, self.metadata_db
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-        # Ensure database instances exist
-        if not hasattr(self, "analysis_db") or self.analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        if not hasattr(self, "metadata_db") or self.metadata_db is None:
-            from db.metadata_db import MetadataDB
-
-            self.metadata_db = MetadataDB()
 
         # Open status window with auto-start based on config
         auto_start = self.config_manager.get_bool("GUI", "auto_start_analysis", False)
@@ -6643,27 +6773,11 @@ class StartupWindow(QWidget):
         """Show the Analysis Status window"""
         # Initialize analysis service if needed
         if not hasattr(self, "analysis_service") or self.analysis_service is None:
-            from config.config_manager import ConfigManager
-            from db.analysis_db import AnalysisDB
-            from db.metadata_db import MetadataDB
             from services.analysis_service import AnalysisService
 
-            config_manager = ConfigManager()
-            self.analysis_db = AnalysisDB()
-            self.metadata_db = MetadataDB()
             self.analysis_service = AnalysisService(
-                config_manager, self.analysis_db, self.metadata_db
+                self.config_manager, self.analysis_db, self.metadata_db
             )
-
-        # Ensure database instances exist
-        if not hasattr(self, "analysis_db") or self.analysis_db is None:
-            from db.analysis_db import AnalysisDB
-
-            self.analysis_db = AnalysisDB()
-        if not hasattr(self, "metadata_db") or self.metadata_db is None:
-            from db.metadata_db import MetadataDB
-
-            self.metadata_db = MetadataDB()
 
         status_window = AnalysisStatusWindow(
             parent=self,
@@ -6710,20 +6824,25 @@ class StartupWindow(QWidget):
         Format ISO timestamp as relative time (e.g., "2 hours ago").
 
         Args:
-            iso_timestamp: ISO format timestamp string
+            iso_timestamp: ISO format timestamp string (UTC from database)
 
         Returns:
             Relative time string
         """
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            # Parse ISO timestamp
-            dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
-            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            from ui.datetime_utils import utc_to_local
+
+            # Parse ISO timestamp (assume UTC from database)
+            dt_utc = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+
+            # Convert to local timezone
+            dt_local = utc_to_local(dt_utc)
+            now = datetime.now(timezone.utc).astimezone()
 
             # Calculate difference
-            diff = now - dt
+            diff = now - dt_local
 
             # Format based on duration
             if diff.total_seconds() < 60:
@@ -6746,19 +6865,18 @@ class StartupWindow(QWidget):
         """Check for unanalyzed files and show welcome dialog if needed"""
         import glob
 
-        from db.analysis_db import AnalysisDB
         from services.logging_service import get_logger
 
         logger = get_logger()
 
-        analysis_db = AnalysisDB()
+        # Use shared analysis_db instance
+        analysis_db = self.analysis_db
 
         # Get scan folder
         scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
         logger.debug(f"Scan folder: {scan_folder}")
         if not scan_folder or not os.path.exists(scan_folder):
             logger.debug("Scan folder doesn't exist or not set")
-            analysis_db.close()
             return
 
         # Count PNG/JPG files (use set to avoid duplicates)
@@ -6771,7 +6889,6 @@ class StartupWindow(QWidget):
         logger.debug(f"Total files found: {total_files}")
         if total_files == 0:
             logger.debug("No files found, returning")
-            analysis_db.close()
             return
 
         # Count analyzed files
@@ -6779,8 +6896,6 @@ class StartupWindow(QWidget):
         for image_path in image_files:
             if analysis_db.get_analysis(image_path):
                 analyzed_count += 1
-
-        analysis_db.close()
 
         unanalyzed_count = total_files - analyzed_count
         logger.debug(f"Analyzed: {analyzed_count}, Unanalyzed: {unanalyzed_count}")
@@ -6821,16 +6936,11 @@ class StartupWindow(QWidget):
 
                 if reply == QMessageBox.StandardButton.Yes:
                     logger.info(f"User chose to analyze {unanalyzed_count} documents")
-                    # Open status window with auto-start
-                    from db.metadata_db import MetadataDB
-
-                    status_analysis_db = AnalysisDB()
-                    status_metadata_db = MetadataDB()
-
+                    # Open status window with auto-start using shared DB instances
                     status_window = AnalysisStatusWindow(
                         parent=self,
-                        analysis_db=status_analysis_db,
-                        metadata_db=status_metadata_db,
+                        analysis_db=self.analysis_db,
+                        metadata_db=self.metadata_db,
                         analysis_service=analysis_service,
                         config_manager=self.config_manager,
                         auto_start_analysis=True,
@@ -6853,9 +6963,9 @@ class StartupWindow(QWidget):
         if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
             try:
                 self._analysis_status_window._refresh_all()
-                print("[Auto-refresh] Updated metrics after bundle operation")
+                logger.debug("[Auto-refresh] Updated metrics after bundle operation")
             except Exception as e:
-                print(f"[Auto-refresh] Failed to refresh metrics: {e}")
+                logger.warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     def closeEvent(self, event):  # noqa: N802
         """Handle window close event with optional confirmation"""
@@ -6870,11 +6980,24 @@ class StartupWindow(QWidget):
             )
 
             if reply == QMessageBox.StandardButton.Yes:
+                self._cleanup_shared_db()
                 event.accept()
             else:
                 event.ignore()
         else:
+            self._cleanup_shared_db()
             event.accept()
+
+    def _cleanup_shared_db(self):
+        """Close shared database connections on application exit."""
+        import contextlib
+
+        if hasattr(self, "analysis_db") and self.analysis_db:
+            with contextlib.suppress(Exception):
+                self.analysis_db.close()
+        if hasattr(self, "metadata_db") and self.metadata_db:
+            with contextlib.suppress(Exception):
+                self.metadata_db.close()
 
 
 class AnalysisWorker(QThread):
@@ -6894,9 +7017,9 @@ class AnalysisWorker(QThread):
         """Run analysis in background thread"""
         try:
             # Create new database connections in this thread to avoid SQLite thread errors
-            from analysis_db import AnalysisDB
-            from analysis_service import AnalysisService
-            from metadata_db import MetadataDB
+            from db.analysis_db import AnalysisDB
+            from db.metadata_db import MetadataDB
+            from services.analysis_service import AnalysisService
 
             analysis_db = AnalysisDB()
             metadata_db = MetadataDB()
@@ -6945,9 +7068,7 @@ class AnalysisWorker(QThread):
                     }
                 )
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"Analysis error: {e}", exc_info=True)
             self.finished.emit(
                 {
                     "total_files": 0,
@@ -7017,9 +7138,7 @@ class SpecificFilesAnalysisWorker(QThread):
                 }
             )
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
+            logger.error(f"Analysis error: {e}", exc_info=True)
             self.finished.emit(
                 {
                     "total_files": len(self.file_paths),

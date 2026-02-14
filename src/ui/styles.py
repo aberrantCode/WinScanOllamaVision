@@ -735,18 +735,36 @@ def apply_lift_animation(widget):
 
 
 def get_themed_message_box_style():
-    """Get stylesheet for themed message boxes"""
+    """Get stylesheet for themed message boxes based on current theme"""
+    from config.config_manager import ConfigManager
+
+    config = ConfigManager()
+    current_theme = config.get_setting("Theme", "theme", "light")
+
+    if current_theme == "dark":
+        # Dark theme colors
+        bg_color = Colors.GRAY_800
+        text_color = Colors.WHITE
+        button_bg = Colors.PRIMARY
+        button_hover = Colors.PRIMARY_HOVER
+    else:
+        # Light theme colors (default)
+        bg_color = Colors.WHITE
+        text_color = Colors.GRAY_900
+        button_bg = Colors.PRIMARY
+        button_hover = Colors.PRIMARY_HOVER
+
     return f"""
         QMessageBox {{
-            background-color: {Colors.WHITE};
+            background-color: {bg_color};
         }}
         QMessageBox QLabel {{
-            color: {Colors.GRAY_900};
+            color: {text_color};
             background-color: transparent;
             font-size: 13px;
         }}
         QMessageBox QPushButton {{
-            background-color: {Colors.PRIMARY};
+            background-color: {button_bg};
             color: {Colors.WHITE};
             border: none;
             border-radius: 6px;
@@ -755,10 +773,10 @@ def get_themed_message_box_style():
             min-width: 80px;
         }}
         QMessageBox QPushButton:hover {{
-            background-color: {Colors.PRIMARY_HOVER};
+            background-color: {button_hover};
         }}
         QMessageBox QPushButton:pressed {{
-            background-color: {Colors.PRIMARY_HOVER};
+            background-color: {button_hover};
         }}
     """
 

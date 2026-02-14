@@ -1,17 +1,23 @@
 """
 Analysis repository for managing analysis results persistence.
 
-Simplified CRUD operations for page-level analysis data.
+Simplified CRUD operations for analysis provenance and audit trail.
+After Migration 16, this repository focuses solely on LLM analysis tracking,
+not document metadata (which goes in metadata table).
 """
 
 import json
+import sqlite3
 from typing import Any
 
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
 
 
 class AnalysisRepository:
-    """Manages analysis results persistence."""
+    """Manages analysis results persistence (provenance and audit trail only)."""
 
     def __init__(self, conn: DatabaseConnection):
         """
@@ -24,177 +30,229 @@ class AnalysisRepository:
 
     def save(
         self,
-        file_path: str,
-        file_hash: str,
+        image_file_id: int,
         provider_name: str,
         model_name: str,
-        analysis_data: dict[str, Any],
-        raw_response: str,
+        prompt_text: str,
+        response_text: str,
+        confidence_score: float | None,
         processing_time_ms: int,
-    ) -> None:
+        had_error: bool = False,
+        extracted_metadata: dict[str, Any] | None = None,
+        model_options: dict[str, Any] | None = None,
+    ) -> int:
         """
-        Save comprehensive page analysis results.
+        Save analysis results for provenance tracking.
+
+        After Migration 16, this method no longer saves document metadata fields
+        (company, document_type, etc.) - those go in the metadata table.
 
         Args:
-            file_path: Path to analyzed file
-            file_hash: SHA-256 hash of file
+            image_file_id: Foreign key to image_files table
             provider_name: Name of LLM provider used
             model_name: Model name/identifier
-            analysis_data: Extracted metadata dict
-            raw_response: Full LLM response text
+            prompt_text: The prompt text sent to the LLM
+            response_text: Full LLM response text
+            confidence_score: LLM's confidence in the analysis (0.0 to 1.0)
             processing_time_ms: Processing time in milliseconds
+            had_error: Whether the analysis encountered an error
+            extracted_metadata: Parsed metadata dict (for structured queries)
+            model_options: Model parameters (temperature, top_p, etc.)
+
+        Returns:
+            The ID of the inserted analysis record
+
+        Raises:
+            ValueError: If image_file_id is invalid (foreign key constraint)
+            sqlite3.OperationalError: If database is locked
+            sqlite3.Error: If database operation fails
         """
-        self.conn.execute(
-            """
-            INSERT OR REPLACE INTO analysis_results (
-                file_path, file_hash, provider_name, model_name,
-                document_type, company, document_date,
-                page_number, total_pages, belongs_to_same_doc,
-                confidence_score, rotation_needed, suggested_rotation,
-                rotation_confidence, tax_related, raw_response, extracted_metadata,
-                processing_time_ms, analyzed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """,
-            (
-                file_path,
-                file_hash,
-                provider_name,
-                model_name,
-                analysis_data.get("document_type"),
-                analysis_data.get("company"),
-                analysis_data.get("document_date"),
-                analysis_data.get("page_number"),
-                analysis_data.get("total_pages"),
-                analysis_data.get("belongs_to_same_doc", False),
-                analysis_data.get("confidence_score"),
-                analysis_data.get("rotation_needed", False),
-                analysis_data.get("suggested_rotation", 0),
-                analysis_data.get("rotation_confidence"),
-                analysis_data.get("tax_related", False),
-                raw_response,
-                json.dumps(analysis_data),
-                processing_time_ms,
-            ),
-        )
-        self.conn.commit()
-
-    def update_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
-        """
-        Update metadata fields for an existing analysis.
-
-        Args:
-            file_path: Path to file
-            metadata: Dictionary with updated metadata fields
-        """
-        # Debug logging for rotation persistence tracking
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-        logger.debug(
-            f"[DB UPDATE] update_metadata called for {file_path} - "
-            f"rotation_needed in metadata dict: '{metadata.get('rotation_needed')}'"
-        )
-
-        # Build UPDATE query dynamically for provided fields
-        update_fields = []
-        values = []
-
-        field_mapping = {
-            "document_type": "document_type",
-            "company": "company",
-            "document_date": "document_date",
-            "page_number": "page_number",
-            "total_pages": "total_pages",
-            "rotation_needed": "rotation_needed",
-            "confidence_score": "confidence_score",
-            "tax_related": "tax_related",
-        }
-
-        for meta_key, db_column in field_mapping.items():
-            if meta_key in metadata:
-                # Update field even if value is empty/None (allows clearing fields)
-                update_fields.append(f"{db_column} = ?")
-                values.append(metadata[meta_key])
-                if meta_key == "rotation_needed":
-                    logger.debug(
-                        f"[DB UPDATE] Adding rotation_needed to update: '{metadata[meta_key]}'"
-                    )
-
-        if update_fields:
-            # Update extracted_metadata JSON field as well
-            update_fields.append("extracted_metadata = ?")
-            values.append(json.dumps(metadata))
-
-            # Add file_path for WHERE clause
-            values.append(file_path)
-
-            # Column names from internal code, values parameterized - safe from injection
-            query = f"""
-                UPDATE analysis_results
-                SET {", ".join(update_fields)}
-                WHERE file_path = ?
-            """  # nosec B608
-
-            self.conn.execute(query, tuple(values))
+        try:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO analysis_results (
+                    image_file_id, provider_name, model_name, model_options,
+                    prompt_text, response_text, extracted_metadata,
+                    confidence_score, had_error, analyzed_at, processing_time_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            """,
+                (
+                    image_file_id,
+                    provider_name,
+                    model_name,
+                    json.dumps(model_options) if model_options else None,
+                    prompt_text,
+                    response_text,
+                    json.dumps(extracted_metadata) if extracted_metadata else None,
+                    confidence_score,
+                    1 if had_error else 0,
+                    processing_time_ms,
+                ),
+            )
             self.conn.commit()
-            logger.debug("[DB UPDATE] Database update committed successfully")
 
-    def get_by_path(self, file_path: str) -> dict[str, Any] | None:
+            # Return the ID of the inserted row
+            if cursor.lastrowid is None:
+                raise sqlite3.Error("INSERT did not return row ID")
+            return cursor.lastrowid
+
+        except sqlite3.IntegrityError as e:
+            logger.error(f"[ANALYSIS REPO] Foreign key constraint: {e}")
+            self.conn.rollback()
+            raise ValueError(f"Invalid image_file_id: {image_file_id}") from e
+        except sqlite3.OperationalError as e:
+            logger.error(f"[ANALYSIS REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError(f"Database operation failed: {e}") from e
+        except sqlite3.Error as e:
+            logger.error(f"[ANALYSIS REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to save analysis: {e}") from e
+
+    def get_by_image_file_id(self, image_file_id: int) -> list[dict[str, Any]]:
         """
-        Retrieve analysis results for a file.
+        Retrieve all analysis results for an image file.
+
+        An image file may have multiple analyses (re-analyzed with different providers/models).
 
         Args:
-            file_path: Path to file
+            image_file_id: Foreign key to image_files table
+
+        Returns:
+            List of analysis dicts (may be empty)
+        """
+        return self.conn.fetch_all_dicts(
+            """
+            SELECT * FROM analysis_results
+            WHERE image_file_id = ?
+            ORDER BY analyzed_at DESC
+            """,
+            (image_file_id,),
+            json_fields=["extracted_metadata", "model_options"],
+        )
+
+    def get_latest_by_image_file_id(self, image_file_id: int) -> dict[str, Any] | None:
+        """
+        Retrieve the most recent analysis result for an image file.
+
+        Args:
+            image_file_id: Foreign key to image_files table
 
         Returns:
             Analysis dict if found, None otherwise
         """
-        analysis = self.conn.fetch_one_dict(
-            "SELECT * FROM analysis_results WHERE file_path = ?",
-            (file_path,),
-            json_fields=["extracted_metadata"],
+        return self.conn.fetch_one_dict(
+            """
+            SELECT * FROM analysis_results
+            WHERE image_file_id = ?
+            ORDER BY analyzed_at DESC
+            LIMIT 1
+            """,
+            (image_file_id,),
+            json_fields=["extracted_metadata", "model_options"],
         )
 
-        if analysis:
-            # Increment cache hit counter
-            self.conn.execute(
-                """
-                UPDATE analysis_results
-                SET cache_hit_count = cache_hit_count + 1, is_cached = 1
-                WHERE file_path = ?
-            """,
-                (file_path,),
-            )
-            self.conn.commit()
-
-        return analysis
-
-    def get_all(
-        self, directory_filter: str | None = None, provider_filter: str | None = None
-    ) -> list[dict[str, Any]]:
+    def get_by_id(self, analysis_id: int) -> dict[str, Any] | None:
         """
-        Retrieve all analyzed pages with optional filtering.
+        Retrieve a specific analysis result by ID.
 
         Args:
-            directory_filter: Filter by directory path
+            analysis_id: Analysis result ID
+
+        Returns:
+            Analysis dict if found, None otherwise
+        """
+        return self.conn.fetch_one_dict(
+            "SELECT * FROM analysis_results WHERE id = ?",
+            (analysis_id,),
+            json_fields=["extracted_metadata", "model_options"],
+        )
+
+    def get_all(
+        self,
+        provider_filter: str | None = None,
+        had_error: bool | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve all analysis results with optional filtering.
+
+        Args:
             provider_filter: Filter by provider name
+            had_error: Filter by error status (True=errors only, False=successful only, None=all)
+            limit: Maximum number of results to return
 
         Returns:
             List of analysis dicts
         """
         query = "SELECT * FROM analysis_results WHERE 1=1"
-        params = []
-
-        if directory_filter:
-            query += " AND file_path LIKE ?"
-            params.append(f"{directory_filter}%")
+        params: list[Any] = []
 
         if provider_filter:
             query += " AND provider_name = ?"
             params.append(provider_filter)
 
+        if had_error is not None:
+            query += " AND had_error = ?"
+            params.append(1 if had_error else 0)
+
         query += " ORDER BY analyzed_at DESC"
 
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
         return self.conn.fetch_all_dicts(
-            query, params=tuple(params), json_fields=["extracted_metadata"]
+            query, params=tuple(params), json_fields=["extracted_metadata", "model_options"]
         )
+
+    def count_by_status(self) -> dict[str, int]:
+        """
+        Get counts of analysis results by status.
+
+        Returns:
+            Dict with 'successful', 'errors', and 'total' counts
+        """
+        cursor = self.conn.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN had_error = 0 THEN 1 ELSE 0 END) as successful,
+                SUM(CASE WHEN had_error = 1 THEN 1 ELSE 0 END) as errors
+            FROM analysis_results
+        """)
+        row = cursor.fetchone()
+
+        if row:
+            return {
+                "total": row[0] or 0,
+                "successful": row[1] or 0,
+                "errors": row[2] or 0,
+            }
+
+        return {"total": 0, "successful": 0, "errors": 0}
+
+    def delete_by_image_file_id(self, image_file_id: int) -> int:
+        """
+        Delete all analysis results for an image file.
+
+        Args:
+            image_file_id: Foreign key to image_files table
+
+        Returns:
+            Number of deleted records
+        """
+        cursor = self.conn.execute(
+            "DELETE FROM analysis_results WHERE image_file_id = ?",
+            (image_file_id,),
+        )
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            logger.error(f"[ANALYSIS REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            logger.error(f"[ANALYSIS REPO] Database error: {e}")
+            self.conn.rollback()
+            raise sqlite3.Error(f"Failed to delete analysis records: {e}") from e
+        return cursor.rowcount

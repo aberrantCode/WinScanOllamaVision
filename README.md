@@ -25,7 +25,7 @@ https://github.com/aberrantCode/WinScanLLM.git
 ## Setup:
 
 ### 1. Install Python
-Ensure you have Python 3.8+ installed on your system. You can download it from [python.org](https://www.python.org/downloads/).
+Ensure you have Python 3.11+ installed on your system (the project targets Python 3.11–3.13). You can download it from [python.org](https://www.python.org/downloads/).
 
 ### 2. Install Ollama
 Download and install Ollama from [ollama.com](https://ollama.com/). Make sure the Ollama server is running locally (it usually starts automatically).
@@ -36,6 +36,8 @@ You need an Ollama vision model for the application to work. The application def
 ollama pull qwen2.5-vl
 ```
 Or, you can pull other vision models like `llava:latest` or `deepseek-ocr` which can also be selected and pulled directly from within the application's UI.
+
+Note: the GUI requires native GUI and PDF libraries (see `requirements.txt`) — at minimum `PyQt6` and `PyMuPDF` (fitz) must be installed for the desktop UI and PDF handling to work.
 
 ### 4. Clone the Repository
 ```bash
@@ -70,9 +72,17 @@ The application automatically creates a `settings.ini` file in the root director
     *   `window_width`, `window_height`: Initial dimensions of the application window.
 
 ### 2. Run the Application
+Recommended (initializes logging and application data):
 ```powershell
-python src/gui.py
+python src/main.py
 ```
+
+Direct GUI entry (also runnable):
+```powershell
+python src/ui/gui.py
+```
+
+Running `src/main.py` is preferred because it initializes the centralized logging service, appdata, and theme before creating the GUI window.
 
 ### 3. Workflow:
 *   **Model Selection:** Use the dropdown to select your desired Ollama vision model. If a remote model is chosen, click "Pull Model" to download it.

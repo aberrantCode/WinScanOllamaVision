@@ -1,179 +1,286 @@
 """
 Database schema creation and migrations.
 
-Centralizes all table creation and schema versioning logic.
+Unified schema (Migration 1) - Clean slate representing the final data model.
+All legacy migrations removed for simplicity and maintainability.
 """
 
+import sqlite3
+
 from db.connection import DatabaseConnection
+from services.logging_service import get_logger
+
+logger = get_logger()
+
+# Cache to track which database files have been initialized
+# Key: database file path, Value: schema version
+_schema_initialized: dict[str, int] = {}
 
 
-def create_all_tables(conn: DatabaseConnection) -> None:
+def _execute_sql(cursor: sqlite3.Cursor, query: str, params: tuple = ()) -> sqlite3.Cursor:
+    """
+    Execute SQL with debug logging.
+
+    Args:
+        cursor: Database cursor
+        query: SQL query string
+        params: Query parameters
+
+    Returns:
+        Cursor with results
+    """
+    # Log SQL statement at DEBUG level
+    if params:
+        logger.debug(f"SQL (schema): {query.strip()[:200]}... | Params: {params}")
+    else:
+        # Truncate long CREATE TABLE statements for readability
+        log_query = query.strip()
+        if len(log_query) > 200:
+            log_query = log_query[:200] + "..."
+        logger.debug(f"SQL (schema): {log_query}")
+
+    return cursor.execute(query, params)
+
+
+def create_all_tables(conn: DatabaseConnection, force: bool = False) -> None:
     """
     Create all database tables and indices.
 
+    Uses caching to avoid redundant schema checks per database file.
+    Schema initialization is only run once per database file per application session.
+
     Args:
         conn: Database connection
+        force: Force schema initialization even if cached (default: False)
     """
-    _create_metadata_tables(conn)
-    _create_analysis_tables(conn)
-    _run_migrations(conn)  # Run migrations BEFORE creating indices
-    _create_indices(conn)  # Create indices AFTER migrations complete
+    global _schema_initialized
+
+    # Get database file path for cache key
+    db_path = conn.db_path
+
+    # Check if schema is already initialized for this database
+    if not force and db_path in _schema_initialized:
+        logger.debug(
+            f"Schema already initialized for {db_path} (version {_schema_initialized[db_path]})"
+        )
+        return
+
+    logger.debug(f"Initializing schema for {db_path}")
+
+    # Run full schema initialization
+    _create_core_tables(conn)
+    _create_junction_tables(conn)
+    _run_migrations(conn)  # Apply migrations BEFORE creating indices
+    _create_indices(conn)  # Create indices AFTER migrations (columns exist)
     conn.commit()
 
+    # Cache the schema version to prevent redundant initialization
+    current_version = get_schema_version(conn)
+    _schema_initialized[db_path] = current_version
+    logger.debug(f"Schema initialized for {db_path} (version {current_version})")
 
-def _create_metadata_tables(conn: DatabaseConnection) -> None:
-    """Create metadata-related tables."""
-    assert conn.connection is not None
+
+def _create_core_tables(conn: DatabaseConnection) -> None:
+    """Create core application tables."""
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
     # Schema version tracking
-    cursor.execute("""
+    _execute_sql(
+        cursor,
+        """
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             description TEXT
         )
-    """)
+    """,
+    )
 
-    # Active metadata table (for current processing)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS active_metadata (
+    # Image files - Central registry of all scanned images
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS image_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_path TEXT UNIQUE NOT NULL,
             file_hash TEXT NOT NULL,
+
+            -- File metadata
+            directory_path TEXT NOT NULL,
+            filename TEXT NOT NULL,
             file_size INTEGER NOT NULL,
             file_mtime REAL NOT NULL,
 
-            -- Extracted metadata
-            belongs_to_same_doc BOOLEAN,
-            page_number INTEGER,
-            total_pages INTEGER,
-            page_position TEXT,
-            confidence TEXT,
-
-            company TEXT,
-            document_type TEXT,
-            document_date TEXT,
-
-            -- Additional metadata (stored as JSON for flexibility)
-            additional_data TEXT,
+            -- Lifecycle tracking
+            status TEXT DEFAULT 'registered',
 
             -- Timestamps
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            -- Processing info
-            model_used TEXT,
-            processing_time_ms INTEGER,
-
-            -- Rotation (added via migration)
-            rotation_degrees INTEGER DEFAULT 0
+            discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP
         )
-    """)
+    """,
+    )
 
-    # Archived metadata table (for completed documents)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS archived_metadata (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pdf_path TEXT NOT NULL,
-            pdf_filename TEXT NOT NULL,
-            pdf_created_at TIMESTAMP NOT NULL,
+    # Analysis results - LLM analysis audit trail (provenance only, not metadata)
+    # Check if table exists with old schema and drop it if needed
+    result = cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='analysis_results'"
+    ).fetchone()
 
-            -- Document-level metadata
-            company TEXT,
-            document_type TEXT,
-            document_date TEXT,
-            total_pages INTEGER,
+    if result:
+        # Table exists - check if it has the new schema
+        columns_info = cursor.execute("PRAGMA table_info(analysis_results)").fetchall()
+        columns = [r[1] for r in columns_info]
 
-            -- Source files (stored as JSON array)
-            source_files TEXT NOT NULL,
+        if "image_file_id" not in columns:
+            # Old schema detected - drop and recreate
+            logger.warning(
+                f"Dropping analysis_results table with old schema (columns: {columns[:5]}...)"
+            )
+            # Temporarily disable foreign keys to allow dropping table
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("DROP TABLE IF EXISTS analysis_results")
+            cursor.execute("PRAGMA foreign_keys = ON")
 
-            -- Page metadata (stored as JSON array)
-            pages_metadata TEXT NOT NULL,
-
-            -- Timestamps
-            archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            -- Additional info
-            additional_data TEXT
-        )
-    """)
-
-
-def _create_analysis_tables(conn: DatabaseConnection) -> None:
-    """Create analysis-related tables."""
-    assert conn.connection is not None
-    cursor = conn.connection.cursor()
-
-    # Analysis results - comprehensive page-level metadata
-    cursor.execute("""
+    # Create table with new schema
+    create_analysis_sql = """
         CREATE TABLE IF NOT EXISTS analysis_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT UNIQUE NOT NULL,
-            file_hash TEXT NOT NULL,
 
-            -- Provider information
+            -- Foreign key
+            image_file_id INTEGER NOT NULL,
+
+            -- Provider provenance
             provider_name TEXT NOT NULL,
             model_name TEXT NOT NULL,
+            model_options TEXT,
 
-            -- Comprehensive analysis fields
-            document_type TEXT,
-            company TEXT,
-            document_date TEXT,
-            page_number INTEGER,
-            total_pages INTEGER,
-            belongs_to_same_doc BOOLEAN,
-            confidence_score REAL,
-
-            -- Rotation analysis
-            rotation_needed BOOLEAN DEFAULT 0,
-            suggested_rotation INTEGER DEFAULT 0,
-            rotation_confidence TEXT,
-
-            -- Full LLM response
-            raw_response TEXT,
-
-            -- Extracted metadata (JSON)
+            -- LLM interaction (audit trail)
+            prompt_text TEXT,
+            response_text TEXT NOT NULL,
             extracted_metadata TEXT,
 
-            -- Timestamps
+            -- Analysis quality
+            confidence_score REAL,
+            had_error BOOLEAN DEFAULT 0,
+
+            -- Performance tracking
             analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             processing_time_ms INTEGER,
 
-            -- Cache tracking
-            is_cached BOOLEAN DEFAULT 0,
-            cache_hit_count INTEGER DEFAULT 0
+            FOREIGN KEY (image_file_id) REFERENCES image_files(id) ON DELETE CASCADE
         )
-    """)
+    """
+    _execute_sql(cursor, create_analysis_sql)
 
-    # LLM providers configuration
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS llm_providers (
+    # Metadata - Normalized document metadata (single source of truth)
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS metadata (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            provider_name TEXT UNIQUE NOT NULL,
-            provider_type TEXT NOT NULL,
-            is_active BOOLEAN DEFAULT 0,
 
-            -- Configuration (stored as JSON)
-            config TEXT,
+            -- Foreign Keys
+            image_file_id INTEGER NOT NULL UNIQUE,
+            analysis_result_id INTEGER,
 
-            -- Model information
-            default_model TEXT,
-            available_models TEXT,
+            -- Document Metadata (user-editable)
+            company TEXT,
+            document_type TEXT,
+            document_date TEXT,
+            page_number INTEGER,
+            total_pages INTEGER,
+            belongs_to_same_doc BOOLEAN DEFAULT 0,
+            confidence_score REAL,
+            tax_related BOOLEAN DEFAULT 0,
+            document_category TEXT,
+            is_blank BOOLEAN DEFAULT 0,
 
-            -- Connection info
-            endpoint TEXT,
-            timeout INTEGER,
+            -- Display preferences
+            rotation INTEGER DEFAULT 0,
+            output_filename TEXT,
+
+            -- Provenance
+            user_verified BOOLEAN DEFAULT 0,
+            auto_approved BOOLEAN DEFAULT 1,
+            last_edited_by TEXT DEFAULT 'system',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (image_file_id) REFERENCES image_files(id) ON DELETE CASCADE,
+            FOREIGN KEY (analysis_result_id) REFERENCES analysis_results(id) ON DELETE SET NULL
+        )
+    """,
+    )
+
+    # Document bundles - AI-suggested document groupings
+    # Check if table exists with old schema and drop if needed
+    result = cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='document_bundles'"
+    ).fetchone()
+
+    if result:
+        # Table exists - check if it has old schema (file_paths column)
+        columns_info = cursor.execute("PRAGMA table_info(document_bundles)").fetchall()
+        columns = [r[1] for r in columns_info]
+
+        if "file_paths" in columns:
+            # Old schema detected - drop and recreate
+            logger.warning("Dropping document_bundles table with old schema")
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("DROP TABLE IF EXISTS document_bundles")
+            cursor.execute("PRAGMA foreign_keys = ON")
+
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS document_bundles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bundle_name TEXT,
+
+            -- AI confidence
+            confidence_score REAL,
+            confidence_level TEXT,
+
+            -- Workflow status
+            status TEXT DEFAULT 'suggested',
+            user_action TEXT,
+            action_timestamp TIMESTAMP,
 
             -- Timestamps
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_used_at TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+    """,
+    )
 
-    # Source directories for multi-directory support
-    cursor.execute("""
+    # PDF files - Generated PDF tracking
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS pdf_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pdf_path TEXT UNIQUE NOT NULL,
+            pdf_filename TEXT NOT NULL,
+            file_hash TEXT,
+            file_size INTEGER,
+            page_count INTEGER,
+            bundle_id INTEGER,
+            generation_status TEXT DEFAULT 'completed',
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (bundle_id) REFERENCES document_bundles(id) ON DELETE SET NULL
+        )
+    """,
+    )
+
+    # Source directories - Scan directory configuration
+    _execute_sql(
+        cursor,
+        """
         CREATE TABLE IF NOT EXISTS source_directories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             directory_path TEXT UNIQUE NOT NULL,
@@ -191,60 +298,13 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
             -- Timestamps
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+    """,
+    )
 
-    # Document bundles - AI-generated suggestions
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS document_bundles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bundle_name TEXT,
-
-            -- Bundle metadata
-            company TEXT,
-            document_type TEXT,
-            document_date TEXT,
-            total_pages INTEGER,
-
-            -- Confidence scoring
-            confidence_score REAL,
-            confidence_level TEXT,
-
-            -- File list (JSON array of file paths)
-            file_paths TEXT NOT NULL,
-
-            -- Bundle status
-            status TEXT DEFAULT 'suggested',
-
-            -- PDF generation tracking
-            pdf_path TEXT,
-
-            -- User action tracking
-            user_action TEXT,
-            action_timestamp TIMESTAMP,
-
-            -- Timestamps
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # Rotation preferences - per-file rotation tracking
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS rotation_preferences (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT UNIQUE NOT NULL,
-
-            -- Rotation info
-            rotation_degrees INTEGER NOT NULL,
-            rotation_source TEXT NOT NULL,
-
-            -- Timestamps
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # Audit trail - optional user action tracking
-    cursor.execute("""
+    # Audit trail - User action tracking
+    _execute_sql(
+        cursor,
+        """
         CREATE TABLE IF NOT EXISTS audit_trail (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             action_type TEXT NOT NULL,
@@ -260,212 +320,281 @@ def _create_analysis_tables(conn: DatabaseConnection) -> None:
             -- Timestamp
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+    """,
+    )
 
-    # Analysis errors - track individual file failures
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS analysis_errors (
+
+def _create_junction_tables(conn: DatabaseConnection) -> None:
+    """Create junction tables for many-to-many relationships."""
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
+    cursor = conn.connection.cursor()
+
+    # PDF-Image relationship (many-to-many: one image can be in multiple PDFs)
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS pdf_image_pages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT NOT NULL,
+            pdf_file_id INTEGER NOT NULL,
+            image_file_id INTEGER NOT NULL,
+            page_number INTEGER NOT NULL,
 
-            -- Error details
-            error_message TEXT,
-            error_type TEXT,
-
-            -- Timestamp
-            error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            FOREIGN KEY (pdf_file_id) REFERENCES pdf_files(id) ON DELETE CASCADE,
+            FOREIGN KEY (image_file_id) REFERENCES image_files(id) ON DELETE CASCADE,
+            UNIQUE(pdf_file_id, page_number)
         )
-    """)
+    """,
+    )
+
+    # Bundle-Image relationship (many-to-many: images can be in multiple bundle suggestions)
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS bundle_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bundle_id INTEGER NOT NULL,
+            image_file_id INTEGER NOT NULL,
+            sequence_order INTEGER NOT NULL,
+
+            FOREIGN KEY (bundle_id) REFERENCES document_bundles(id) ON DELETE CASCADE,
+            FOREIGN KEY (image_file_id) REFERENCES image_files(id) ON DELETE CASCADE,
+            UNIQUE(bundle_id, image_file_id),
+            UNIQUE(bundle_id, sequence_order)
+        )
+    """,
+    )
 
 
 def _create_indices(conn: DatabaseConnection) -> None:
     """Create database indices for performance."""
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
-    # Metadata indices
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_active_file_path
-        ON active_metadata(file_path)
-    """)
+    # Image files indices
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_files_path
+        ON image_files(file_path)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_files_status
+        ON image_files(status)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_files_directory
+        ON image_files(directory_path)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_image_files_hash
+        ON image_files(file_hash)
+    """,
+    )
 
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_active_file_hash
-        ON active_metadata(file_hash)
-    """)
-
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_archived_pdf_path
-        ON archived_metadata(pdf_path)
-    """)
-
-    # Analysis indices
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_analysis_file_path
-        ON analysis_results(file_path)
-    """)
-
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_analysis_file_hash
-        ON analysis_results(file_hash)
-    """)
-
-    cursor.execute("""
+    # Analysis results indices
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_analysis_image_file
+        ON analysis_results(image_file_id)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
         CREATE INDEX IF NOT EXISTS idx_analysis_provider
         ON analysis_results(provider_name, model_name)
-    """)
-
-    cursor.execute("""
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
         CREATE INDEX IF NOT EXISTS idx_analysis_confidence
         ON analysis_results(confidence_score)
-    """)
-
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_analysis_company_type
-        ON analysis_results(company, document_type)
-    """)
-
-    cursor.execute("""
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
         CREATE INDEX IF NOT EXISTS idx_analysis_date
         ON analysis_results(analyzed_at DESC)
-    """)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_analysis_errors
+        ON analysis_results(had_error)
+    """,
+    )
+
+    # Metadata indices
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_metadata_image_file
+        ON metadata(image_file_id)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_metadata_analysis_result
+        ON metadata(analysis_result_id)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_metadata_company_type
+        ON metadata(company, document_type)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_metadata_category
+        ON metadata(document_category)
+    """,
+    )
 
     # Bundle indices
-    cursor.execute("""
+    _execute_sql(
+        cursor,
+        """
         CREATE INDEX IF NOT EXISTS idx_bundles_status
         ON document_bundles(status)
-    """)
-
-    cursor.execute("""
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
         CREATE INDEX IF NOT EXISTS idx_bundles_confidence
         ON document_bundles(confidence_level, confidence_score)
-    """)
+    """,
+    )
 
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_bundle_status
-        ON document_bundles(status)
-    """)
+    # PDF files indices
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_pdf_files_path
+        ON pdf_files(pdf_path)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_pdf_files_bundle
+        ON pdf_files(bundle_id)
+    """,
+    )
 
-    # Directory indices
-    cursor.execute("""
+    # Source directories indices
+    _execute_sql(
+        cursor,
+        """
         CREATE INDEX IF NOT EXISTS idx_source_dirs_active
         ON source_directories(is_active)
-    """)
+    """,
+    )
+
+    # Junction table indices
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_pdf_pages_pdf
+        ON pdf_image_pages(pdf_file_id)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_pdf_pages_image
+        ON pdf_image_pages(image_file_id)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_bundle_images_bundle
+        ON bundle_images(bundle_id)
+    """,
+    )
+    _execute_sql(
+        cursor,
+        """
+        CREATE INDEX IF NOT EXISTS idx_bundle_images_image
+        ON bundle_images(image_file_id)
+    """,
+    )
 
 
 def _run_migrations(conn: DatabaseConnection) -> None:
     """Run database migrations to latest version."""
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
 
     # Check current version
-    cursor.execute("SELECT MAX(version) FROM schema_version")
+    _execute_sql(cursor, "SELECT MAX(version) FROM schema_version")
     result = cursor.fetchone()
     current_version = result[0] if result and result[0] is not None else 0
 
-    # Migration 1: Initial schema
+    # Migration 1: Initial unified schema
     if current_version < 1:
-        cursor.execute("""
+        logger.info("Running Migration 1: Create unified schema")
+
+        _execute_sql(
+            cursor,
+            """
             INSERT INTO schema_version (version, description)
-            VALUES (1, 'Initial metadata schema with active and archived tables')
-        """)
+            VALUES (1, 'Unified schema - clean data model with 8 core tables and 2 junction tables')
+        """,
+        )
         conn.commit()
+        logger.info("Migration 1 completed successfully")
         current_version = 1
 
-    # Migration 2: Add rotation_degrees column (if table exists without it)
-    if current_version < 2:
-        # Check if column exists
-        cursor.execute("PRAGMA table_info(active_metadata)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if "rotation_degrees" not in columns:
-            cursor.execute("""
-                ALTER TABLE active_metadata
-                ADD COLUMN rotation_degrees INTEGER DEFAULT 0
-            """)
-        cursor.execute("""
+    # Migration 16: Add is_blank field to metadata table
+    if current_version < 16:
+        logger.info("Running Migration 16: Add is_blank field to metadata table")
+
+        # Check if column already exists (for databases created after this migration)
+        columns_info = cursor.execute("PRAGMA table_info(metadata)").fetchall()
+        column_names = [col[1] for col in columns_info]
+
+        if "is_blank" not in column_names:
+            _execute_sql(
+                cursor,
+                """
+                ALTER TABLE metadata
+                ADD COLUMN is_blank BOOLEAN DEFAULT 0
+            """,
+            )
+            logger.info("Added is_blank column to metadata table")
+
+        _execute_sql(
+            cursor,
+            """
             INSERT INTO schema_version (version, description)
-            VALUES (2, 'Add rotation_degrees column for display-only rotation')
-        """)
+            VALUES (16, 'Add is_blank field to metadata table for blank page detection')
+        """,
+        )
         conn.commit()
-        current_version = 2
-
-    # Migration 3: Remove run tracking (analysis_runs and run_id from analysis_errors)
-    if current_version < 3:
-        # Check if analysis_runs table exists
-        cursor.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='analysis_runs'
-        """)
-        if cursor.fetchone():
-            # Drop analysis_runs table
-            cursor.execute("DROP TABLE IF EXISTS analysis_runs")
-
-        # Check if analysis_errors has run_id column
-        cursor.execute("PRAGMA table_info(analysis_errors)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if "run_id" in columns:
-            # Create new analysis_errors table without run_id
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS analysis_errors_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_path TEXT NOT NULL,
-                    error_message TEXT,
-                    error_type TEXT,
-                    error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Copy existing data (excluding run_id)
-            cursor.execute("""
-                INSERT INTO analysis_errors_new (id, file_path, error_message, error_type, error_at)
-                SELECT id, file_path, error_message, error_type, error_at
-                FROM analysis_errors
-            """)
-
-            # Drop old table and rename new one
-            cursor.execute("DROP TABLE analysis_errors")
-            cursor.execute("ALTER TABLE analysis_errors_new RENAME TO analysis_errors")
-
-        cursor.execute("""
-            INSERT INTO schema_version (version, description)
-            VALUES (3, 'Remove run tracking: drop analysis_runs table and run_id from analysis_errors')
-        """)
-        conn.commit()
-        current_version = 3
-
-    # Migration 4: Add tax_related column to analysis_results
-    if current_version < 4:
-        # Check if column exists
-        cursor.execute("PRAGMA table_info(analysis_results)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if "tax_related" not in columns:
-            cursor.execute("""
-                ALTER TABLE analysis_results
-                ADD COLUMN tax_related BOOLEAN DEFAULT 0
-            """)
-        cursor.execute("""
-            INSERT INTO schema_version (version, description)
-            VALUES (4, 'Add tax_related column for tax document classification')
-        """)
-        conn.commit()
-        current_version = 4
-
-    # Migration 5: Add pdf_path column to document_bundles
-    if current_version < 5:
-        # Check if column exists
-        cursor.execute("PRAGMA table_info(document_bundles)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if "pdf_path" not in columns:
-            cursor.execute("""
-                ALTER TABLE document_bundles
-                ADD COLUMN pdf_path TEXT
-            """)
-        cursor.execute("""
-            INSERT INTO schema_version (version, description)
-            VALUES (5, 'Add pdf_path column to track generated PDF locations')
-        """)
-        conn.commit()
-        current_version = 5
+        logger.info("Migration 16 completed successfully")
+        current_version = 16
 
 
 def get_schema_version(conn: DatabaseConnection) -> int:
@@ -478,8 +607,28 @@ def get_schema_version(conn: DatabaseConnection) -> int:
     Returns:
         Schema version number
     """
-    assert conn.connection is not None
+    if conn.connection is None:
+        raise RuntimeError("Database connection not initialized")
     cursor = conn.connection.cursor()
-    cursor.execute("SELECT MAX(version) FROM schema_version")
+    _execute_sql(cursor, "SELECT MAX(version) FROM schema_version")
     result = cursor.fetchone()
     return result[0] if result and result[0] is not None else 0
+
+
+def clear_schema_cache(db_path: str | None = None) -> None:
+    """
+    Clear schema initialization cache.
+
+    Useful for testing or when forcing schema re-initialization.
+
+    Args:
+        db_path: Specific database path to clear, or None to clear all
+    """
+    global _schema_initialized
+
+    if db_path:
+        _schema_initialized.pop(db_path, None)
+        logger.debug(f"Cleared schema cache for {db_path}")
+    else:
+        _schema_initialized.clear()
+        logger.debug("Cleared all schema cache entries")

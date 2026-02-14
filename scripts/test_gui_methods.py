@@ -1,5 +1,6 @@
 """Test that GUI integration methods exist and can be called."""
 
+import ast
 import sys
 from pathlib import Path
 
@@ -10,12 +11,9 @@ print("Testing GUI integration methods...")
 # We can't actually instantiate ConvertImagesWindow without full Qt app setup
 # But we can verify the methods exist by reading the source
 
-import ast
-import inspect
-
 # Read gui.py
 gui_path = Path(__file__).parent.parent / "src" / "ui" / "gui.py"
-with open(gui_path, "r", encoding="utf-8") as f:
+with open(gui_path, encoding="utf-8") as f:
     gui_source = f.read()
 
 # Parse the AST

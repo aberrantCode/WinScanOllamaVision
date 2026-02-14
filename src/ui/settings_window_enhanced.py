@@ -39,7 +39,11 @@ from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
 from llm_providers.provider_factory import ProviderFactory
+from services.logging_service import get_logger
+from services.prompts import DEFAULT_ANALYSIS_PROMPT
 from ui.styles import show_critical, show_information, show_question, show_warning
+
+logger = get_logger()
 
 
 class ExpandablePromptEdit(QPlainTextEdit):
@@ -195,31 +199,49 @@ class PromptComparisonDialog(QDialog):
 class EnhancedSettingsWindow(QDialog):
     """Enhanced Settings Window with 5-tab interface"""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.config_manager = ConfigManager()
-        self.metadata_db = MetadataDB()
-        self.analysis_db = AnalysisDB()
+    def __init__(self, parent=None, analysis_db=None, metadata_db=None):
+        try:
+            super().__init__(parent)
+            self.config_manager = ConfigManager()
+            # Use shared database instances when provided (no ownership)
+            self._owns_metadata_db = metadata_db is None
+            self._owns_analysis_db = analysis_db is None
+            self.metadata_db = metadata_db if metadata_db is not None else MetadataDB()
+            self.analysis_db = analysis_db if analysis_db is not None else AnalysisDB()
 
-        # Track optimization thread
-        self.optimization_thread = None
-        self.optimization_prompt_edit = None
+            # Track optimization thread
+            self.optimization_thread = None
+            self.optimization_prompt_edit = None
 
-        # Initialize Ollama service (for backward compatibility)
-        timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
-        self.ollama_service = OllamaService(
-            base_url=self.config_manager.get_setting("Ollama", "base_url"), timeout=timeout
-        )
+            # Initialize Ollama service (for backward compatibility)
+            timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
+            self.ollama_service = OllamaService(
+                base_url=self.config_manager.get_setting("Ollama", "base_url"), timeout=timeout
+            )
 
-        app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
-        self.setWindowTitle(f"{app_name} - Settings")
-        icon_path = os.path.join("assets", "icon.png")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+            app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
+            self.setWindowTitle(f"{app_name} - Settings")
+            icon_path = os.path.join("assets", "icon.png")
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
 
-        self.setMinimumWidth(750)
-        self.setMinimumHeight(600)
-        self._init_ui()
+            self.setMinimumWidth(750)
+            self.setMinimumHeight(600)
+
+            logger.debug("Starting _init_ui()...")
+            self._init_ui()
+            logger.debug("Settings window initialized successfully")
+        except Exception as e:
+            logger.error(f"FATAL ERROR in Settings __init__: {e}", exc_info=True)
+            # Show error dialog
+            from ui.styles import show_critical
+
+            show_critical(
+                None,
+                "Settings Window Error",
+                f"Failed to initialize settings window:\n\n{e}\n\nCheck logs for details.",
+            )
+            raise
 
     def closeEvent(self, event):  # noqa: N802
         """Clean up resources when window closes."""
@@ -229,10 +251,20 @@ class EnhancedSettingsWindow(QDialog):
             if self.optimization_thread.isRunning():
                 self.optimization_thread.terminate()
 
-        # Close database connections
-        if hasattr(self, "metadata_db") and self.metadata_db:
+        # Close database connections only if we own them (not injected)
+        if (
+            hasattr(self, "_owns_metadata_db")
+            and self._owns_metadata_db
+            and hasattr(self, "metadata_db")
+            and self.metadata_db
+        ):
             self.metadata_db.close()
-        if hasattr(self, "analysis_db") and self.analysis_db:
+        if (
+            hasattr(self, "_owns_analysis_db")
+            and self._owns_analysis_db
+            and hasattr(self, "analysis_db")
+            and self.analysis_db
+        ):
             self.analysis_db.close()
 
         event.accept()
@@ -1113,6 +1145,12 @@ class EnhancedSettingsWindow(QDialog):
                 QDialog QDialogButtonBox QPushButton {
                     min-width: 80px;
                 }
+                /* Disabled button state - visually distinct */
+                QDialog QDialogButtonBox QPushButton:disabled {
+                    background-color: #2D2D2D !important;
+                    color: #555555 !important;
+                    border: 1px solid #3D3D3D !important;
+                }
             """)
         else:
             self.setStyleSheet("""
@@ -1144,6 +1182,12 @@ class EnhancedSettingsWindow(QDialog):
                 QDialog QDialogButtonBox QPushButton {
                     min-width: 80px;
                 }
+                /* Disabled button state - visually distinct */
+                QDialog QDialogButtonBox QPushButton:disabled {
+                    background-color: #E5E7EB !important;
+                    color: #9CA3AF !important;
+                    border: 1px solid #D1D5DB !important;
+                }
             """)
 
     def _init_ui(self):
@@ -1160,7 +1204,7 @@ class EnhancedSettingsWindow(QDialog):
         self.tabs.addTab(self._create_general_tab(), "General")
         self.tabs.addTab(self._create_llm_provider_tab(), "LLM Provider")
         self.tabs.addTab(self._create_prompts_tab(), "Prompts")
-        self.tabs.addTab(self._create_directories_tab(), "Directories")
+        self.tabs.addTab(self._create_directories_tab(), "Directories & Discovery")
         self.tabs.addTab(self._create_database_tab(), "Database")
         self.tabs.addTab(self._create_appearance_tab(), "Appearance")
 
@@ -1173,6 +1217,118 @@ class EnhancedSettingsWindow(QDialog):
         button_box.accepted.connect(self.save_settings)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+        # Store reference to Save button for enabling/disabling
+        self.save_button = button_box.button(QDialogButtonBox.StandardButton.Save)
+
+        if self.save_button is None:
+            logger.error("Failed to get Save button reference from button box")
+            show_critical(self, "Initialization Error", "Failed to get Save button reference")
+            return
+
+        try:
+            # Initialize change tracking (must be before connecting signals)
+            self._original_values = {}
+            self._tracking_enabled = False  # Temporarily disable tracking during initialization
+
+            logger.debug("Capturing original values...")
+            # Capture original values first
+            self._capture_original_values()
+            logger.debug(f"Captured {len(self._original_values)} original values")
+
+            logger.debug("Connecting change signals...")
+            # Connect signals after capturing values
+            self._connect_change_signals()
+
+            # DON'T enable tracking yet - wait for showEvent to recapture final values
+            # self._tracking_enabled will be set to True in showEvent()
+            if self.save_button:
+                self._update_save_button_style(False)
+                logger.debug(f"Save button initialized: enabled={self.save_button.isEnabled()}")
+        except Exception as e:
+            logger.error(f"Error during change tracking setup: {e}", exc_info=True)
+            show_critical(self, "Initialization Error", f"Failed to setup change tracking:\n\n{e}")
+            raise
+
+    def showEvent(self, event):  # noqa: N802
+        """Override showEvent to load models and then capture final state."""
+        super().showEvent(event)
+
+        # Only do this on first show
+        if not hasattr(self, "_first_show_done"):
+            self._first_show_done = True
+            logger.debug("showEvent: First show - starting async model loading")
+
+            # Keep tracking disabled
+            self._tracking_enabled = False
+
+            # Show loading overlay
+            self._show_loading_overlay()
+
+            # Load models asynchronously to avoid freezing UI
+            from PyQt6.QtCore import QTimer
+
+            def load_models_then_init():
+                try:
+                    # Load all models (using cache, so usually fast)
+                    self._load_ollama_models()
+                    self._load_claude_models()
+                    self._load_gemini_models()
+
+                    logger.debug("showEvent: Models loaded, capturing original values")
+
+                    # Capture final state with all models loaded
+                    self._capture_original_values()
+                    logger.debug(
+                        f"showEvent: Captured {len(self._original_values)} original values"
+                    )
+
+                    # Enable tracking and disable button
+                    self._tracking_enabled = True
+                    if self.save_button:
+                        self._update_save_button_style(False)
+                        logger.debug(
+                            f"showEvent: Button disabled, enabled={self.save_button.isEnabled()}"
+                        )
+                finally:
+                    # Hide loading overlay
+                    self._hide_loading_overlay()
+
+            # Run after a brief moment to let the window render first
+            QTimer.singleShot(50, load_models_then_init)
+
+    def _show_loading_overlay(self):
+        """Show a loading overlay while models are being loaded."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QLabel
+
+        if not hasattr(self, "_loading_overlay"):
+            self._loading_overlay = QLabel("Loading models...", self)
+            self._loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._loading_overlay.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(30, 30, 30, 200);
+                    color: #FFFFFF;
+                    font-size: 14pt;
+                    font-weight: 600;
+                    border-radius: 8px;
+                    padding: 20px;
+                }
+            """)
+            self._loading_overlay.setFixedSize(200, 80)
+
+        # Center the overlay
+        overlay_x = (self.width() - self._loading_overlay.width()) // 2
+        overlay_y = (self.height() - self._loading_overlay.height()) // 2
+        self._loading_overlay.move(overlay_x, overlay_y)
+
+        self._loading_overlay.raise_()
+        self._loading_overlay.show()
+
+    def _hide_loading_overlay(self):
+        """Hide the loading overlay."""
+        if hasattr(self, "_loading_overlay"):
+            self._loading_overlay.hide()
 
     def _create_general_tab(self) -> QWidget:
         """Tab 1: General Settings"""
@@ -1392,11 +1548,8 @@ class EnhancedSettingsWindow(QDialog):
         )
         layout.addWidget(self.ollama_timeout_spin, 2, 1)
 
-        # Load Ollama models asynchronously after window is shown
-        # This prevents the blank window issue during initialization
-        from PyQt6.QtCore import QTimer
-
-        QTimer.singleShot(0, self._load_ollama_models)
+        # Don't load models here - will be loaded from showEvent after initialization
+        # to prevent race conditions with change tracking
 
         return widget
 
@@ -1656,61 +1809,9 @@ If 5 pages provided and pages 3 and 5 don't belong:
             "• confidence_score - LLM's confidence (0.0-1.0)\n\n"
             "Response format must be valid JSON with all fields."
         )
-        metadata_prompt_default = """You are an expert at analyzing scanned documents and extracting comprehensive metadata.
-
-Analyze the provided image(s) and extract the following information:
-
-**Document Identification:**
-1. **company** (string): Organization name from logos, headers, footers, or return addresses. Use null if not found.
-2. **document_type** (string): Document purpose (e.g., Invoice, Statement, Bill, Receipt, Report, Contract, Agreement, Letter). Use null if unclear.
-3. **document_date** (string): Primary date in YYYY-MM-DD format (invoice date, statement date, issue date). Use null if not found.
-4. **tax_related** (boolean): Is this document related to taxes? Look for: W-2, 1099, tax returns, property tax bills, tax receipts, IRS correspondence, deductible expense receipts, tax statements. Set to true if tax-related, false otherwise.
-
-**Page Information:**
-5. **page_number** (integer): Current page number if shown. Use null if not found.
-6. **total_pages** (integer): Total page count if indicated (e.g., "Page 1 of 3"). Use null if not found.
-7. **belongs_to_same_doc** (boolean): Does this SINGLE page show indicators it's likely part of a multi-page document? Look for:
-   - Text starts or ends mid-sentence (incomplete thoughts)
-   - Explicit page indicators ("Page 1 of 3", "Continued on next page")
-   - References to unseen content ("as mentioned above", "see below", "continued from previous page")
-   - Partial tables, lists, or paragraphs that appear cut off
-   - Total page count > 1
-   Set to true if ANY indicators present, false if page appears complete and standalone.
-
-**Image Quality & Rotation:**
-8. **rotation_needed** (boolean): Does the image need rotation to be upright and readable? Check if text appears sideways or upside-down.
-9. **suggested_rotation** (integer): If rotation needed, specify degrees clockwise: 90, 180, or 270. Use 0 if no rotation needed.
-10. **rotation_confidence** (string): Confidence in rotation assessment: "high", "medium", or "low".
-11. **legibility** (string): Image readability: "clear" (easily readable), "degraded" (readable but poor quality), "illegible" (cannot read).
-12. **resolution_assessment** (string): Estimated quality: "high" (300+ DPI), "medium" (150-300 DPI), "low" (<150 DPI), or "unknown".
-
-**Overall Confidence:**
-13. **confidence_score** (float): Your overall confidence in the extracted data (0.0 to 1.0).
-   - 0.9-1.0: Very confident in all fields
-   - 0.7-0.9: Confident in most fields, some uncertainty
-   - 0.5-0.7: Moderate confidence, several unclear fields
-   - 0.0-0.5: Low confidence, many fields unclear or guessed
-
-**IMPORTANT:** Respond ONLY with valid JSON. Use null for any field you cannot determine. Do not include explanations outside the JSON structure.
-
-Example response:
-{
-  "company": "Acme Corporation",
-  "document_type": "Invoice",
-  "document_date": "2024-01-15",
-  "tax_related": false,
-  "page_number": 1,
-  "total_pages": 3,
-  "belongs_to_same_doc": true,
-  "rotation_needed": false,
-  "suggested_rotation": 0,
-  "rotation_confidence": "high",
-  "legibility": "clear",
-  "resolution_assessment": "high",
-  "confidence_score": 0.92
-}"""
+        # Use the single source of truth from prompts module
         metadata_prompt = self.config_manager.get_setting(
-            "Prompts", "document_metadata", metadata_prompt_default
+            "Prompts", "document_metadata", DEFAULT_ANALYSIS_PROMPT
         )
         self.metadata_prompt_edit.setPlainText(metadata_prompt)
         prompts_layout.addWidget(self.metadata_prompt_edit)
@@ -1723,7 +1824,7 @@ Example response:
         optimize_metadata_btn.setObjectName("compactButton")
         reset_metadata_btn = QPushButton("Reset to Default")
         reset_metadata_btn.clicked.connect(
-            lambda: self.metadata_prompt_edit.setPlainText(metadata_prompt_default)
+            lambda: self.metadata_prompt_edit.setPlainText(DEFAULT_ANALYSIS_PROMPT)
         )
         reset_metadata_btn.setObjectName("compactButton")
         metadata_buttons.addWidget(optimize_metadata_btn)
@@ -1738,14 +1839,16 @@ Example response:
         return tab
 
     def _create_directories_tab(self) -> QWidget:
-        """Tab 3: Multi-Directory Management"""
+        """Tab 3: Multi-Directory Management & Discovery"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        info_label = QLabel(
-            "Manage multiple source directories for document scanning.\n"
-            "The application will monitor all listed directories for new documents."
-        )
+        # Section 1: Directory Management
+        dir_section_label = QLabel("📁 Source Directories")
+        dir_section_label.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 5px 0px;")
+        layout.addWidget(dir_section_label)
+
+        info_label = QLabel("Manage directories to monitor for document scanning and discovery.")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
@@ -1760,7 +1863,6 @@ Example response:
             "• Monitor these locations for document processing\n\n"
             "Use Add/Remove buttons to manage the list."
         )
-        # Theme stylesheet handles all styling
 
         # Load existing directories
         directories = self.config_manager.get_directories()
@@ -1796,14 +1898,28 @@ Example response:
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
+        # Add spacing between sections
+        layout.addSpacing(15)
+
+        # Section 2: Discovery & Scheduling
+        discovery_section_label = QLabel("🔍 Discovery & Scheduling")
+        discovery_section_label.setStyleSheet(
+            "font-weight: bold; font-size: 11pt; padding: 5px 0px;"
+        )
+        layout.addWidget(discovery_section_label)
+
+        discovery_info_label = QLabel("Configure automatic file discovery and periodic scheduling.")
+        discovery_info_label.setWordWrap(True)
+        layout.addWidget(discovery_info_label)
+
         # Scan on startup checkbox
-        self.scan_on_startup_checkbox = QCheckBox("Scan all directories on application startup")
+        self.scan_on_startup_checkbox = QCheckBox("Discover files on application startup")
         self.scan_on_startup_checkbox.setToolTip(
-            "Automatically scan directories when the application starts.\n\n"
-            "When enabled: Application will check all monitored directories\n"
-            "for new/changed files on startup and show a summary.\n\n"
-            "When disabled: You must manually click 'Analyze Documents'\n"
-            "to scan directories.\n\n"
+            "Automatically discover new files when the application starts.\n\n"
+            "When enabled: Application will scan all directories for new files\n"
+            "on startup and show a toast notification with the count.\n\n"
+            "When disabled: You must manually click 'Discover Images'\n"
+            "to find new files.\n\n"
             "Recommended: Enabled for frequent document scanning workflows."
         )
         scan_on_startup = self.config_manager.get_setting(
@@ -1811,6 +1927,82 @@ Example response:
         )
         self.scan_on_startup_checkbox.setChecked(scan_on_startup.lower() == "true")
         layout.addWidget(self.scan_on_startup_checkbox)
+
+        # Enable periodic discovery checkbox
+        self.discovery_enabled_checkbox = QCheckBox("Enable periodic discovery (background)")
+        self.discovery_enabled_checkbox.setToolTip(
+            "Automatically discover new image files on a schedule.\n\n"
+            "When enabled: Application will periodically scan directories\n"
+            "and register new files in the background.\n\n"
+            "When disabled: Discovery only runs manually or on startup."
+        )
+        discovery_enabled = self.config_manager.get_bool("Discovery", "enabled", True)
+        self.discovery_enabled_checkbox.setChecked(discovery_enabled)
+        layout.addWidget(self.discovery_enabled_checkbox)
+
+        # Discovery interval
+        interval_layout = QHBoxLayout()
+        interval_label = QLabel("  Discovery interval:")
+        interval_label.setToolTip(
+            "How often to scan for new files.\n\n"
+            "Recommended: 60 minutes for normal use\n"
+            "Lower values increase CPU/disk usage but find new files faster."
+        )
+        interval_layout.addWidget(interval_label)
+
+        self.discovery_interval_spinbox = QSpinBox()
+        self.discovery_interval_spinbox.setRange(1, 1440)  # 1 minute to 24 hours
+        self.discovery_interval_spinbox.setSuffix(" min")
+        discovery_interval = self.config_manager.get_int("Discovery", "interval_minutes", 60)
+        self.discovery_interval_spinbox.setValue(discovery_interval)
+        self.discovery_interval_spinbox.setToolTip(
+            "Time between automatic discovery runs.\n\n"
+            "Range: 1 to 1440 minutes (1 minute to 24 hours)\n"
+            "Default: 60 minutes"
+        )
+        interval_layout.addWidget(self.discovery_interval_spinbox)
+        interval_layout.addStretch()
+        layout.addLayout(interval_layout)
+
+        # Auto-analyze after discovery checkbox
+        self.auto_analyze_checkbox = QCheckBox("Auto-analyze files after discovery")
+        self.auto_analyze_checkbox.setToolTip(
+            "Automatically start LLM analysis after discovering new files.\n\n"
+            "When enabled: Discovery will launch the Analysis window\n"
+            "if new files are found.\n\n"
+            "When disabled: Files are only registered, analysis must be\n"
+            "triggered manually.\n\n"
+            "Recommended: Disabled for manual control over analysis."
+        )
+        auto_analyze = self.config_manager.get_bool(
+            "Discovery", "auto_analyze_after_discovery", False
+        )
+        self.auto_analyze_checkbox.setChecked(auto_analyze)
+        layout.addWidget(self.auto_analyze_checkbox)
+
+        # Last discovery run timestamp (read-only)
+        last_run_layout = QHBoxLayout()
+        last_run_label = QLabel("  Last discovery run:")
+        last_run_layout.addWidget(last_run_label)
+
+        last_run = self.config_manager.get_setting("Discovery", "last_run", "Never")
+        if last_run and last_run != "Never":
+            try:
+                from datetime import datetime
+
+                # Parse ISO format timestamp
+                dt = datetime.fromisoformat(last_run)
+                last_run_display = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                last_run_display = last_run
+        else:
+            last_run_display = "Never"
+
+        self.last_run_value_label = QLabel(last_run_display)
+        self.last_run_value_label.setStyleSheet("color: #666;")
+        last_run_layout.addWidget(self.last_run_value_label)
+        last_run_layout.addStretch()
+        layout.addLayout(last_run_layout)
 
         layout.addStretch()
         return widget
@@ -2182,8 +2374,8 @@ Example response:
                     if now - last_updated < timedelta(hours=24):
                         # Use cached download status
                         downloaded_model_names = set(json.loads(cached_downloaded))
-                        print(
-                            f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %H:%M')})"
+                        logger.debug(
+                            f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                         )
                 except (ValueError, json.JSONDecodeError):
                     pass  # Cache invalid, will refresh
@@ -2204,7 +2396,7 @@ Example response:
                     json.dumps(list(downloaded_model_names)),
                 )
                 self.config_manager.set_setting("ModelCache", "ollama_models_timestamp", timestamp)
-                print(f"Checked Ollama download status at {timestamp}")
+                logger.debug(f"Checked Ollama download status at {timestamp}")
 
             except Exception as e:
                 show_warning(self, "Error", f"Failed to load Ollama models: {e}")
@@ -2412,13 +2604,13 @@ Example response:
                 # Cache is valid - parse and return models
                 models = json.loads(cached_json)
                 if isinstance(models, list) and len(models) > 0:
-                    print(
-                        f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %H:%M')})"
+                    logger.debug(
+                        f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                     )
                     return models
 
         except (ValueError, json.JSONDecodeError) as e:
-            print(f"Error parsing cached {provider} models: {e}")
+            logger.warning(f"Error parsing cached {provider} models: {e}")
 
         return None
 
@@ -2442,7 +2634,7 @@ Example response:
         self.config_manager.set_setting("ModelCache", cache_key, models_json)
         self.config_manager.set_setting("ModelCache", timestamp_key, timestamp)
 
-        print(f"Cached {len(models)} {provider} models at {timestamp}")
+        logger.debug(f"Cached {len(models)} {provider} models at {timestamp}")
 
     def _fetch_claude_models_from_web(self) -> list[str]:
         """Use Claude to search the web for latest vision-capable models"""
@@ -2494,7 +2686,7 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            print(f"Note: Could not fetch Claude models from web: {e}")
+            logger.info(f"Could not fetch Claude models from web: {e}")
 
         # Fallback to curated list
         return [
@@ -2592,7 +2784,7 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            print(f"Note: Could not fetch Gemini models from web: {e}")
+            logger.info(f"Could not fetch Gemini models from web: {e}")
 
         # Fallback to curated list
         return [
@@ -2920,6 +3112,21 @@ Return ONLY the JSON array, no other text."""
                 "true" if self.scan_on_startup_checkbox.isChecked() else "false",
             )
 
+            # Discovery & Scheduler Tab
+            self.config_manager.set_setting(
+                "Discovery",
+                "enabled",
+                "true" if self.discovery_enabled_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "Discovery", "interval_minutes", str(self.discovery_interval_spinbox.value())
+            )
+            self.config_manager.set_setting(
+                "Discovery",
+                "auto_analyze_after_discovery",
+                "true" if self.auto_analyze_checkbox.isChecked() else "false",
+            )
+
             # Appearance Tab
             self.config_manager.set_setting("Theme", "theme", self.theme_combo.currentData())
             png_zoom = self.png_zoom_combo.currentText().lower().replace(" ", "_")
@@ -2946,12 +3153,337 @@ Return ONLY the JSON array, no other text."""
             from ui.styles import show_information
 
             show_information(self, "Settings Saved", "Your settings have been saved successfully.")
+
+            # Recapture original values to reset change tracking
+            self._tracking_enabled = False  # Temporarily disable tracking
+            self._capture_original_values()
+            self._tracking_enabled = True  # Re-enable tracking
+            self._update_save_button_style(False)
+
             self.accept()
 
         except Exception as e:
             from ui.styles import show_critical
 
             show_critical(self, "Save Failed", f"Failed to save settings:\n\n{e}")
+
+    def _capture_original_values(self):
+        """Capture the original values of all input widgets for change tracking."""
+        try:
+            # General tab
+            self._original_values["scan_folder"] = self.scan_folder_edit.text()
+            self._original_values["audit_trail"] = self.audit_trail_checkbox.isChecked()
+            self._original_values["auto_start_analysis"] = (
+                self.auto_start_analysis_checkbox.isChecked()
+            )
+            self._original_values["confirm_exit"] = self.confirm_exit_checkbox.isChecked()
+
+            # LLM Provider tab
+            self._original_values["active_provider"] = self.provider_combo.currentData()
+            self._original_values["ollama_model"] = (
+                self.ollama_model_combo.currentData() or self.ollama_model_combo.currentText()
+            )
+            self._original_values["ollama_url"] = self.ollama_url_edit.text()
+            self._original_values["ollama_timeout"] = self.ollama_timeout_spin.value()
+            self._original_values["claude_model"] = self.claude_model_combo.currentText()
+            self._original_values["claude_command"] = self.claude_command_edit.toPlainText()
+            self._original_values["claude_timeout"] = self.claude_timeout_spin.value()
+            self._original_values["gemini_model"] = self.gemini_model_combo.currentText()
+            self._original_values["gemini_command"] = self.gemini_command_edit.toPlainText()
+            self._original_values["gemini_timeout"] = self.gemini_timeout_spin.value()
+
+            # Prompts tab
+            self._original_values["pages_prompt"] = self.pages_prompt_edit.toPlainText()
+            self._original_values["metadata_prompt"] = self.metadata_prompt_edit.toPlainText()
+
+            # Directories tab
+            directories = []
+            for i in range(self.directories_list.count()):
+                item = self.directories_list.item(i)
+                if item:  # Safety check
+                    directories.append(item.text())
+            self._original_values["directories"] = directories
+            self._original_values["scan_on_startup"] = self.scan_on_startup_checkbox.isChecked()
+
+            # Appearance tab
+            self._original_values["theme"] = self.theme_combo.currentData()
+            self._original_values["png_zoom_mode"] = self.png_zoom_combo.currentText()
+            self._original_values["pdf_zoom_mode"] = self.pdf_zoom_combo.currentText()
+            self._original_values["png_zoom_percent"] = self.png_zoom_percent.value()
+            self._original_values["pdf_zoom_percent"] = self.pdf_zoom_percent.value()
+            self._original_values["minimize_to_tray"] = self.minimize_to_tray_checkbox.isChecked()
+            self._original_values["close_to_tray"] = self.close_to_tray_checkbox.isChecked()
+        except Exception as e:
+            logger.error(f"Error capturing original values: {e}", exc_info=True)
+            # Set empty defaults so the app doesn't crash
+            self._original_values = {}
+
+    def _connect_change_signals(self):
+        """Connect all input widgets to the change detection method."""
+        # General tab
+        self.scan_folder_edit.textChanged.connect(self._check_for_changes)
+        self.audit_trail_checkbox.stateChanged.connect(self._check_for_changes)
+        self.auto_start_analysis_checkbox.stateChanged.connect(self._check_for_changes)
+        self.confirm_exit_checkbox.stateChanged.connect(self._check_for_changes)
+
+        # LLM Provider tab
+        self.provider_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.ollama_model_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.ollama_url_edit.textChanged.connect(self._check_for_changes)
+        self.ollama_timeout_spin.valueChanged.connect(self._check_for_changes)
+        self.claude_model_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.claude_command_edit.textChanged.connect(self._check_for_changes)
+        self.claude_timeout_spin.valueChanged.connect(self._check_for_changes)
+        self.gemini_model_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.gemini_command_edit.textChanged.connect(self._check_for_changes)
+        self.gemini_timeout_spin.valueChanged.connect(self._check_for_changes)
+
+        # Prompts tab
+        self.pages_prompt_edit.textChanged.connect(self._check_for_changes)
+        self.metadata_prompt_edit.textChanged.connect(self._check_for_changes)
+
+        # Directories tab
+        self.directories_list.itemChanged.connect(self._check_for_changes)
+        # Also need to check when items are added/removed
+        self.directories_list.model().rowsInserted.connect(self._check_for_changes)
+        self.directories_list.model().rowsRemoved.connect(self._check_for_changes)
+        self.scan_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
+
+        # Discovery & Scheduler tab
+        self.discovery_enabled_checkbox.stateChanged.connect(self._check_for_changes)
+        self.discovery_interval_spinbox.valueChanged.connect(self._check_for_changes)
+        self.auto_analyze_checkbox.stateChanged.connect(self._check_for_changes)
+
+        # Appearance tab
+        self.theme_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.png_zoom_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.pdf_zoom_combo.currentIndexChanged.connect(self._check_for_changes)
+        self.png_zoom_percent.valueChanged.connect(self._check_for_changes)
+        self.pdf_zoom_percent.valueChanged.connect(self._check_for_changes)
+        self.minimize_to_tray_checkbox.stateChanged.connect(self._check_for_changes)
+        self.close_to_tray_checkbox.stateChanged.connect(self._check_for_changes)
+
+    def _update_save_button_style(self, enabled: bool) -> None:
+        """Update the save button's visual style based on enabled state."""
+        try:
+            if not hasattr(self, "save_button") or not self.save_button:
+                return
+
+            # Debug logging
+            import traceback
+
+            logger.debug(f"_update_save_button_style called with enabled={enabled}")
+            logger.debug(f"Call stack: {''.join(traceback.format_stack()[-3:-1])}")
+
+            current_theme = self.config_manager.get_setting("Theme", "theme", "light")
+
+            if enabled:
+                # Enabled style (use theme colors)
+                if current_theme == "dark":
+                    style = """
+                        QPushButton {
+                            background-color: #2563EB;
+                            color: #FFFFFF;
+                            border: none;
+                            border-radius: 6px;
+                            padding: 8px 16px;
+                            font-size: 10pt;
+                            font-weight: 600;
+                        }
+                        QPushButton:hover {
+                            background-color: #1D4ED8;
+                        }
+                        QPushButton:pressed {
+                            background-color: #1E40AF;
+                        }
+                    """
+                else:
+                    style = """
+                        QPushButton {
+                            background-color: #2563EB;
+                            color: #FFFFFF;
+                            border: none;
+                            border-radius: 6px;
+                            padding: 8px 16px;
+                            font-size: 10pt;
+                            font-weight: 600;
+                        }
+                        QPushButton:hover {
+                            background-color: #1D4ED8;
+                        }
+                        QPushButton:pressed {
+                            background-color: #1E40AF;
+                        }
+                    """
+            else:
+                # Disabled style (grayed out)
+                if current_theme == "dark":
+                    style = """
+                        QPushButton {
+                            background-color: #2D2D2D;
+                            color: #555555;
+                            border: 1px solid #3D3D3D;
+                            border-radius: 6px;
+                            padding: 8px 16px;
+                            font-size: 10pt;
+                            font-weight: 600;
+                        }
+                    """
+                else:
+                    style = """
+                        QPushButton {
+                            background-color: #E5E7EB;
+                            color: #9CA3AF;
+                            border: 1px solid #D1D5DB;
+                            border-radius: 6px;
+                            padding: 8px 16px;
+                            font-size: 10pt;
+                            font-weight: 600;
+                        }
+                    """
+
+            self.save_button.setStyleSheet(style)
+            self.save_button.setEnabled(enabled)
+
+        except Exception as e:
+            logger.error(f"Error updating save button style: {e}", exc_info=True)
+
+    def _check_for_changes(self):
+        """Check if any values have changed from original and enable/disable Save button."""
+        try:
+            # Don't check during initialization
+            if not hasattr(self, "_tracking_enabled") or not self._tracking_enabled:
+                return
+
+            # Safety check: ensure original values are captured
+            if not self._original_values:
+                return
+
+            has_changes = False
+            changed_fields = []
+
+            # General tab
+            if self.scan_folder_edit.text() != self._original_values.get("scan_folder", ""):
+                has_changes = True
+                changed_fields.append(
+                    f"scan_folder: '{self.scan_folder_edit.text()}' != '{self._original_values.get('scan_folder', '')}'"
+                )
+            if self.audit_trail_checkbox.isChecked() != self._original_values.get(
+                "audit_trail", False
+            ):
+                has_changes = True
+            if self.auto_start_analysis_checkbox.isChecked() != self._original_values.get(
+                "auto_start_analysis", False
+            ):
+                has_changes = True
+            if self.confirm_exit_checkbox.isChecked() != self._original_values.get(
+                "confirm_exit", False
+            ):
+                has_changes = True
+
+            # LLM Provider tab
+            if self.provider_combo.currentData() != self._original_values.get(
+                "active_provider", ""
+            ):
+                has_changes = True
+
+            # Fix: Use currentData() if available, otherwise use currentText(), and compare correctly
+            ollama_model_current = (
+                self.ollama_model_combo.currentData()
+                if self.ollama_model_combo.currentData() is not None
+                else self.ollama_model_combo.currentText()
+            )
+            if ollama_model_current != self._original_values.get("ollama_model", ""):
+                has_changes = True
+                changed_fields.append(
+                    f"ollama_model: '{ollama_model_current}' != '{self._original_values.get('ollama_model', '')}'"
+                )
+            if self.ollama_url_edit.text() != self._original_values.get("ollama_url", ""):
+                has_changes = True
+            if self.ollama_timeout_spin.value() != self._original_values.get("ollama_timeout", 0):
+                has_changes = True
+            if self.claude_model_combo.currentText() != self._original_values.get(
+                "claude_model", ""
+            ):
+                has_changes = True
+            if self.claude_command_edit.toPlainText() != self._original_values.get(
+                "claude_command", ""
+            ):
+                has_changes = True
+            if self.claude_timeout_spin.value() != self._original_values.get("claude_timeout", 0):
+                has_changes = True
+            if self.gemini_model_combo.currentText() != self._original_values.get(
+                "gemini_model", ""
+            ):
+                has_changes = True
+            if self.gemini_command_edit.toPlainText() != self._original_values.get(
+                "gemini_command", ""
+            ):
+                has_changes = True
+            if self.gemini_timeout_spin.value() != self._original_values.get("gemini_timeout", 0):
+                has_changes = True
+
+            # Prompts tab
+            if self.pages_prompt_edit.toPlainText() != self._original_values.get(
+                "pages_prompt", ""
+            ):
+                has_changes = True
+            if self.metadata_prompt_edit.toPlainText() != self._original_values.get(
+                "metadata_prompt", ""
+            ):
+                has_changes = True
+
+            # Directories tab
+            current_directories = []
+            for i in range(self.directories_list.count()):
+                item = self.directories_list.item(i)
+                if item:
+                    current_directories.append(item.text())
+            if current_directories != self._original_values.get("directories", []):
+                has_changes = True
+                logger.debug(
+                    f"Directories changed: {current_directories} != {self._original_values.get('directories', [])}"
+                )
+            if self.scan_on_startup_checkbox.isChecked() != self._original_values.get(
+                "scan_on_startup", False
+            ):
+                has_changes = True
+
+            # Appearance tab
+            if self.theme_combo.currentData() != self._original_values.get("theme", ""):
+                has_changes = True
+            if self.png_zoom_combo.currentText() != self._original_values.get("png_zoom_mode", ""):
+                has_changes = True
+            if self.pdf_zoom_combo.currentText() != self._original_values.get("pdf_zoom_mode", ""):
+                has_changes = True
+            if self.png_zoom_percent.value() != self._original_values.get("png_zoom_percent", 0):
+                has_changes = True
+            if self.pdf_zoom_percent.value() != self._original_values.get("pdf_zoom_percent", 0):
+                has_changes = True
+            if self.minimize_to_tray_checkbox.isChecked() != self._original_values.get(
+                "minimize_to_tray", False
+            ):
+                has_changes = True
+            if self.close_to_tray_checkbox.isChecked() != self._original_values.get(
+                "close_to_tray", False
+            ):
+                has_changes = True
+
+            # Log what changed
+            if changed_fields:
+                logger.debug(f"Changes detected in {len(changed_fields)} field(s):")
+                for field in changed_fields:
+                    logger.debug(f"  - {field}")
+            else:
+                logger.debug("No changes detected")
+
+            # Update save button state and style
+            self._update_save_button_style(has_changes)
+        except Exception as e:
+            logger.error(f"Error checking for changes: {e}", exc_info=True)
+            # On error, enable the save button to be safe
+            if hasattr(self, "save_button") and self.save_button:
+                self._update_save_button_style(True)
 
 
 # For backward compatibility, alias to old name
