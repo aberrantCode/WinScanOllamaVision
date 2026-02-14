@@ -156,12 +156,15 @@ class MetadataDB:
         if os.path.exists(self.db_path):
             database_size_mb = os.path.getsize(self.db_path) / (1024 * 1024)
 
-        # Map to expected keys for UI compatibility
+        # Map to expected keys for UI and test compatibility
         return {
             **metadata_stats,
             **archived_stats,
+            # Aliases for backward compatibility
             "active_count": metadata_stats.get("total", 0),
             "archived_count": archived_stats.get("total_pdfs", 0),
+            "active_metadata_count": metadata_stats.get("total", 0),  # Test compatibility
+            "archived_documents_count": archived_stats.get("total_pdfs", 0),  # Test compatibility
             "database_size_mb": database_size_mb,
         }
 
@@ -215,7 +218,7 @@ class MetadataDB:
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT DISTINCT company
-            FROM active_metadata
+            FROM metadata
             WHERE company IS NOT NULL AND company != ''
             ORDER BY company
         """)
@@ -235,7 +238,7 @@ class MetadataDB:
         cursor = self.connection.connection.cursor()
         cursor.execute("""
             SELECT DISTINCT document_type
-            FROM active_metadata
+            FROM metadata
             WHERE document_type IS NOT NULL AND document_type != ''
             ORDER BY document_type
         """)

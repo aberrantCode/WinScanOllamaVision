@@ -36,27 +36,42 @@ class RotationRepository:
         # Normalize rotation to 0-359 range
         rotation_degrees = rotation_degrees % 360
 
-        # Compute file properties
-        file_hash = self._compute_file_hash(file_path)
-        file_size = os.path.getsize(file_path)
-        file_mtime = os.path.getmtime(file_path)
+        # Get or create image_file entry
+        image_file_id = self.conn.fetch_one(
+            "SELECT id FROM image_files WHERE file_path = ?",
+            (file_path,),
+        )
 
+        if not image_file_id:
+            # Register the file first
+            file_hash = self._compute_file_hash(file_path)
+            file_size = os.path.getsize(file_path)
+            file_mtime = os.path.getmtime(file_path)
+            directory_path = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+
+            self.conn.execute(
+                """
+                INSERT INTO image_files (file_path, file_hash, directory_path, filename, file_size, file_mtime)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (file_path, file_hash, directory_path, filename, file_size, file_mtime),
+            )
+            image_file_id_result = self.conn.fetch_one("SELECT last_insert_rowid()")
+            image_file_id = image_file_id_result[0] if image_file_id_result else None
+        else:
+            image_file_id = image_file_id[0]
+
+        # Insert or update metadata with rotation
         self.conn.execute(
             """
-            INSERT INTO active_metadata (file_path, file_hash, file_size, file_mtime, rotation_degrees)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(file_path) DO UPDATE SET
-                rotation_degrees = ?,
+            INSERT INTO metadata (image_file_id, rotation)
+            VALUES (?, ?)
+            ON CONFLICT(image_file_id) DO UPDATE SET
+                rotation = ?,
                 updated_at = CURRENT_TIMESTAMP
         """,
-            (
-                file_path,
-                file_hash,
-                file_size,
-                file_mtime,
-                rotation_degrees,
-                rotation_degrees,
-            ),
+            (image_file_id, rotation_degrees, rotation_degrees),
         )
         self.conn.commit()
 
@@ -71,7 +86,12 @@ class RotationRepository:
             Rotation angle in degrees (0, 90, 180, or 270), or 0 if not found
         """
         result = self.conn.fetch_one(
-            "SELECT rotation_degrees FROM active_metadata WHERE file_path = ?",
+            """
+            SELECT m.rotation
+            FROM metadata m
+            JOIN image_files img ON m.image_file_id = img.id
+            WHERE img.file_path = ?
+        """,
             (file_path,),
         )
 

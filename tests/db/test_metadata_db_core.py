@@ -56,10 +56,11 @@ class TestMetadataDBCore:
         tables = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         table_names = [table[0] for table in tables]
 
-        # Assert
+        # Assert - Check for new schema table names
         assert "schema_version" in table_names
-        assert "active_metadata" in table_names
-        assert "archived_metadata" in table_names
+        assert "image_files" in table_names
+        assert "metadata" in table_names  # Replaces active_metadata
+        assert "pdf_files" in table_names  # Archived documents
 
     def test_compute_file_hash_returns_consistent_hash(self, temp_file):
         # Act
