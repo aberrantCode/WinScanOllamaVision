@@ -62,6 +62,44 @@ class AnalysisService:
             self.provider = ProviderFactory.create_from_config_manager(self.config)
         return self.provider
 
+    def analyze_single_file(self, file_path: str, force_reanalysis: bool = False) -> dict[str, Any]:
+        """
+        Analyze a single file (public interface for on-demand re-analysis).
+
+        Args:
+            file_path: Path to image file
+            force_reanalysis: If True, bypass cache and force fresh analysis
+
+        Returns:
+            Dictionary with analysis result
+
+        Raises:
+            TypeError: If arguments are not of expected types
+            ValueError: If file_path is empty or invalid extension
+            FileNotFoundError: If file does not exist
+        """
+        # Validate inputs
+        if not isinstance(file_path, str):
+            raise TypeError(f"file_path must be str, got {type(file_path).__name__}")
+        if not file_path or not file_path.strip():
+            raise ValueError("file_path cannot be empty")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File does not exist: {file_path}")
+        if not isinstance(force_reanalysis, bool):
+            raise TypeError(f"force_reanalysis must be bool, got {type(force_reanalysis).__name__}")
+
+        # Validate file extension
+        valid_extensions = {".png", ".jpg", ".jpeg"}
+        file_ext = os.path.splitext(file_path)[1].lower()
+        if file_ext not in valid_extensions:
+            raise ValueError(
+                f"Invalid file extension '{file_ext}'. "
+                f"Supported extensions: {', '.join(valid_extensions)}"
+            )
+
+        # Analyze the file (incremental=False means bypass cache)
+        return self._analyze_single_page(file_path, incremental=not force_reanalysis)
+
     def scan_all_directories(
         self,
         progress_callback: Callable[[str, int, int], None] | None = None,

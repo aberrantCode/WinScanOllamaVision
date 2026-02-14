@@ -14,6 +14,19 @@ from .base_provider import BaseLLMProvider
 from .command_builder import CommandBuilder
 
 
+def _get_logger():
+    """Lazy logger initialization to avoid circular imports"""
+    try:
+        from services.logging_service import get_logger
+
+        return get_logger()
+    except Exception:
+        # Fallback to basic logging if service not initialized
+        import logging
+
+        return logging.getLogger(__name__)
+
+
 class ClaudeCliProvider(BaseLLMProvider):
     """Claude CLI provider implementation"""
 
@@ -60,11 +73,12 @@ class ClaudeCliProvider(BaseLLMProvider):
                 prompt=prompt,
             )
 
-            print("\n=== DEBUG: Claude CLI Request ===")
-            print(f"Command: {command}")
-            print(f"Model: {model_to_use}")
-            print(f"Images: {len(image_paths)}")
-            print("=================================\n")
+            _get_logger().debug(
+                "Claude CLI Request - Command: %s, Model: %s, Images: %d",
+                command,
+                model_to_use,
+                len(image_paths),
+            )
 
             # Parse command into argument list to avoid shell injection
             args = shlex.split(command, posix=(sys.platform != "win32"))
@@ -99,10 +113,11 @@ class ClaudeCliProvider(BaseLLMProvider):
                 # If not valid JSON, return raw content
                 metadata = {"raw_content": response_text}
 
-            print("\n=== DEBUG: Claude CLI Response ===")
-            print(f"Response length: {len(response_text)} chars")
-            print(f"Processing time: {processing_time_ms}ms")
-            print("==================================\n")
+            _get_logger().debug(
+                "Claude CLI Response - Length: %d chars, Processing time: %dms",
+                len(response_text),
+                processing_time_ms,
+            )
 
             return {
                 "response": response_text,
@@ -115,23 +130,36 @@ class ClaudeCliProvider(BaseLLMProvider):
 
         except subprocess.TimeoutExpired:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[CLAUDE CLI] Timeout after {self.timeout}s")
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": f"Command timed out after {self.timeout} seconds",
+                "error": f"Claude CLI timed out after {self.timeout}s. Try increasing timeout in settings.",
+            }
+        except FileNotFoundError:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error("[CLAUDE CLI] Command not found - Claude CLI may not be installed")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": "Claude CLI not found. Install Claude CLI and ensure it's in your PATH.",
             }
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[CLAUDE CLI] Unexpected error: {e}", exc_info=True)
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": str(e),
+                "error": f"Claude CLI error: {e}",
             }
 
     def get_available_models(self) -> list[str]:
@@ -145,10 +173,10 @@ class ClaudeCliProvider(BaseLLMProvider):
 
     def test_connection(self) -> bool:
         """
-        Test Claude CLI availability.
+        Test Claude CLI availability with error handling.
 
         Returns:
-            True if CLI is available
+            True if connection successful, False otherwise
         """
         try:
             # Try to run 'claude --version' or similar check
@@ -160,7 +188,14 @@ class ClaudeCliProvider(BaseLLMProvider):
                 timeout=10,
             )
             return result.returncode == 0
-        except Exception:
+        except FileNotFoundError:
+            _get_logger().warning("[CLAUDE CLI] Connection test failed: command not found")
+            return False
+        except subprocess.TimeoutExpired:
+            _get_logger().warning("[CLAUDE CLI] Connection test failed: timeout")
+            return False
+        except Exception as e:
+            _get_logger().error(f"[CLAUDE CLI] Unexpected error during connection test: {e}")
             return False
 
     def validate_config(self) -> tuple[bool, str | None]:

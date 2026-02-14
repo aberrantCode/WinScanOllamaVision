@@ -13,6 +13,19 @@ from llm_providers.ollama_service import OllamaService
 from .base_provider import BaseLLMProvider
 
 
+def _get_logger():
+    """Lazy logger initialization to avoid circular imports"""
+    try:
+        from services.logging_service import get_logger
+
+        return get_logger()
+    except Exception:
+        # Fallback to basic logging if service not initialized
+        import logging
+
+        return logging.getLogger(__name__)
+
+
 class OllamaProvider(BaseLLMProvider):
     """Ollama LLM provider implementation"""
 
@@ -81,17 +94,44 @@ class OllamaProvider(BaseLLMProvider):
                 "metadata": metadata,
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
+                "provider_name": "ollama",
                 "success": True,
                 "error": None,
             }
 
-        except Exception as e:
+        except ConnectionError as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[OLLAMA PROVIDER] Connection error during analysis: {e}")
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
+                "provider_name": "ollama",
+                "success": False,
+                "error": str(e),
+            }
+        except TimeoutError as e:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[OLLAMA PROVIDER] Timeout during analysis: {e}")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "provider_name": "ollama",
+                "success": False,
+                "error": str(e),
+            }
+        except Exception as e:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[OLLAMA PROVIDER] Unexpected error during analysis: {e}")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "provider_name": "ollama",
                 "success": False,
                 "error": str(e),
             }
@@ -115,21 +155,28 @@ class OllamaProvider(BaseLLMProvider):
         try:
             models = self.service.list_models()
             return [model["name"] for model in models]
+        except ConnectionError as e:
+            _get_logger().error(f"[OLLAMA PROVIDER] Connection error listing models: {e}")
+            return []
         except Exception as e:
-            print(f"Error listing Ollama models: {e}")
+            _get_logger().error(f"[OLLAMA PROVIDER] Unexpected error listing models: {e}")
             return []
 
     def test_connection(self) -> bool:
         """
-        Test Ollama server connection.
+        Test Ollama server connection with error handling.
 
         Returns:
-            True if connected successfully
+            True if connection successful, False otherwise
         """
         try:
             self.service.list_models()
             return True
-        except Exception:
+        except ConnectionError as e:
+            _get_logger().warning(f"[OLLAMA] Connection test failed: {e}")
+            return False
+        except Exception as e:
+            _get_logger().error(f"[OLLAMA] Unexpected error during connection test: {e}")
             return False
 
     def validate_config(self) -> tuple[bool, str | None]:

@@ -1,7 +1,21 @@
 import configparser
 import json
 import os
+import shutil
 from typing import Any, cast
+
+
+def _get_logger():
+    """Lazy logger initialization to avoid circular imports"""
+    try:
+        from services.logging_service import get_logger
+
+        return get_logger()
+    except Exception:
+        # Fallback to basic logging if service not initialized
+        import logging
+
+        return logging.getLogger(__name__)
 
 
 class ConfigManager:
@@ -19,9 +33,48 @@ class ConfigManager:
         self.config = configparser.ConfigParser(interpolation=None)
         self._load_config()
 
+    def _check_disk_space(self, file_path: str, required_bytes: int) -> bool:
+        """
+        Check if sufficient disk space is available.
+
+        Args:
+            file_path: Path to check disk space for
+            required_bytes: Minimum bytes required
+
+        Returns:
+            True if sufficient space (with 2x safety margin), False otherwise
+        """
+        try:
+            dir_path = os.path.dirname(file_path) or "."
+            usage = shutil.disk_usage(dir_path)
+            available = usage.free
+            return available > required_bytes * 2  # 2x safety margin
+        except Exception:
+            # If check fails, assume sufficient space (fail open)
+            return True
+
     def _load_config(self):
+        """
+        Load configuration from file, handling corrupted files gracefully.
+
+        If config file is corrupted, backs it up and creates defaults.
+        """
         if os.path.exists(self.config_file):
-            self.config.read(self.config_file)
+            try:
+                self.config.read(self.config_file)
+                _get_logger().info(f"Loaded config from {self.config_file}")
+            except configparser.Error as e:
+                _get_logger().error(f"[CONFIG] Malformed config: {self.config_file} - {e}")
+                # Backup corrupted file
+                backup = f"{self.config_file}.corrupted"
+                shutil.copy2(self.config_file, backup)
+                _get_logger().info(f"[CONFIG] Backed up corrupted config to: {backup}")
+                # Create defaults
+                self._create_default_config()
+                _get_logger().info("[CONFIG] Created new default configuration")
+                self._save_config()
+                return
+
             # Ensure all default sections exist (for config files created before new providers added)
             self._create_default_config()
             self._save_config()
@@ -131,8 +184,45 @@ class ConfigManager:
             }
 
     def _save_config(self):
-        with open(self.config_file, "w") as configfile:
-            self.config.write(configfile)
+        """
+        Save configuration to file with atomic write and backup.
+
+        Raises:
+            PermissionError: If config file cannot be written
+            OSError: If file operations fail or disk is full
+        """
+        # Estimate config file size (typically <10KB, use 50KB as safe estimate)
+        estimated_size = 50 * 1024  # 50KB
+
+        # Check disk space before writing
+        if not self._check_disk_space(self.config_file, estimated_size):
+            _get_logger().error(
+                f"[CONFIG] Insufficient disk space to save config: {self.config_file}"
+            )
+            raise OSError(
+                f"Insufficient disk space to save configuration. "
+                f"At least {estimated_size * 2} bytes required."
+            )
+
+        try:
+            # Atomic write: write to temp file first
+            temp_file = f"{self.config_file}.tmp"
+            with open(temp_file, "w") as configfile:
+                self.config.write(configfile)
+
+            # Create backup if original exists
+            if os.path.exists(self.config_file):
+                shutil.copy2(self.config_file, f"{self.config_file}.backup")
+
+            # Move temp to actual location
+            shutil.move(temp_file, self.config_file)
+            _get_logger().debug(f"[CONFIG] Saved configuration to {self.config_file}")
+        except PermissionError as e:
+            _get_logger().error(f"[CONFIG] Permission denied: {self.config_file}")
+            raise PermissionError(f"Cannot save configuration: {self.config_file}") from e
+        except OSError as e:
+            _get_logger().error(f"[CONFIG] Failed to save: {e}")
+            raise OSError(f"Failed to save configuration: {e}") from e
 
     def _reload_config(self):
         """Reload configuration from disk to pick up external changes"""
@@ -232,9 +322,43 @@ class ConfigManager:
         return value.lower() in ("true", "1", "yes", "on")
 
     def get_int(self, section: str, key: str, default: int = 0) -> int:
-        """Get an integer setting"""
+        """
+        Get an integer setting with validation.
+
+        Args:
+            section: Config section name
+            key: Setting key
+            default: Default value if not found or invalid
+
+        Returns:
+            Integer value or default if invalid
+        """
         value = self.get_setting(section, key, str(default))
         try:
             return int(value)
         except ValueError:
+            _get_logger().warning(
+                f"[CONFIG] Invalid integer [{section}] {key}='{value}', using default {default}"
+            )
+            return default
+
+    def get_float(self, section: str, key: str, default: float = 0.0) -> float:
+        """
+        Get a float setting with validation.
+
+        Args:
+            section: Config section name
+            key: Setting key
+            default: Default value if not found or invalid
+
+        Returns:
+            Float value or default if invalid
+        """
+        value = self.get_setting(section, key, str(default))
+        try:
+            return float(value)
+        except ValueError:
+            _get_logger().warning(
+                f"[CONFIG] Invalid float [{section}] {key}='{value}', using default {default}"
+            )
             return default

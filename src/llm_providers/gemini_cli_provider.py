@@ -14,6 +14,19 @@ from .base_provider import BaseLLMProvider
 from .command_builder import CommandBuilder
 
 
+def _get_logger():
+    """Lazy logger initialization to avoid circular imports"""
+    try:
+        from services.logging_service import get_logger
+
+        return get_logger()
+    except Exception:
+        # Fallback to basic logging if service not initialized
+        import logging
+
+        return logging.getLogger(__name__)
+
+
 class GeminiCliProvider(BaseLLMProvider):
     """Gemini CLI provider implementation"""
 
@@ -60,11 +73,12 @@ class GeminiCliProvider(BaseLLMProvider):
                 prompt=prompt,
             )
 
-            print("\n=== DEBUG: Gemini CLI Request ===")
-            print(f"Command: {command}")
-            print(f"Model: {model_to_use}")
-            print(f"Images: {len(image_paths)}")
-            print("=================================\n")
+            _get_logger().debug(
+                "Gemini CLI Request - Command: %s, Model: %s, Images: %d",
+                command,
+                model_to_use,
+                len(image_paths),
+            )
 
             # Parse command into argument list to avoid shell injection
             args = shlex.split(command, posix=(sys.platform != "win32"))
@@ -99,10 +113,11 @@ class GeminiCliProvider(BaseLLMProvider):
                 # If not valid JSON, return raw content
                 metadata = {"raw_content": response_text}
 
-            print("\n=== DEBUG: Gemini CLI Response ===")
-            print(f"Response length: {len(response_text)} chars")
-            print(f"Processing time: {processing_time_ms}ms")
-            print("===================================\n")
+            _get_logger().debug(
+                "Gemini CLI Response - Length: %d chars, Processing time: %dms",
+                len(response_text),
+                processing_time_ms,
+            )
 
             return {
                 "response": response_text,
@@ -115,23 +130,36 @@ class GeminiCliProvider(BaseLLMProvider):
 
         except subprocess.TimeoutExpired:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[GEMINI CLI] Timeout after {self.timeout}s")
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": f"Command timed out after {self.timeout} seconds",
+                "error": f"Gemini CLI timed out after {self.timeout}s. Try increasing timeout in settings.",
+            }
+        except FileNotFoundError:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error("[GEMINI CLI] Command not found - Gemini CLI may not be installed")
+            return {
+                "response": "",
+                "metadata": {},
+                "processing_time_ms": processing_time_ms,
+                "model_used": model_to_use,
+                "success": False,
+                "error": "Gemini CLI not found. Install Gemini CLI and ensure it's in your PATH.",
             }
         except Exception as e:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            _get_logger().error(f"[GEMINI CLI] Unexpected error: {e}", exc_info=True)
             return {
                 "response": "",
                 "metadata": {},
                 "processing_time_ms": processing_time_ms,
                 "model_used": model_to_use,
                 "success": False,
-                "error": str(e),
+                "error": f"Gemini CLI error: {e}",
             }
 
     def get_available_models(self) -> list[str]:
@@ -145,10 +173,10 @@ class GeminiCliProvider(BaseLLMProvider):
 
     def test_connection(self) -> bool:
         """
-        Test Gemini CLI availability.
+        Test Gemini CLI availability with error handling.
 
         Returns:
-            True if CLI is available
+            True if connection successful, False otherwise
         """
         try:
             # Try to run 'gemini --version' or similar check
@@ -160,7 +188,14 @@ class GeminiCliProvider(BaseLLMProvider):
                 timeout=10,
             )
             return result.returncode == 0
-        except Exception:
+        except FileNotFoundError:
+            _get_logger().warning("[GEMINI CLI] Connection test failed: command not found")
+            return False
+        except subprocess.TimeoutExpired:
+            _get_logger().warning("[GEMINI CLI] Connection test failed: timeout")
+            return False
+        except Exception as e:
+            _get_logger().error(f"[GEMINI CLI] Unexpected error during connection test: {e}")
             return False
 
     def validate_config(self) -> tuple[bool, str | None]:
