@@ -6,6 +6,8 @@ Logs are stored in the user's AppData directory.
 
 import logging
 import os
+import sys
+import tempfile
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
@@ -59,10 +61,22 @@ class LoggingService:
         log_dir = os.path.join(appdata_root, app_name, "logs")
 
         # Create log directory if it doesn't exist
-        os.makedirs(log_dir, exist_ok=True)
-
-        # Set log file path
-        self.log_file_path = os.path.join(log_dir, "app.log")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except PermissionError:
+            # Fallback to temp directory if AppData is not accessible
+            log_dir = tempfile.gettempdir()
+            self.log_file_path = os.path.join(log_dir, "WinScanLLM_app.log")
+            print(
+                f"WARNING: Cannot access AppData. Using temp directory for logs: {log_dir}",
+                file=sys.stderr,
+            )
+        except OSError as e:
+            print(f"CRITICAL: Cannot initialize logging directory: {e}", file=sys.stderr)
+            raise RuntimeError(f"Failed to initialize logging service: {e}") from e
+        else:
+            # Set log file path (only if makedirs succeeded)
+            self.log_file_path = os.path.join(log_dir, "app.log")
 
         # Create logger
         self.logger = logging.getLogger(app_name)
@@ -71,22 +85,37 @@ class LoggingService:
         # Remove any existing handlers
         self.logger.handlers.clear()
 
-        # Create rotating file handler
-        file_handler = RotatingFileHandler(
-            self.log_file_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
-        )
-        file_handler.setLevel(log_level)
-
         # Create formatter
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
-        file_handler.setFormatter(formatter)
 
-        # Add file handler
-        self.logger.addHandler(file_handler)
+        # Try to create rotating file handler
+        file_handler_created = False
+        try:
+            file_handler = RotatingFileHandler(
+                self.log_file_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+            )
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+            file_handler_created = True
+        except PermissionError:
+            # Fallback to console-only logging if file handler fails
+            print(
+                "WARNING: Cannot write to log file. Using console-only logging.",
+                file=sys.stderr,
+            )
+            console_output = True  # Force console output
+        except OSError as e:
+            # Fallback to console-only logging for other file errors
+            print(
+                f"WARNING: Cannot create log file handler: {e}. Using console-only logging.",
+                file=sys.stderr,
+            )
+            console_output = True  # Force console output
 
-        # Optionally add console handler
+        # Optionally add console handler (or fallback if file handler failed)
         if console_output:
             console_handler = logging.StreamHandler()
             # Use console_level if specified, otherwise use file log_level
@@ -94,12 +123,28 @@ class LoggingService:
             console_handler.setLevel(handler_level)
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
-            self.logger.info(
-                f"Console logging enabled at level {logging.getLevelName(handler_level)}"
-            )
+
+            if file_handler_created:
+                self.logger.info(
+                    f"Console logging enabled at level {logging.getLevelName(handler_level)}"
+                )
+            else:
+                # Only console handler available (fallback mode)
+                self.logger.warning(
+                    "Running in console-only logging mode (file logging unavailable)"
+                )
 
         # Log initialization
-        self.logger.info(f"Logging service initialized. Log file: {self.log_file_path}")
+        if file_handler_created:
+            self.logger.info(f"Logging service initialized. Log file: {self.log_file_path}")
+        elif console_output:
+            self.logger.info("Logging service initialized (console-only mode)")
+        else:
+            # No handlers were created - this should not happen but handle gracefully
+            print(
+                "ERROR: No logging handlers could be created. Application may not log properly.",
+                file=sys.stderr,
+            )
 
     def get_logger(self) -> logging.Logger:
         """
