@@ -3,6 +3,7 @@ Toast Notifier
 Windows toast notification utility for discovery events.
 """
 
+import contextlib
 import logging
 import os
 import sys
@@ -53,14 +54,18 @@ class ToastNotifier:
         """
         # Check if running on Windows
         if sys.platform != "win32":
-            self._get_logger().debug("[TOAST] Not running on Windows, toasts disabled")
+            # LoggingService not initialized yet (during tests)
+            with contextlib.suppress(RuntimeError):
+                self._get_logger().debug("[TOAST] Not running on Windows, toasts disabled")
             return False
 
         if not WINDOWS_TOASTS_AVAILABLE:
-            self._get_logger().warning(
-                "[TOAST] windows-toasts not installed, toasts disabled. "
-                "Install with: pip install windows-toasts"
-            )
+            # LoggingService not initialized yet (during tests)
+            with contextlib.suppress(RuntimeError):
+                self._get_logger().warning(
+                    "[TOAST] windows-toasts not installed, toasts disabled. "
+                    "Install with: pip install windows-toasts"
+                )
             return False
 
         return True
