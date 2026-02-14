@@ -311,9 +311,14 @@ class AnalysisDB:
         cursor.execute("SELECT COUNT(*) FROM analysis_results")
         total_analyzed = cursor.fetchone()[0]
 
-        # Cached analyses
-        cursor.execute("SELECT COUNT(*) FROM analysis_results WHERE is_cached = 1")
-        cached_count = cursor.fetchone()[0]
+        # Cached analyses (files with multiple analysis results)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT image_file_id)
+            FROM analysis_results
+            GROUP BY image_file_id
+            HAVING COUNT(*) > 1
+        """)
+        cached_count = len(cursor.fetchall())
 
         # Average processing time
         cursor.execute(
@@ -328,12 +333,16 @@ class AnalysisDB:
         cursor.execute("SELECT COUNT(*) FROM document_bundles WHERE status = 'accepted'")
         accepted_bundles = cursor.fetchone()[0]
 
-        # Provider count
-        cursor.execute("SELECT COUNT(*) FROM llm_providers")
+        # Provider count (distinct providers used in analyses)
+        cursor.execute("SELECT COUNT(DISTINCT provider_name) FROM analysis_results")
         total_providers = cursor.fetchone()[0]
 
-        # Active provider
-        active_provider = self.get_active_provider()
+        # Active provider (from config, not database)
+        try:
+            active_provider = self.get_active_provider()
+        except Exception:
+            # llm_providers table may not exist in older schemas
+            active_provider = None
 
         # Active directories
         cursor.execute("SELECT COUNT(*) FROM source_directories WHERE is_active = 1")

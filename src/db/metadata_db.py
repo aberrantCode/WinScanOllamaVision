@@ -124,13 +124,24 @@ class MetadataDB:
 
     def get_statistics(self) -> dict[str, Any]:
         """Get database statistics."""
+        import os
+
         # Combine statistics from both metadata and archived repositories
         metadata_stats = self._metadata.get_stats()
         archived_stats = self._archived.get_statistics()
 
+        # Calculate database size
+        database_size_mb = 0.0
+        if os.path.exists(self.db_path):
+            database_size_mb = os.path.getsize(self.db_path) / (1024 * 1024)
+
+        # Map to expected keys for UI compatibility
         return {
             **metadata_stats,
             **archived_stats,
+            "active_count": metadata_stats.get("total", 0),
+            "archived_count": archived_stats.get("total_pdfs", 0),
+            "database_size_mb": database_size_mb,
         }
 
     def cleanup_orphaned_metadata(self) -> int:
