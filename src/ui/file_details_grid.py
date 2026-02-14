@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QColor, QFont, QPainter, QPixmap, QTransform
+from PyQt6.QtGui import QAction, QColor, QFont, QPixmap, QTransform
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -35,15 +35,13 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QTableView,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from ui.image_preview_widget import ImagePreviewWidget, ToolbarSize, ToolbarPosition
-from ui.pannable_image_label import PannableImageLabel
+from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 
 
 class FileDetailsTableModel(QAbstractTableModel):
@@ -62,6 +60,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("document_type", "Type", True),
         ("document_date", "Date", True),
         ("tax_related", "Tax Related", True),
+        ("is_blank", "Is Blank", True),
         ("page_number", "Page", True),
         ("total_pages", "Total", True),
         ("rotation", "Rotation", True),
@@ -185,7 +184,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             return self._format_datetime(value)
         elif col_key == "processing_duration":
             return self._format_duration(value)
-        elif col_key in ("cache_hit", "tax_related"):
+        elif col_key in ("cache_hit", "tax_related", "is_blank"):
             return "Yes" if value else "No"
         elif col_key == "rotation":
             # Display rotation as degrees (0°, 90°, 180°, 270°)
@@ -268,7 +267,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "rotation",
         ):
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        elif col_key in ("cache_hit", "tax_related"):
+        elif col_key in ("cache_hit", "tax_related", "is_blank"):
             return Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
         return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
@@ -282,6 +281,7 @@ class FileDetailsTableModel(QAbstractTableModel):
             "document_type": "Type of document (Invoice, Receipt, etc.)",
             "document_date": "Date extracted from document",
             "tax_related": "Whether document is related to taxes (W-2, 1099, tax returns, etc.)",
+            "is_blank": "Whether the page appears to be blank or has no significant content",
             "page_number": "Page number (if detected)",
             "total_pages": "Total pages in document (if detected)",
             "rotation": "Suggested rotation in degrees (0, 90, 180, 270)",
@@ -452,20 +452,24 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
             return status == "Failed" or bool(error_msg)
 
         elif self._quick_filter == "missing_metadata":
-            # Check if any key metadata field is missing or N/A
+            # Check if BOTH company AND date are missing (at least one of these must be present)
             company = row_data.get("company", "")
-            document_type = row_data.get("document_type", "")
             document_date = row_data.get("document_date", "")
 
-            # Missing if any field is empty, None, or 'N/A'
+            # Missing if field is empty, None, or 'N/A'
             company_missing = not company or company in ("N/A", "None", "")
-            type_missing = not document_type or document_type in ("N/A", "None", "")
             date_missing = not document_date or document_date in ("N/A", "None", "")
 
-            return company_missing or type_missing or date_missing
+            # Only considered missing metadata if BOTH company AND date are missing
+            return company_missing and date_missing
 
         elif self._quick_filter == "cached_only":
             return bool(row_data.get("cache_hit"))
+
+        elif self._quick_filter == "blank_pages":
+            # Filter to pages marked as blank (is_blank = True)
+            is_blank = row_data.get("is_blank", False)
+            return bool(is_blank)
 
         return True
 
@@ -507,6 +511,7 @@ class FileDetailsDialog(QDialog):
 
     re_analyze_requested = pyqtSignal(str)  # Emits file path
     metadata_saved = pyqtSignal(str)  # Emits file path when metadata is saved
+    record_deleted = pyqtSignal(str)  # Emits file path when record is deleted
 
     def __init__(
         self,
@@ -562,7 +567,6 @@ class FileDetailsDialog(QDialog):
             self.default_zoom_mode = "fit_to_width"
             self.default_zoom_percent = 100
 
-
         # Correct the file path if it's in a temp folder
         stored_path = self.file_data.get("full_path")
         filename = self.file_data.get("filename")
@@ -600,11 +604,9 @@ class FileDetailsDialog(QDialog):
                 "button_hover": "#EFF6FF",
             }
 
-
     def _init_ui(self):
         """Initialize the user interface with image preview and accordion sections."""
         from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QPixmap
         from PyQt6.QtWidgets import QScrollArea, QSplitter
 
         main_layout = QVBoxLayout(self)
@@ -792,6 +794,32 @@ class FileDetailsDialog(QDialog):
         """
 
         # Action buttons with consistent styling
+        # Delete Record button (with red styling for destructive action)
+        delete_button_style = f"""
+            QPushButton {{
+                background: #991B1B;
+                color: #E0E0E0;
+                border: 1px solid #7F1D1D;
+                border-radius: 6px;
+                padding: 10px 20px;
+                font-weight: 600;
+                min-height: 36px;
+            }}
+            QPushButton:hover {{
+                background: #7F1D1D;
+                border-color: #991B1B;
+            }}
+            QPushButton:pressed {{
+                background: #450A0A;
+                color: white;
+            }}
+        """
+        self.delete_btn = QPushButton("🗑️ Delete Record")
+        self.delete_btn.setStyleSheet(delete_button_style)
+        self.delete_btn.setToolTip("Delete this record from the database (file will NOT be deleted)")
+        self.delete_btn.clicked.connect(self._delete_record)
+        bottom_layout.addWidget(self.delete_btn)
+
         self.open_doc_btn = QPushButton("📄 Open Document")
         self.open_doc_btn.setStyleSheet(button_style)
         self.open_doc_btn.clicked.connect(self._view_document)
@@ -930,7 +958,6 @@ class FileDetailsDialog(QDialog):
     ):
         """Create a collapsible accordion section."""
         from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QFrame
 
         section = QWidget()
         section_layout = QVBoxLayout(section)
@@ -1618,13 +1645,11 @@ class FileDetailsDialog(QDialog):
             # Fallback to fit width
             return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
 
-
     def _on_splitter_moved(self, pos, index):
         """Handle splitter movement - no automatic rescaling with manual zoom controls."""
         # With manual zoom controls, we don't automatically rescale on splitter movement
         # Users can use fit buttons (W, H, F) if they want to adjust zoom
         pass
-
 
     def resizeEvent(self, event):  # noqa: N802
         """Handle window resize - reposition overlay controls."""
@@ -1885,11 +1910,139 @@ class FileDetailsDialog(QDialog):
         # Close the dialog so user can see analysis progress in main window
         self.accept()
 
+    def _delete_record(self):
+        """Delete this record from the database (same as context menu delete)."""
+        file_path = self.file_data.get("full_path") or self.file_data.get("filename")
+        if not file_path:
+            QMessageBox.warning(self, "No File Path", "Cannot delete: file path not found.")
+            return
+
+        # Create custom dialog with checkbox for file deletion
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Delete Record")
+        dialog.setMinimumWidth(450)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(15)
+
+        # Warning icon and message
+        message_layout = QHBoxLayout()
+        icon_label = QLabel("⚠️")
+        icon_label.setStyleSheet("font-size: 32pt;")
+        message_layout.addWidget(icon_label)
+
+        message_text = QLabel(
+            f"Delete this record from the database?\n\n"
+            f"File: {os.path.basename(file_path)}\n"
+            f"Path: {file_path}"
+        )
+        message_text.setWordWrap(True)
+        message_layout.addWidget(message_text, 1)
+        layout.addLayout(message_layout)
+
+        # Checkbox for deleting physical file (checked by default)
+        delete_file_checkbox = QCheckBox("Also delete the file from disk")
+        delete_file_checkbox.setChecked(True)
+        delete_file_checkbox.setStyleSheet("font-weight: 600; color: #DC2626;")
+        layout.addWidget(delete_file_checkbox)
+
+        # Warning label
+        warning_label = QLabel(
+            "⚠️ Warning: Deleting the file from disk cannot be undone!"
+        )
+        warning_label.setStyleSheet("color: #DC2626; font-size: 9pt;")
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #DC2626;
+                color: white;
+                font-weight: 600;
+                padding: 8px 20px;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #B91C1C;
+            }
+        """)
+        delete_btn.clicked.connect(dialog.accept)
+        delete_btn.setDefault(True)
+        button_layout.addWidget(delete_btn)
+
+        layout.addLayout(button_layout)
+
+        # Show dialog and get result
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Get checkbox state
+        delete_physical_file = delete_file_checkbox.isChecked()
+
+        # Check if we have database access
+        if not self.analysis_db:
+            QMessageBox.warning(
+                self,
+                "Database Not Available",
+                "Cannot delete record: database connection not available.",
+            )
+            return
+
+        try:
+            # Delete using the same logic as context menu delete
+            # 1. Mark image as deleted in image_files table (soft delete)
+            self.analysis_db.mark_image_deleted(file_path)
+
+            # 2. Delete from metadata table
+            self.analysis_db.delete_metadata_by_path(file_path)
+
+            # 3. Delete physical file if checkbox was checked
+            if delete_physical_file and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.info(f"Deleted physical file: {file_path}")
+                except Exception as file_error:
+                    # Show warning but don't fail the whole operation
+                    QMessageBox.warning(
+                        self,
+                        "File Deletion Failed",
+                        f"Database record deleted, but failed to delete the physical file:\n\n{str(file_error)}",
+                    )
+
+            # 4. Emit signal to notify parent to refresh
+            self.record_deleted.emit(file_path)
+
+            # 5. Close the dialog
+            self.accept()
+
+        except Exception as e:
+            from services.logging_service import get_logger
+
+            logger = get_logger()
+            logger.error(f"Error deleting record: {e}", exc_info=True)
+            QMessageBox.critical(
+                self, "Delete Failed", f"Failed to delete record:\n\n{str(e)}"
+            )
+
     # Note: Analysis progress/completion handlers removed - now handled by queue system in AnalysisStatusWindow
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable all buttons and edit controls."""
         # Buttons
+        self.delete_btn.setEnabled(enabled)
         self.open_doc_btn.setEnabled(enabled)
         self.save_metadata_btn.setEnabled(enabled)
         self.copy_json_btn.setEnabled(enabled)
@@ -1923,8 +2076,6 @@ class FileDetailsDialog(QDialog):
         """Apply metadata rotation to the base image (permanent rotation)."""
         if not hasattr(self, "base_pixmap") or self.base_pixmap is None:
             return
-
-        from PyQt6.QtGui import QTransform
 
         # Update current rotation tracker
         self.current_rotation = rotation
@@ -2213,6 +2364,7 @@ class FileDetailsGrid(QWidget):
             "has_errors": QPushButton("❌ Has Errors"),
             "missing_metadata": QPushButton("📋 Missing Metadata"),
             "cached_only": QPushButton("⚡ Cached Only"),
+            "blank_pages": QPushButton("⬜ Blank Pages"),
         }
 
         button_style = f"""
@@ -2955,6 +3107,7 @@ class FileDetailsGrid(QWidget):
             )
             dialog.re_analyze_requested.connect(lambda path: self.re_analyze_requested.emit([path]))
             dialog.metadata_saved.connect(self._on_metadata_saved)
+            dialog.record_deleted.connect(self._on_record_deleted)
             dialog.exec()
 
     def _on_metadata_saved(self, file_path: str):
@@ -3004,6 +3157,23 @@ class FileDetailsGrid(QWidget):
                 logger.debug(
                     f"[GRID UPDATE] Emitted dataChanged signal for row {row}, invalidated proxy model"
                 )
+                break
+
+    def _on_record_deleted(self, file_path: str):
+        """Handle record deleted signal - remove the specific row from grid."""
+        from services.logging_service import get_logger
+
+        logger = get_logger()
+
+        # Find and remove the row from the model data
+        for i, row_data in enumerate(self.model._data):
+            if row_data.get("full_path") == file_path:
+                # Remove the row from model data
+                self.model.beginRemoveRows(self.model.index(i, 0).parent(), i, i)
+                self.model._data.pop(i)
+                self.model.endRemoveRows()
+
+                logger.debug(f"Removed row for deleted record: {file_path}")
                 break
 
     def _clear_error_for_selected(self):

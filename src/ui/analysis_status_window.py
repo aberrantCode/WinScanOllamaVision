@@ -7,7 +7,7 @@ import os
 import subprocess
 import time
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -235,11 +235,21 @@ class AnalysisStatusWindow(QDialog):
         self.auto_refresh_timer = None
         self._analysis_thread = None
         self._analysis_start_time: float | None = None
-        self._analysis_stats: dict[str, int] = {"analyzed": 0, "cached": 0, "errors": 0}
+        self._analysis_stats: dict[str, int] = {
+            "analyzed": 0,
+            "cached": 0,
+            "errors": 0,
+            "total_files": 0,
+        }
         self._last_grid_refresh_time: float = 0  # Timestamp of last grid refresh
         self._first_progress_update: bool = (
             True  # Track first progress update to show "Analyzing" immediately
         )
+
+        # Timer for live progress updates
+        self._progress_timer: QTimer | None = None
+        self._current_job_start_time: float | None = None
+        self._avg_processing_time_ms: float | None = None
 
         # Initialize queue-based analysis system
         self.analysis_queue = AnalysisQueue()
@@ -1113,13 +1123,14 @@ class AnalysisStatusWindow(QDialog):
         total_archived_pages = archived_pages_result if archived_pages_result else 0
 
         # Average processing time (only successful, non-error analyses with real LLM inference time)
+        # Exclude cache hits (processing_time_ms < 1000ms) which are very fast retrievals
         cursor.execute(
             """
             SELECT AVG(processing_time_ms)
             FROM analysis_results
             WHERE had_error = 0
               AND processing_time_ms IS NOT NULL
-              AND processing_time_ms > 0
+              AND processing_time_ms >= 1000
         """
         )
         avg_processing_result = cursor.fetchone()[0]
@@ -1473,7 +1484,7 @@ class AnalysisStatusWindow(QDialog):
 
         # Initialize analysis tracking
         self._analysis_start_time = time.time()
-        self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0}
+        self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0, "total_files": 0}
 
         # Create job for full directory scan
         job = AnalysisJob.create(
@@ -1510,22 +1521,27 @@ class AnalysisStatusWindow(QDialog):
             )
 
             if reply == QMessageBox.StandardButton.Yes:
+                # Stop timer
+                self._stop_progress_timer()
                 # Clear entire queue
                 self._update_toolbar_status("canceling", "Aborting all jobs...")
                 self.analysis_queue.clear_queue()
                 self.analysis_worker.cancel_current_job()
                 # Reset stats
-                self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0}
+                self._analysis_stats = {"analyzed": 0, "cached": 0, "errors": 0, "total_files": 0}
 
     def _on_analysis_progress_update(self, status_text: str, current: int, total: int):
         """Handle progress updates from analysis thread"""
-        # Update toolbar progress
-        percentage = int((current / total) * 100) if total > 0 else 0
-        # Append current filename to status text
-        display_text = f"Analyzing... {status_text}"
-        self._update_toolbar_status(
-            "analyzing", display_text, f"{current}/{total} files ({percentage}%)"
-        )
+        # Start timer on first progress update
+        if self._first_progress_update:
+            self._start_progress_timer()
+
+        # Update toolbar status (timer display handled by _update_progress_display)
+        display_text = f"{status_text}"
+        self._update_toolbar_status("analyzing", display_text, "")
+
+        # Force immediate timer display update
+        self._update_progress_display()
 
         # Stats are accumulated in _on_job_finished, not here.
         # This handler only updates the UI to show progress.
@@ -1541,6 +1557,9 @@ class AnalysisStatusWindow(QDialog):
 
     def _on_analysis_complete(self, stats: dict):
         """Handle analysis completion"""
+        # Stop progress timer
+        self._stop_progress_timer()
+
         # Update toolbar status
         total = stats.get("total_files", 0)
         analyzed = stats.get("analyzed", 0)
@@ -1555,22 +1574,6 @@ class AnalysisStatusWindow(QDialog):
 
         # Refresh all data
         self._refresh_all()
-
-        # Show completion message if there were actual results
-        if total > 0:
-            from PyQt6.QtWidgets import QMessageBox
-
-            message = (
-                f"Analysis Complete!\n\n"
-                f"Total Files: {total}\n"
-                f"Analyzed: {analyzed}\n"
-                f"Errors: {errors}"
-            )
-
-            if stats.get("message"):
-                message += f"\n\n{stats['message']}"
-
-            QMessageBox.information(self, "Analysis Complete", message)
 
     def _on_re_analyze_requested(self, file_paths: list):
         """Handle re-analysis request from FileDetailsGrid context menu.
@@ -1639,6 +1642,7 @@ class AnalysisStatusWindow(QDialog):
         self._analysis_stats["analyzed"] += stats.get("analyzed", 0)
         self._analysis_stats["cached"] += stats.get("cached", 0)
         self._analysis_stats["errors"] += stats.get("errors", 0)
+        self._analysis_stats["total_files"] += stats.get("total_files", 0)
 
         # Refresh file grid to show updated analysis results
         self._refresh_file_grid()
@@ -1666,8 +1670,9 @@ class AnalysisStatusWindow(QDialog):
         logger.error(f"Job {job_id} error: {error_message}")
         QMessageBox.critical(self, "Analysis Error", f"Job failed:\n\n{error_message}")
 
-        # Continue processing queue
+        # Stop timer if no more jobs pending
         if self.analysis_queue.get_pending_count() == 0:
+            self._stop_progress_timer()
             self._update_toolbar_status("error", "Job failed")
 
     def _on_queue_empty(self):
@@ -1710,10 +1715,11 @@ class AnalysisStatusWindow(QDialog):
         self.status_text.setText(text or state.capitalize())
 
         # Update progress info
+        # Don't hide if timer is active (it will manage visibility)
         if progress:
             self.progress_info.setText(progress)
             self.progress_info.setVisible(True)
-        else:
+        elif not (self._progress_timer and self._progress_timer.isActive()):
             self.progress_info.setVisible(False)
 
         # Show/hide appropriate buttons
@@ -1733,6 +1739,57 @@ class AnalysisStatusWindow(QDialog):
             self.stop_analysis_btn.setEnabled(True)
             self.abort_analysis_btn.setEnabled(True)
             self.refresh_btn.setEnabled(True)
+
+    def _start_progress_timer(self):
+        """Start timer for live progress updates."""
+        # Get average processing time from database
+        try:
+            stats = self.analysis_db.get_analysis_statistics()
+            avg_time_ms = stats.get("avg_processing_time_ms", 0)
+            # Only use average if it's a reasonable value (not 0 or None)
+            self._avg_processing_time_ms = avg_time_ms if avg_time_ms and avg_time_ms > 0 else None
+            logger.debug(f"Average processing time: {self._avg_processing_time_ms}ms")
+        except Exception as e:
+            logger.warning(f"Failed to get average processing time: {e}")
+            self._avg_processing_time_ms = None
+
+        # Record job start time
+        self._current_job_start_time = time.time()
+
+        # Create and start timer if not already running
+        if self._progress_timer is None:
+            self._progress_timer = QTimer(self)
+            self._progress_timer.timeout.connect(self._update_progress_display)
+
+        if not self._progress_timer.isActive():
+            self._progress_timer.start(1000)  # Update every second
+
+    def _stop_progress_timer(self):
+        """Stop the progress timer."""
+        if self._progress_timer and self._progress_timer.isActive():
+            self._progress_timer.stop()
+        self._current_job_start_time = None
+
+    def _update_progress_display(self):
+        """Update the progress display with elapsed time and average."""
+        if self._current_job_start_time is None:
+            return
+
+        # Calculate elapsed time
+        elapsed_seconds = int(time.time() - self._current_job_start_time)
+
+        # Format average time
+        if self._avg_processing_time_ms:
+            avg_seconds = int(self._avg_processing_time_ms / 1000)
+            avg_text = f" (avg ~{avg_seconds}s)"
+        else:
+            avg_text = ""
+
+        # Update progress info with timer
+        if hasattr(self, "progress_info"):
+            display_text = f"{elapsed_seconds}s{avg_text}"
+            self.progress_info.setText(display_text)
+            self.progress_info.setVisible(True)
 
     def _refresh_file_grid(self):
         """Refresh File Analysis Grid tab"""
@@ -1832,6 +1889,7 @@ class AnalysisStatusWindow(QDialog):
                 "response_text": row.get("response_text", ""),  # New name after Migration 16
                 "prompt_text": row.get("prompt_text", ""),
                 "tax_related": bool(row.get("tax_related", False)),
+                "is_blank": bool(row.get("is_blank", False)),
             }
 
             transformed.append(transformed_row)
@@ -1953,6 +2011,7 @@ class AnalysisStatusWindow(QDialog):
         # Stop timers
         if self.auto_refresh_timer:
             self.auto_refresh_timer.stop()
+        self._stop_progress_timer()
 
         # Disconnect signals from worker to prevent callbacks during shutdown
         if self.analysis_worker:

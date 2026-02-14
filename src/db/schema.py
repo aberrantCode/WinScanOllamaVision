@@ -197,6 +197,7 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
             confidence_score REAL,
             tax_related BOOLEAN DEFAULT 0,
             document_category TEXT,
+            is_blank BOOLEAN DEFAULT 0,
 
             -- Display preferences
             rotation INTEGER DEFAULT 0,
@@ -565,6 +566,35 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         conn.commit()
         logger.info("Migration 1 completed successfully")
         current_version = 1
+
+    # Migration 16: Add is_blank field to metadata table
+    if current_version < 16:
+        logger.info("Running Migration 16: Add is_blank field to metadata table")
+
+        # Check if column already exists (for databases created after this migration)
+        columns_info = cursor.execute("PRAGMA table_info(metadata)").fetchall()
+        column_names = [col[1] for col in columns_info]
+
+        if "is_blank" not in column_names:
+            _execute_sql(
+                cursor,
+                """
+                ALTER TABLE metadata
+                ADD COLUMN is_blank BOOLEAN DEFAULT 0
+            """,
+            )
+            logger.info("Added is_blank column to metadata table")
+
+        _execute_sql(
+            cursor,
+            """
+            INSERT INTO schema_version (version, description)
+            VALUES (16, 'Add is_blank field to metadata table for blank page detection')
+        """,
+        )
+        conn.commit()
+        logger.info("Migration 16 completed successfully")
+        current_version = 16
 
 
 def get_schema_version(conn: DatabaseConnection) -> int:

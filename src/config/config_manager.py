@@ -129,6 +129,15 @@ class ConfigManager:
                 "batch_size": "10",
             }
 
+        # Discovery and scheduling settings
+        if "Discovery" not in self.config:
+            self.config["Discovery"] = {
+                "enabled": "true",
+                "interval_minutes": "60",
+                "auto_analyze_after_discovery": "false",
+                "last_run": "",
+            }
+
         # Theme and appearance settings
         if "Theme" not in self.config:
             self.config["Theme"] = {

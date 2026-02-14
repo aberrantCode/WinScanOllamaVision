@@ -1,19 +1,21 @@
 """
 Pannable image label widget for zoomed image navigation.
 
-Provides a QLabel subclass with click & drag panning support.
+Provides a QLabel subclass with click & drag panning and scroll wheel zoom support.
 """
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QCursor
+from PyQt6.QtGui import QCursor, QWheelEvent
 from PyQt6.QtWidgets import QLabel
 
 
 class PannableImageLabel(QLabel):
-    """QLabel with click & drag panning support for zoomed images."""
+    """QLabel with click & drag panning and scroll wheel zoom support."""
 
     # Signal emitted when pan offset changes
     pan_changed = pyqtSignal()
+    # Signal emitted when zoom is requested via scroll wheel (delta in steps)
+    zoom_requested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,6 +24,8 @@ class PannableImageLabel(QLabel):
         self.pan_offset = QPoint(0, 0)
         self.zoom_level = 100
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Enable mouse tracking to show appropriate cursor
+        self.setMouseTracking(True)
 
     def set_zoom_level(self, zoom: int):
         """Update zoom level to control cursor and panning behavior."""
@@ -41,8 +45,8 @@ class PannableImageLabel(QLabel):
         self.pan_offset = offset
 
     def mousePressEvent(self, event):  # noqa: N802
-        """Start panning on left click when zoomed."""
-        if self.zoom_level > 100 and event.button() == Qt.MouseButton.LeftButton:
+        """Start panning on left click (works at any zoom level)."""
+        if event.button() == Qt.MouseButton.LeftButton:
             self.is_panning = True
             self.pan_start_pos = event.pos()
             self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
@@ -82,9 +86,23 @@ class PannableImageLabel(QLabel):
         else:
             super().mouseReleaseEvent(event)
 
+    def wheelEvent(self, event: QWheelEvent):  # noqa: N802
+        """Handle scroll wheel for zooming."""
+        # Get the scroll delta (positive = zoom in, negative = zoom out)
+        delta = event.angleDelta().y()
+
+        # Convert delta to zoom steps (120 units = 1 step on most mice)
+        # Each step changes zoom by 10%
+        steps = delta // 120
+        zoom_change = steps * 10
+
+        # Emit signal for parent to handle zoom change
+        if zoom_change != 0:
+            self.zoom_requested.emit(zoom_change)
+
+        event.accept()
+
     def _update_cursor(self):
-        """Update cursor based on zoom level."""
-        if self.zoom_level > 100:
+        """Update cursor to show panning capability."""
+        if not self.is_panning:
             self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-        else:
-            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))

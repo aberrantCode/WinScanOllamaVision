@@ -6117,36 +6117,139 @@ class StartupWindow(QWidget):
         # Branded blue background (intentional - this is the landing page)
         self.setStyleSheet("background-color: #2563EB; color: white;")
 
-        # Define button styles once to avoid duplication
-        primary_button_style = """
+        # Define refined, professional button styles with glow and shadow
+        # Discovery/Analysis buttons - Enhanced blue for visibility on blue background
+        discovery_button_style = """
             QPushButton {
-                background-color: #2563EB;
+                background-color: rgba(59, 130, 246, 0.3);
                 color: white;
-                border: 2px solid #1E40AF;
-                border-radius: 5px;
-                padding: 10px;
+                border: 2px solid rgba(96, 165, 250, 0.8);
+                border-radius: 8px;
+                padding: 10px 15px;
+                font-size: 11pt;
+                font-weight: 500;
+                text-align: left;
             }
             QPushButton:hover {
-                background-color: #1D4ED8;
+                background-color: rgba(96, 165, 250, 0.4);
+                border: 2px solid rgba(147, 197, 253, 1.0);
+            }
+            QPushButton:pressed {
+                background-color: rgba(59, 130, 246, 0.5);
             }
         """
 
-        danger_button_style = """
+        # Conversion buttons - Enhanced emerald to match visibility
+        conversion_button_style = """
             QPushButton {
-                background-color: #DC2626;
+                background-color: rgba(16, 185, 129, 0.3);
                 color: white;
-                border: 2px solid #B91C1C;
-                border-radius: 5px;
-                padding: 10px;
+                border: 2px solid rgba(52, 211, 153, 0.8);
+                border-radius: 8px;
+                padding: 10px 15px;
+                font-size: 11pt;
+                font-weight: 500;
+                text-align: left;
             }
             QPushButton:hover {
-                background-color: #B91C1C;
+                background-color: rgba(52, 211, 153, 0.4);
+                border: 2px solid rgba(110, 231, 183, 1.0);
+            }
+            QPushButton:pressed {
+                background-color: rgba(16, 185, 129, 0.5);
+            }
+        """
+
+        # Settings button - Enhanced purple for visibility
+        settings_button_style = """
+            QPushButton {
+                background-color: rgba(139, 92, 246, 0.25);
+                color: white;
+                border: 2px solid rgba(167, 139, 250, 0.75);
+                border-radius: 8px;
+                padding: 10px 15px;
+                font-size: 11pt;
+                font-weight: 500;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: rgba(167, 139, 250, 0.35);
+                border: 2px solid rgba(196, 181, 253, 1.0);
+            }
+            QPushButton:pressed {
+                background-color: rgba(139, 92, 246, 0.45);
+            }
+        """
+
+        # Danger button - Enhanced red to match visibility
+        danger_button_style = """
+            QPushButton {
+                background-color: rgba(239, 68, 68, 0.3);
+                color: white;
+                border: 2px solid rgba(248, 113, 113, 0.8);
+                border-radius: 8px;
+                padding: 10px 15px;
+                font-size: 11pt;
+                font-weight: 500;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: rgba(248, 113, 113, 0.4);
+                border: 2px solid rgba(252, 165, 165, 1.0);
+            }
+            QPushButton:pressed {
+                background-color: rgba(239, 68, 68, 0.5);
             }
         """
 
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setContentsMargins(20, 20, 20, 20)
+
+        # Top-right floating icon buttons
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.addStretch()
+
+        # Configure icon button (floating, no background)
+        self.floating_settings_button = QPushButton("⚙️")
+        self.floating_settings_button.setFixedSize(32, 32)
+        self.floating_settings_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 18pt;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                font-size: 20pt;
+            }
+        """)
+        self.floating_settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.floating_settings_button.clicked.connect(self.show_settings_window)
+        top_bar_layout.addWidget(self.floating_settings_button)
+
+        # Small spacing between icons
+        top_bar_layout.addSpacing(15)
+
+        # Exit icon button (floating, no background) - Door icon
+        self.floating_exit_button = QPushButton("🚪")
+        self.floating_exit_button.setFixedSize(32, 32)
+        self.floating_exit_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 18pt;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                font-size: 20pt;
+            }
+        """)
+        self.floating_exit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.floating_exit_button.clicked.connect(self.quit_application)
+        top_bar_layout.addWidget(self.floating_exit_button)
+
+        main_layout.addLayout(top_bar_layout)
 
         # Center content layout
         center_layout = QVBoxLayout()
@@ -6242,45 +6345,58 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
-        # Analysis button
-        analyze_button = QPushButton("🔍 Analysis")
+        # Discover button (topmost) - Blue gradient
+        discover_button = QPushButton("📁  Discover")
+        discover_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        discover_button.setMinimumHeight(48)
+        discover_button.setStyleSheet(discovery_button_style)
+        discover_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        discover_button.clicked.connect(self.manual_discover_images)
+        button_layout.addWidget(discover_button)
+
+        # Analyze button - Blue gradient
+        analyze_button = QPushButton("🔍  Analyze")
         analyze_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        analyze_button.setMinimumHeight(60)
-        analyze_button.setStyleSheet(primary_button_style)
+        analyze_button.setMinimumHeight(48)
+        analyze_button.setStyleSheet(discovery_button_style)
+        analyze_button.setCursor(Qt.CursorShape.PointingHandCursor)
         analyze_button.clicked.connect(self.manual_analyze_documents)
         button_layout.addWidget(analyze_button)
 
-        process_button = QPushButton("Convert Scans")
+        # Bundle button - Emerald gradient
+        process_button = QPushButton("📄  Bundle")
         process_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        process_button.setMinimumHeight(60)
-        process_button.setStyleSheet(primary_button_style)
+        process_button.setMinimumHeight(48)
+        process_button.setStyleSheet(conversion_button_style)
+        process_button.setCursor(Qt.CursorShape.PointingHandCursor)
         process_button.clicked.connect(self.show_processing_window)
         button_layout.addWidget(process_button)
 
-        self.extract_button = QPushButton("Convert PDFs")
+        # Export button - Emerald gradient
+        self.extract_button = QPushButton("📑  Export")
         self.extract_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.extract_button.setMinimumHeight(60)
+        self.extract_button.setMinimumHeight(48)
         self.extract_button.setEnabled(True)
-        self.extract_button.setStyleSheet(primary_button_style)
+        self.extract_button.setStyleSheet(conversion_button_style)
+        self.extract_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.extract_button.clicked.connect(self._process_pdfs)
         button_layout.addWidget(self.extract_button)
 
-        settings_button = QPushButton("Change Settings")
-        settings_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        settings_button.setMinimumHeight(60)
-        settings_button.setStyleSheet(primary_button_style)
-        settings_button.clicked.connect(self.show_settings_window)
-        button_layout.addWidget(settings_button)
-
-        quit_button = QPushButton("Quit")
-        quit_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        quit_button.setMinimumHeight(60)
-        quit_button.setStyleSheet(danger_button_style)
-        quit_button.clicked.connect(self.quit_application)
-        button_layout.addWidget(quit_button)
-
         button_layout.addStretch()
         content_layout.addLayout(button_layout)
+
+        # Add extra spacing to the right of buttons (60px + 20px main margin = 80px total)
+        content_layout.addSpacing(60)
+
+        # Status label for showing discovery/analysis status at the bottom
+        # Always visible to prevent layout shifts, but content is hidden when inactive
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setFixedHeight(40)  # Fixed height to prevent layout shifts
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(True)  # Always visible (space reserved)
+        self._hide_status_label()  # Start with hidden content
+        main_layout.addWidget(self.status_label)
 
         self.setFixedSize(800, 600)
 
@@ -6289,6 +6405,22 @@ class StartupWindow(QWidget):
         self.pdf_check_timer.start(5000)
 
     # Removed _on_movie_state_changed method
+
+    def _show_status_label(self, text):
+        """Show status label with content (prevents layout shifts)"""
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(
+            "color: white; font-size: 11pt; padding: 8px; "
+            "background-color: rgba(30, 64, 175, 0.8); "
+            "border: 1px solid rgba(255, 255, 255, 0.3); "
+            "border-radius: 5px; "
+            "font-weight: bold;"
+        )
+
+    def _hide_status_label(self):
+        """Hide status label content (keeps space to prevent layout shifts)"""
+        self.status_label.setText("")
+        self.status_label.setStyleSheet("background-color: transparent; border: none;")
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
@@ -6576,6 +6708,83 @@ class StartupWindow(QWidget):
 
         # Keep reference to prevent garbage collection
         self._settings_window = settings_window
+
+    def manual_discover_images(self):
+        """Manually trigger image discovery - finds and registers new files"""
+        from PyQt6.QtCore import QTimer
+
+        from services.discovery_worker import DiscoveryWorker
+        from ui.toast_notifier import ToastNotifier
+
+        # Get directories from config (not database)
+        directories = self.config_manager.get_directories()
+
+        if not directories:
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self,
+                "No Directories",
+                "No source directories configured.\n\nPlease add directories in Settings.",
+            )
+            return
+
+        # Show status message
+        self._show_status_label("🔍 Discovering new files...")
+
+        # Create and start discovery worker
+        self._discovery_worker = DiscoveryWorker(self.config_manager, directories)
+
+        # Create toast notifier
+        self._toast_notifier = ToastNotifier()
+
+        def on_finished(count):
+            """Handle discovery completion"""
+            # Update status label with result
+            if count == 0:
+                self._show_status_label("✓ Discovery complete - No new files found")
+            elif count == 1:
+                self._show_status_label("✓ Discovery complete - 1 new file found")
+            else:
+                self._show_status_label(f"✓ Discovery complete - {count} new files found")
+
+            # Show toast notification
+            self._toast_notifier.show_discovery_toast(count)
+
+            # Check if auto-analyze is enabled
+            auto_analyze = self.config_manager.get_bool(
+                "Discovery", "auto_analyze_after_discovery", False
+            )
+
+            if auto_analyze and count > 0:
+                # Hide discovery status before launching analysis
+                QTimer.singleShot(2000, self._hide_status_label)
+                # Launch analysis for newly discovered files
+                self.manual_analyze_documents()
+            else:
+                # Hide status after 5 seconds
+                QTimer.singleShot(5000, self._hide_status_label)
+
+        def on_error(error):
+            """Handle discovery error"""
+            # Show error in status label
+            self._show_status_label(f"⚠ Discovery error: {error[:50]}")
+            # Hide error message after 10 seconds
+            QTimer.singleShot(10000, self._hide_status_label)
+
+            # Also show modal error dialog
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                self, "Discovery Error", f"Failed to discover images:\n\n{error}"
+            )
+
+        # Connect signals
+        self._discovery_worker.finished.connect(on_finished)
+        self._discovery_worker.error.connect(on_error)
+
+        # Start discovery
+        self._discovery_worker.start()
 
     def manual_analyze_documents(self):
         """Manually trigger document analysis - opens status window with auto-start"""

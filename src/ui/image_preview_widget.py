@@ -114,6 +114,7 @@ class ImagePreviewWidget(QWidget):
         # Create pannable image label
         self.image_label = PannableImageLabel(self)
         self.image_label.pan_changed.connect(self._update_display)
+        self.image_label.zoom_requested.connect(self._on_scroll_zoom)
         layout.addWidget(self.image_label)
 
         # Create floating toolbar overlay
@@ -561,6 +562,18 @@ class ImagePreviewWidget(QWidget):
         self.image_label.reset_pan()
         self._update_display()
 
+    def _on_scroll_zoom(self, zoom_change: int):
+        """
+        Handle zoom change from scroll wheel.
+
+        Args:
+            zoom_change: Amount to change zoom (e.g., +10 or -10)
+        """
+        current_zoom = self.zoom_spinner.value() if self.zoom_spinner else self.zoom_level
+        new_zoom = max(5, min(400, current_zoom + zoom_change))
+        if self.zoom_spinner:
+            self.zoom_spinner.setValue(new_zoom)
+
     # ========== Image Transformation Pipeline ==========
 
     def _apply_rotation(self, pixmap: QPixmap) -> QPixmap:
@@ -592,9 +605,9 @@ class ImagePreviewWidget(QWidget):
                 Qt.TransformationMode.SmoothTransformation,
             )
 
-        # Step 3: Apply pan (only when zoomed in)
+        # Step 3: Apply pan (works at any zoom level)
         pan_offset = self.image_label.get_pan_offset()
-        if self.zoom_level > 100 and not pan_offset.isNull():
+        if not pan_offset.isNull():
             canvas = QPixmap(pixmap.size())
             canvas.fill(Qt.GlobalColor.white)
             painter = QPainter(canvas)

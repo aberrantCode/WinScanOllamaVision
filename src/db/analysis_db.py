@@ -451,8 +451,14 @@ class AnalysisDB:
         cursor.execute("SELECT COUNT(*) FROM analysis_results")
         total = cursor.fetchone()[0]
 
-        # Average processing time
-        cursor.execute("SELECT AVG(processing_time_ms) FROM analysis_results")
+        # Average processing time (exclude cache hits < 1000ms)
+        cursor.execute(
+            """
+            SELECT AVG(processing_time_ms)
+            FROM analysis_results
+            WHERE processing_time_ms >= 1000
+        """
+        )
         avg_time = cursor.fetchone()[0] or 0
 
         # Provider breakdown

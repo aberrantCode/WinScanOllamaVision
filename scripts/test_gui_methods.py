@@ -11,11 +11,10 @@ print("Testing GUI integration methods...")
 # But we can verify the methods exist by reading the source
 
 import ast
-import inspect
 
 # Read gui.py
 gui_path = Path(__file__).parent.parent / "src" / "ui" / "gui.py"
-with open(gui_path, "r", encoding="utf-8") as f:
+with open(gui_path, encoding="utf-8") as f:
     gui_source = f.read()
 
 # Parse the AST
