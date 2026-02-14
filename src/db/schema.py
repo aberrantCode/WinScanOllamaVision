@@ -16,8 +16,8 @@ def create_all_tables(conn: DatabaseConnection) -> None:
     """
     _create_metadata_tables(conn)
     _create_analysis_tables(conn)
-    _create_indices(conn)
-    _run_migrations(conn)
+    _run_migrations(conn)  # Run migrations BEFORE creating indices
+    _create_indices(conn)  # Create indices AFTER migrations complete
     conn.commit()
 
 

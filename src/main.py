@@ -2,16 +2,8 @@ import argparse
 import logging
 import sys
 
-from PyQt6.QtWidgets import QApplication
-
-from config.appdata_manager import initialize_appdata
-from config.config_manager import ConfigManager
-from db.analysis_db import AnalysisDB
-from db.metadata_db import MetadataDB
-from services.analysis_service import AnalysisService
+# Import only LoggingService first, before any modules that use it
 from services.logging_service import LoggingService, get_logger
-from ui.gui import StartupWindow
-from ui.theme_manager import ThemeManager
 
 if __name__ == "__main__":
     # Parse command-line arguments
@@ -34,7 +26,7 @@ if __name__ == "__main__":
     # Convert console level string to logging constant
     console_level = getattr(logging, args.console_level) if args.console else None
 
-    # Initialize logging service
+    # Initialize logging service BEFORE importing other modules
     logging_service = LoggingService()
     logging_service.initialize(
         log_level=logging.DEBUG,  # File logging always at DEBUG
@@ -42,6 +34,17 @@ if __name__ == "__main__":
         console_level=console_level,  # Use specified console level
     )
     logger = get_logger()
+
+    # Now import modules that depend on logging (after LoggingService is initialized)
+    from PyQt6.QtWidgets import QApplication
+
+    from config.appdata_manager import initialize_appdata
+    from config.config_manager import ConfigManager
+    from db.analysis_db import AnalysisDB
+    from db.metadata_db import MetadataDB
+    from services.analysis_service import AnalysisService
+    from ui.gui import StartupWindow
+    from ui.theme_manager import ThemeManager
 
     try:
         logger.info("=" * 80)
