@@ -4,13 +4,18 @@ Image files repository for tracking file discovery and lifecycle.
 Manages image file registration, status transitions, and lifecycle tracking.
 """
 
+import logging
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from db.connection import DatabaseConnection
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class ImageFilesRepository:
@@ -24,6 +29,15 @@ class ImageFilesRepository:
             conn: Database connection
         """
         self.conn = conn
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def register(
         self,
@@ -61,11 +75,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to register image file: {e}") from e
 
@@ -150,11 +164,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to update image status: {e}") from e
 
@@ -176,11 +190,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to update last seen timestamp: {e}") from e
 
@@ -203,11 +217,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to update file hash: {e}") from e
 
@@ -229,11 +243,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to mark image as deleted: {e}") from e
 
@@ -264,11 +278,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to update rotation: {e}") from e
 
@@ -318,11 +332,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to mark images as deleted: {e}") from e
         return cursor.rowcount if cursor else 0
@@ -352,11 +366,11 @@ class ImageFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[IMAGE FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[IMAGE FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to set output filename: {e}") from e
 

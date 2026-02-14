@@ -4,13 +4,18 @@ PDF files repository for tracking generated PDFs.
 Manages PDF file registration, generation status, and metadata.
 """
 
+import logging
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from db.connection import DatabaseConnection
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class PdfFilesRepository:
@@ -24,6 +29,15 @@ class PdfFilesRepository:
             conn: Database connection
         """
         self.conn = conn
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def register(
         self,
@@ -70,11 +84,11 @@ class PdfFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[PDF FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[PDF FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[PDF FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[PDF FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to register PDF file: {e}") from e
 
@@ -131,11 +145,11 @@ class PdfFilesRepository:
         try:
             self.conn.commit()
         except sqlite3.OperationalError as e:
-            logger.error(f"[PDF FILES REPO] Database locked: {e}")
+            self._get_logger().error(f"[PDF FILES REPO] Database locked: {e}")
             self.conn.rollback()
             raise sqlite3.OperationalError("Database is locked. Try again.") from e
         except sqlite3.Error as e:
-            logger.error(f"[PDF FILES REPO] Database error: {e}")
+            self._get_logger().error(f"[PDF FILES REPO] Database error: {e}")
             self.conn.rollback()
             raise sqlite3.Error(f"Failed to update generation status: {e}") from e
 
@@ -166,11 +180,11 @@ class PdfFilesRepository:
             try:
                 self.conn.commit()
             except sqlite3.OperationalError as e:
-                logger.error(f"[PDF FILES REPO] Database locked: {e}")
+                self._get_logger().error(f"[PDF FILES REPO] Database locked: {e}")
                 self.conn.rollback()
                 raise sqlite3.OperationalError("Database is locked. Try again.") from e
             except sqlite3.Error as e:
-                logger.error(f"[PDF FILES REPO] Database error: {e}")
+                self._get_logger().error(f"[PDF FILES REPO] Database error: {e}")
                 self.conn.rollback()
                 raise sqlite3.Error(f"Failed to update searchability: {e}") from e
 

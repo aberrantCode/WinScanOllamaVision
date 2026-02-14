@@ -3,9 +3,11 @@ Analysis Status Window
 Provides visibility into analysis service status with 3 tabs: Collection Status, Image Details, and PDF Details.
 """
 
+import logging
 import os
 import subprocess
 import time
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -25,9 +27,13 @@ from PyQt6.QtWidgets import (
 from db.analysis_db import AnalysisDB
 from db.image_status import ImageStatus
 from services.analysis_queue import AnalysisJob, AnalysisQueue, JobPriority, JobType
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 # Whitelist of allowed metadata fields for SQL queries (security)
 # Using frozenset to prevent mutation
@@ -50,6 +56,15 @@ class AnalysisWorker(QThread):
         self.analysis_queue = analysis_queue
         self._stop_requested = False
         self._current_job_id = None
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def run(self):
         """Continuously process jobs from queue until stopped."""
@@ -76,7 +91,7 @@ class AnalysisWorker(QThread):
                 import traceback
 
                 error_msg = f"{str(e)}\n{traceback.format_exc()}"
-                logger.error(f"Error processing job {job.job_id}: {error_msg}")
+                self._get_logger().error(f"Error processing job {job.job_id}: {error_msg}")
                 self.error.emit(job.job_id, error_msg)
                 self.analysis_queue.mark_cancelled(job.job_id)
             finally:
@@ -252,7 +267,7 @@ class AnalysisStatusWindow(QDialog):
         self._avg_processing_time_ms: float | None = None
 
         # Initialize queue-based analysis system
-        self.analysis_queue = AnalysisQueue()
+        self.analysis_queue: AnalysisQueue = AnalysisQueue()
         self.analysis_worker = AnalysisWorker(self.config_manager, self.analysis_queue)
 
         # Connect worker signals
@@ -268,6 +283,15 @@ class AnalysisStatusWindow(QDialog):
         # If requested, start analysis using provided AnalysisService
         if self._auto_start_analysis and self.analysis_service:
             self._start_analysis_internal()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _get_theme_colors(self):
         """Return color palette based on current theme"""
@@ -810,8 +834,7 @@ class AnalysisStatusWindow(QDialog):
             self.scan_status_label.setText(f"{status_text} ({current}/{total})")
         except Exception as e:
             # Log UI update errors but don't crash during callbacks
-            logger = get_logger()
-            logger.warning(f"Error updating scan status label: {e}")
+            self._get_logger().warning(f"Error updating scan status label: {e}")
 
     def _on_analysis_finished(self, stats: dict):
         """Handle analysis finished event"""
@@ -821,8 +844,7 @@ class AnalysisStatusWindow(QDialog):
             self._load_all_data()
         except Exception as e:
             # Log analysis finished errors but don't crash
-            logger = get_logger()
-            logger.error(f"Error handling analysis finished event: {e}", exc_info=True)
+            self._get_logger().error(f"Error handling analysis finished event: {e}", exc_info=True)
 
     def _refresh_collection_status(self):
         """Refresh Collection Status tab with live statistics"""
@@ -862,7 +884,7 @@ class AnalysisStatusWindow(QDialog):
         except Exception as e:
             # Silently ignore errors during shutdown
             if self.analysis_db and self.analysis_db.connection:
-                logger.error(f"Error refreshing collection status: {e}")
+                self._get_logger().error(f"Error refreshing collection status: {e}")
 
     def _calculate_collection_statistics(self):
         """Calculate comprehensive collection statistics from database"""
@@ -1667,7 +1689,7 @@ class AnalysisStatusWindow(QDialog):
         """
         from PyQt6.QtWidgets import QMessageBox
 
-        logger.error(f"Job {job_id} error: {error_message}")
+        self._get_logger().error(f"Job {job_id} error: {error_message}")
         QMessageBox.critical(self, "Analysis Error", f"Job failed:\n\n{error_message}")
 
         # Stop timer if no more jobs pending
@@ -1748,9 +1770,9 @@ class AnalysisStatusWindow(QDialog):
             avg_time_ms = stats.get("avg_processing_time_ms", 0)
             # Only use average if it's a reasonable value (not 0 or None)
             self._avg_processing_time_ms = avg_time_ms if avg_time_ms and avg_time_ms > 0 else None
-            logger.debug(f"Average processing time: {self._avg_processing_time_ms}ms")
+            self._get_logger().debug(f"Average processing time: {self._avg_processing_time_ms}ms")
         except Exception as e:
-            logger.warning(f"Failed to get average processing time: {e}")
+            self._get_logger().warning(f"Failed to get average processing time: {e}")
             self._avg_processing_time_ms = None
 
         # Record job start time
@@ -1808,8 +1830,7 @@ class AnalysisStatusWindow(QDialog):
                 self.file_grid.refresh_data(data)
             except Exception as e:
                 # Log errors during shutdown (database may be closing)
-                logger = get_logger()
-                logger.debug(f"Error refreshing file grid during shutdown: {e}")
+                self._get_logger().debug(f"Error refreshing file grid during shutdown: {e}")
 
     def _transform_data_for_grid(self, db_data):
         """
@@ -1977,8 +1998,7 @@ class AnalysisStatusWindow(QDialog):
 
         except Exception as e:
             # Log errors during document details refresh (database may be closing)
-            logger = get_logger()
-            logger.error(f"Error refreshing document details: {e}", exc_info=True)
+            self._get_logger().error(f"Error refreshing document details: {e}", exc_info=True)
 
     def _on_document_table_double_click(self, item):
         """Handle double-click on document table to open PDF"""

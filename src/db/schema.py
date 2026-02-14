@@ -5,16 +5,32 @@ Unified schema (Migration 1) - Clean slate representing the final data model.
 All legacy migrations removed for simplicity and maintainability.
 """
 
+import logging
 import sqlite3
+from typing import TYPE_CHECKING
 
 from db.connection import DatabaseConnection
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 # Cache to track which database files have been initialized
 # Key: database file path, Value: schema version
 _schema_initialized: dict[str, int] = {}
+
+
+def _get_logger() -> logging.Logger:
+    """Get logger instance (lazy initialization)."""
+    global logger
+    if logger is None:
+        from services.logging_service import get_logger as _get_logger_func
+
+        logger = _get_logger_func()
+    return logger
 
 
 def _execute_sql(cursor: sqlite3.Cursor, query: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -31,13 +47,13 @@ def _execute_sql(cursor: sqlite3.Cursor, query: str, params: tuple = ()) -> sqli
     """
     # Log SQL statement at DEBUG level
     if params:
-        logger.debug(f"SQL (schema): {query.strip()[:200]}... | Params: {params}")
+        _get_logger().debug(f"SQL (schema): {query.strip()[:200]}... | Params: {params}")
     else:
         # Truncate long CREATE TABLE statements for readability
         log_query = query.strip()
         if len(log_query) > 200:
             log_query = log_query[:200] + "..."
-        logger.debug(f"SQL (schema): {log_query}")
+        _get_logger().debug(f"SQL (schema): {log_query}")
 
     return cursor.execute(query, params)
 
@@ -60,12 +76,12 @@ def create_all_tables(conn: DatabaseConnection, force: bool = False) -> None:
 
     # Check if schema is already initialized for this database
     if not force and db_path in _schema_initialized:
-        logger.debug(
+        _get_logger().debug(
             f"Schema already initialized for {db_path} (version {_schema_initialized[db_path]})"
         )
         return
 
-    logger.debug(f"Initializing schema for {db_path}")
+    _get_logger().debug(f"Initializing schema for {db_path}")
 
     # Run full schema initialization
     _create_core_tables(conn)
@@ -77,7 +93,7 @@ def create_all_tables(conn: DatabaseConnection, force: bool = False) -> None:
     # Cache the schema version to prevent redundant initialization
     current_version = get_schema_version(conn)
     _schema_initialized[db_path] = current_version
-    logger.debug(f"Schema initialized for {db_path} (version {current_version})")
+    _get_logger().debug(f"Schema initialized for {db_path} (version {current_version})")
 
 
 def _create_core_tables(conn: DatabaseConnection) -> None:
@@ -137,7 +153,7 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
 
         if "image_file_id" not in columns:
             # Old schema detected - drop and recreate
-            logger.warning(
+            _get_logger().warning(
                 f"Dropping analysis_results table with old schema (columns: {columns[:5]}...)"
             )
             # Temporarily disable foreign keys to allow dropping table
@@ -229,7 +245,7 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
 
         if "file_paths" in columns:
             # Old schema detected - drop and recreate
-            logger.warning("Dropping document_bundles table with old schema")
+            _get_logger().warning("Dropping document_bundles table with old schema")
             cursor.execute("PRAGMA foreign_keys = OFF")
             cursor.execute("DROP TABLE IF EXISTS document_bundles")
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -319,6 +335,34 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
 
             -- Timestamp
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    )
+
+    # Analysis errors - Error tracking for failed analyses
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS analysis_errors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            error_message TEXT NOT NULL,
+            error_type TEXT DEFAULT 'analysis_failed',
+            error_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    )
+
+    # Rotation preferences - Rotation tracking (legacy table for compatibility)
+    _execute_sql(
+        cursor,
+        """
+        CREATE TABLE IF NOT EXISTS rotation_preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT UNIQUE NOT NULL,
+            rotation_degrees INTEGER NOT NULL,
+            rotation_source TEXT NOT NULL,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """,
     )
@@ -554,7 +598,7 @@ def _run_migrations(conn: DatabaseConnection) -> None:
 
     # Migration 1: Initial unified schema
     if current_version < 1:
-        logger.info("Running Migration 1: Create unified schema")
+        _get_logger().info("Running Migration 1: Create unified schema")
 
         _execute_sql(
             cursor,
@@ -564,12 +608,12 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         """,
         )
         conn.commit()
-        logger.info("Migration 1 completed successfully")
+        _get_logger().info("Migration 1 completed successfully")
         current_version = 1
 
     # Migration 16: Add is_blank field to metadata table
     if current_version < 16:
-        logger.info("Running Migration 16: Add is_blank field to metadata table")
+        _get_logger().info("Running Migration 16: Add is_blank field to metadata table")
 
         # Check if column already exists (for databases created after this migration)
         columns_info = cursor.execute("PRAGMA table_info(metadata)").fetchall()
@@ -583,7 +627,7 @@ def _run_migrations(conn: DatabaseConnection) -> None:
                 ADD COLUMN is_blank BOOLEAN DEFAULT 0
             """,
             )
-            logger.info("Added is_blank column to metadata table")
+            _get_logger().info("Added is_blank column to metadata table")
 
         _execute_sql(
             cursor,
@@ -593,7 +637,7 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         """,
         )
         conn.commit()
-        logger.info("Migration 16 completed successfully")
+        _get_logger().info("Migration 16 completed successfully")
         current_version = 16
 
 
@@ -628,7 +672,7 @@ def clear_schema_cache(db_path: str | None = None) -> None:
 
     if db_path:
         _schema_initialized.pop(db_path, None)
-        logger.debug(f"Cleared schema cache for {db_path}")
+        _get_logger().debug(f"Cleared schema cache for {db_path}")
     else:
         _schema_initialized.clear()
-        logger.debug("Cleared all schema cache entries")
+        _get_logger().debug("Cleared all schema cache entries")

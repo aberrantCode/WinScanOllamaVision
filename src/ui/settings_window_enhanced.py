@@ -4,8 +4,10 @@ Comprehensive 5-tab settings interface with multi-provider support
 """
 
 import json
+import logging
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
@@ -39,11 +41,15 @@ from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
 from llm_providers.provider_factory import ProviderFactory
-from services.logging_service import get_logger
 from services.prompts import DEFAULT_ANALYSIS_PROMPT
 from ui.styles import show_critical, show_information, show_question, show_warning
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class ExpandablePromptEdit(QPlainTextEdit):
@@ -53,6 +59,15 @@ class ExpandablePromptEdit(QPlainTextEdit):
         super().__init__(parent)
         self.setMinimumHeight(80)
         self.setMaximumHeight(200)
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
 
 class PromptOptimizationThread(QThread):
@@ -64,6 +79,15 @@ class PromptOptimizationThread(QThread):
         super().__init__()
         self.config_manager = config_manager
         self.current_prompt = current_prompt
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def run(self):
         """Execute prompt optimization in background"""
@@ -142,6 +166,19 @@ class PromptComparisonDialog(QDialog):
         self.setMinimumWidth(800)
         self.setMinimumHeight(600)
 
+        self._setup_ui()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
+    def _setup_ui(self):
+        """Setup UI components."""
         layout = QVBoxLayout(self)
 
         # Header
@@ -156,7 +193,7 @@ class PromptComparisonDialog(QDialog):
         original_group = QGroupBox("Original Prompt")
         original_layout = QVBoxLayout(original_group)
         self.original_text = QPlainTextEdit()
-        self.original_text.setPlainText(original_prompt)
+        self.original_text.setPlainText(self.original_prompt)
         self.original_text.setReadOnly(True)
         original_layout.addWidget(self.original_text)
         splitter_layout.addWidget(original_group)
@@ -165,7 +202,7 @@ class PromptComparisonDialog(QDialog):
         optimized_group = QGroupBox("Optimized Prompt")
         optimized_layout = QVBoxLayout(optimized_group)
         self.optimized_text = QPlainTextEdit()
-        self.optimized_text.setPlainText(optimized_prompt)
+        self.optimized_text.setPlainText(self.optimized_prompt)
         self.optimized_text.setReadOnly(False)  # Allow editing
         optimized_layout.addWidget(self.optimized_text)
 
@@ -228,11 +265,11 @@ class EnhancedSettingsWindow(QDialog):
             self.setMinimumWidth(750)
             self.setMinimumHeight(600)
 
-            logger.debug("Starting _init_ui()...")
+            self._get_logger().debug("Starting _init_ui()...")
             self._init_ui()
-            logger.debug("Settings window initialized successfully")
+            self._get_logger().debug("Settings window initialized successfully")
         except Exception as e:
-            logger.error(f"FATAL ERROR in Settings __init__: {e}", exc_info=True)
+            self._get_logger().error(f"FATAL ERROR in Settings __init__: {e}", exc_info=True)
             # Show error dialog
             from ui.styles import show_critical
 
@@ -242,6 +279,15 @@ class EnhancedSettingsWindow(QDialog):
                 f"Failed to initialize settings window:\n\n{e}\n\nCheck logs for details.",
             )
             raise
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def closeEvent(self, event):  # noqa: N802
         """Clean up resources when window closes."""
@@ -1222,7 +1268,7 @@ class EnhancedSettingsWindow(QDialog):
         self.save_button = button_box.button(QDialogButtonBox.StandardButton.Save)
 
         if self.save_button is None:
-            logger.error("Failed to get Save button reference from button box")
+            self._get_logger().error("Failed to get Save button reference from button box")
             show_critical(self, "Initialization Error", "Failed to get Save button reference")
             return
 
@@ -1231,12 +1277,12 @@ class EnhancedSettingsWindow(QDialog):
             self._original_values = {}
             self._tracking_enabled = False  # Temporarily disable tracking during initialization
 
-            logger.debug("Capturing original values...")
+            self._get_logger().debug("Capturing original values...")
             # Capture original values first
             self._capture_original_values()
-            logger.debug(f"Captured {len(self._original_values)} original values")
+            self._get_logger().debug(f"Captured {len(self._original_values)} original values")
 
-            logger.debug("Connecting change signals...")
+            self._get_logger().debug("Connecting change signals...")
             # Connect signals after capturing values
             self._connect_change_signals()
 
@@ -1244,9 +1290,11 @@ class EnhancedSettingsWindow(QDialog):
             # self._tracking_enabled will be set to True in showEvent()
             if self.save_button:
                 self._update_save_button_style(False)
-                logger.debug(f"Save button initialized: enabled={self.save_button.isEnabled()}")
+                self._get_logger().debug(
+                    f"Save button initialized: enabled={self.save_button.isEnabled()}"
+                )
         except Exception as e:
-            logger.error(f"Error during change tracking setup: {e}", exc_info=True)
+            self._get_logger().error(f"Error during change tracking setup: {e}", exc_info=True)
             show_critical(self, "Initialization Error", f"Failed to setup change tracking:\n\n{e}")
             raise
 
@@ -1257,7 +1305,7 @@ class EnhancedSettingsWindow(QDialog):
         # Only do this on first show
         if not hasattr(self, "_first_show_done"):
             self._first_show_done = True
-            logger.debug("showEvent: First show - starting async model loading")
+            self._get_logger().debug("showEvent: First show - starting async model loading")
 
             # Keep tracking disabled
             self._tracking_enabled = False
@@ -1275,11 +1323,11 @@ class EnhancedSettingsWindow(QDialog):
                     self._load_claude_models()
                     self._load_gemini_models()
 
-                    logger.debug("showEvent: Models loaded, capturing original values")
+                    self._get_logger().debug("showEvent: Models loaded, capturing original values")
 
                     # Capture final state with all models loaded
                     self._capture_original_values()
-                    logger.debug(
+                    self._get_logger().debug(
                         f"showEvent: Captured {len(self._original_values)} original values"
                     )
 
@@ -1287,7 +1335,7 @@ class EnhancedSettingsWindow(QDialog):
                     self._tracking_enabled = True
                     if self.save_button:
                         self._update_save_button_style(False)
-                        logger.debug(
+                        self._get_logger().debug(
                             f"showEvent: Button disabled, enabled={self.save_button.isEnabled()}"
                         )
                 finally:
@@ -2374,7 +2422,7 @@ If 5 pages provided and pages 3 and 5 don't belong:
                     if now - last_updated < timedelta(hours=24):
                         # Use cached download status
                         downloaded_model_names = set(json.loads(cached_downloaded))
-                        logger.debug(
+                        self._get_logger().debug(
                             f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                         )
                 except (ValueError, json.JSONDecodeError):
@@ -2396,7 +2444,7 @@ If 5 pages provided and pages 3 and 5 don't belong:
                     json.dumps(list(downloaded_model_names)),
                 )
                 self.config_manager.set_setting("ModelCache", "ollama_models_timestamp", timestamp)
-                logger.debug(f"Checked Ollama download status at {timestamp}")
+                self._get_logger().debug(f"Checked Ollama download status at {timestamp}")
 
             except Exception as e:
                 show_warning(self, "Error", f"Failed to load Ollama models: {e}")
@@ -2604,13 +2652,13 @@ If 5 pages provided and pages 3 and 5 don't belong:
                 # Cache is valid - parse and return models
                 models = json.loads(cached_json)
                 if isinstance(models, list) and len(models) > 0:
-                    logger.debug(
+                    self._get_logger().debug(
                         f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                     )
                     return models
 
         except (ValueError, json.JSONDecodeError) as e:
-            logger.warning(f"Error parsing cached {provider} models: {e}")
+            self._get_logger().warning(f"Error parsing cached {provider} models: {e}")
 
         return None
 
@@ -2634,7 +2682,7 @@ If 5 pages provided and pages 3 and 5 don't belong:
         self.config_manager.set_setting("ModelCache", cache_key, models_json)
         self.config_manager.set_setting("ModelCache", timestamp_key, timestamp)
 
-        logger.debug(f"Cached {len(models)} {provider} models at {timestamp}")
+        self._get_logger().debug(f"Cached {len(models)} {provider} models at {timestamp}")
 
     def _fetch_claude_models_from_web(self) -> list[str]:
         """Use Claude to search the web for latest vision-capable models"""
@@ -2686,7 +2734,7 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            logger.info(f"Could not fetch Claude models from web: {e}")
+            self._get_logger().info(f"Could not fetch Claude models from web: {e}")
 
         # Fallback to curated list
         return [
@@ -2784,7 +2832,7 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            logger.info(f"Could not fetch Gemini models from web: {e}")
+            self._get_logger().info(f"Could not fetch Gemini models from web: {e}")
 
         # Fallback to curated list
         return [
@@ -3214,7 +3262,7 @@ Return ONLY the JSON array, no other text."""
             self._original_values["minimize_to_tray"] = self.minimize_to_tray_checkbox.isChecked()
             self._original_values["close_to_tray"] = self.close_to_tray_checkbox.isChecked()
         except Exception as e:
-            logger.error(f"Error capturing original values: {e}", exc_info=True)
+            self._get_logger().error(f"Error capturing original values: {e}", exc_info=True)
             # Set empty defaults so the app doesn't crash
             self._original_values = {}
 
@@ -3272,8 +3320,8 @@ Return ONLY the JSON array, no other text."""
             # Debug logging
             import traceback
 
-            logger.debug(f"_update_save_button_style called with enabled={enabled}")
-            logger.debug(f"Call stack: {''.join(traceback.format_stack()[-3:-1])}")
+            self._get_logger().debug(f"_update_save_button_style called with enabled={enabled}")
+            self._get_logger().debug(f"Call stack: {''.join(traceback.format_stack()[-3:-1])}")
 
             current_theme = self.config_manager.get_setting("Theme", "theme", "light")
 
@@ -3346,7 +3394,7 @@ Return ONLY the JSON array, no other text."""
             self.save_button.setEnabled(enabled)
 
         except Exception as e:
-            logger.error(f"Error updating save button style: {e}", exc_info=True)
+            self._get_logger().error(f"Error updating save button style: {e}", exc_info=True)
 
     def _check_for_changes(self):
         """Check if any values have changed from original and enable/disable Save button."""
@@ -3441,7 +3489,7 @@ Return ONLY the JSON array, no other text."""
                     current_directories.append(item.text())
             if current_directories != self._original_values.get("directories", []):
                 has_changes = True
-                logger.debug(
+                self._get_logger().debug(
                     f"Directories changed: {current_directories} != {self._original_values.get('directories', [])}"
                 )
             if self.scan_on_startup_checkbox.isChecked() != self._original_values.get(
@@ -3471,16 +3519,16 @@ Return ONLY the JSON array, no other text."""
 
             # Log what changed
             if changed_fields:
-                logger.debug(f"Changes detected in {len(changed_fields)} field(s):")
+                self._get_logger().debug(f"Changes detected in {len(changed_fields)} field(s):")
                 for field in changed_fields:
-                    logger.debug(f"  - {field}")
+                    self._get_logger().debug(f"  - {field}")
             else:
-                logger.debug("No changes detected")
+                self._get_logger().debug("No changes detected")
 
             # Update save button state and style
             self._update_save_button_style(has_changes)
         except Exception as e:
-            logger.error(f"Error checking for changes: {e}", exc_info=True)
+            self._get_logger().error(f"Error checking for changes: {e}", exc_info=True)
             # On error, enable the save button to be safe
             if hasattr(self, "save_button") and self.save_button:
                 self._update_save_button_style(True)

@@ -4,16 +4,22 @@ Manages file discovery and registration without LLM analysis.
 """
 
 import glob
+import logging
 import os
 import sqlite3
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from db.repositories.image_files_repo import ImageFilesRepository
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class DiscoveryService:
@@ -29,7 +35,15 @@ class DiscoveryService:
         """
         self.config = config_manager
         self.analysis_db = analysis_db
-        self.logger = get_logger()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def discover_images(
         self,
@@ -51,7 +65,7 @@ class DiscoveryService:
             Count of newly registered files (not including existing files)
         """
         if not directories:
-            self.logger.info("[DISCOVERY] No directories provided")
+            self._get_logger().info("[DISCOVERY] No directories provided")
             return 0
 
         # Count newly registered files
@@ -64,7 +78,7 @@ class DiscoveryService:
         all_files = []
         for directory in directories:
             if not os.path.exists(directory):
-                self.logger.warning(f"[DISCOVERY] Directory does not exist: {directory}")
+                self._get_logger().warning(f"[DISCOVERY] Directory does not exist: {directory}")
                 continue
 
             try:
@@ -76,17 +90,17 @@ class DiscoveryService:
                         pattern = os.path.join(directory, "**", ext)
                         image_files_set.update(glob.glob(pattern, recursive=True))
                     except PermissionError as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] Permission denied scanning for {ext} in {directory}: {e}"
                         )
                         continue
                     except OSError as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] OS error scanning for {ext} in {directory}: {e}"
                         )
                         continue
                     except Exception as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] Unexpected error scanning for {ext} in {directory}: {e}"
                         )
                         continue
@@ -95,14 +109,16 @@ class DiscoveryService:
                 all_files.extend(image_files)
 
             except PermissionError as e:
-                self.logger.error(f"[DISCOVERY] Permission denied accessing {directory}: {e}")
+                self._get_logger().error(
+                    f"[DISCOVERY] Permission denied accessing {directory}: {e}"
+                )
                 continue
             except OSError as e:
-                self.logger.error(f"[DISCOVERY] OS error scanning {directory}: {e}")
+                self._get_logger().error(f"[DISCOVERY] OS error scanning {directory}: {e}")
                 continue
 
         total_files = len(all_files)
-        self.logger.info(f"[DISCOVERY] Found {total_files} image files")
+        self._get_logger().info(f"[DISCOVERY] Found {total_files} image files")
 
         # Process each file
         for idx, image_path in enumerate(all_files):
@@ -121,7 +137,7 @@ class DiscoveryService:
                 if existing:
                     # File already registered - update last_seen timestamp
                     image_repo.update_last_seen(image_path)
-                    self.logger.debug(
+                    self._get_logger().debug(
                         f"[DISCOVERY] Updated last_seen: {os.path.basename(image_path)}"
                     )
                 else:
@@ -152,47 +168,47 @@ class DiscoveryService:
                         )
 
                         new_file_count += 1
-                        self.logger.info(f"[DISCOVERY] Registered new file: {filename}")
+                        self._get_logger().info(f"[DISCOVERY] Registered new file: {filename}")
 
                     except FileNotFoundError as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] File not found during registration "
                             f"{os.path.basename(image_path)}: {e}"
                         )
                         # Continue with next file
                     except PermissionError as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] Permission denied registering {os.path.basename(image_path)}: {e}"
                         )
                         # Continue with next file
                     except OSError as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] OS error registering {os.path.basename(image_path)}: {e}"
                         )
                         # Continue with next file
                     except sqlite3.Error as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] Database error registering {os.path.basename(image_path)}: {e}"
                         )
                         # Continue with next file
                     except Exception as e:
-                        self.logger.error(
+                        self._get_logger().error(
                             f"[DISCOVERY] Unexpected error registering {os.path.basename(image_path)}: {e}"
                         )
                         # Continue with next file
 
             except sqlite3.Error as e:
-                self.logger.error(
+                self._get_logger().error(
                     f"[DISCOVERY] Database error processing {os.path.basename(image_path)}: {e}"
                 )
                 # Continue with next file
             except Exception as e:
-                self.logger.error(
+                self._get_logger().error(
                     f"[DISCOVERY] Unexpected error processing {os.path.basename(image_path)}: {e}"
                 )
                 # Continue with next file
 
-        self.logger.info(f"[DISCOVERY] Completed - {new_file_count} new files registered")
+        self._get_logger().info(f"[DISCOVERY] Completed - {new_file_count} new files registered")
         return new_file_count
 
 
@@ -200,7 +216,7 @@ class DiscoveryService:
 if __name__ == "__main__":
     import logging
 
-    from services.logging_service import LoggingService
+    from services.logging_service import LoggingService, get_logger
 
     LoggingService().initialize(log_level=logging.DEBUG, console_output=True)
     _logger = get_logger()

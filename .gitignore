@@ -75,3 +75,4 @@ service-account*.json
 scans/
 organized/
 .worktrees/
+.mypy_cache/

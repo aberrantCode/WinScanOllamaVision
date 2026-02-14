@@ -3,16 +3,22 @@ Discovery Scheduler
 Manages periodic discovery execution using QTimer.
 """
 
+import logging
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from services.discovery_worker import DiscoveryWorker
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class DiscoveryScheduler(QObject):
@@ -35,7 +41,15 @@ class DiscoveryScheduler(QObject):
         self.timer = QTimer()
         self.timer.timeout.connect(self._on_timer_tick)
         self.worker: DiscoveryWorker | None = None
-        self.logger = get_logger()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def start(self):
         """
@@ -46,14 +60,14 @@ class DiscoveryScheduler(QObject):
         # Check if discovery is enabled
         enabled = self.config_manager.get_bool("Discovery", "enabled", True)
         if not enabled:
-            self.logger.info("[DISCOVERY SCHEDULER] Discovery is disabled in settings")
+            self._get_logger().info("[DISCOVERY SCHEDULER] Discovery is disabled in settings")
             return
 
         # Get interval from config (in minutes)
         interval_minutes = self.config_manager.get_int("Discovery", "interval_minutes", 60)
 
         if interval_minutes <= 0:
-            self.logger.warning(
+            self._get_logger().warning(
                 f"[DISCOVERY SCHEDULER] Invalid interval: {interval_minutes} minutes"
             )
             return
@@ -63,12 +77,14 @@ class DiscoveryScheduler(QObject):
 
         # Start timer
         self.timer.start(interval_ms)
-        self.logger.info(f"[DISCOVERY SCHEDULER] Started with interval: {interval_minutes} minutes")
+        self._get_logger().info(
+            f"[DISCOVERY SCHEDULER] Started with interval: {interval_minutes} minutes"
+        )
 
     def stop(self):
         """Stop periodic discovery"""
         self.timer.stop()
-        self.logger.info("[DISCOVERY SCHEDULER] Stopped")
+        self._get_logger().info("[DISCOVERY SCHEDULER] Stopped")
 
         # Stop worker if running
         if self.worker and self.worker.isRunning():
@@ -81,19 +97,19 @@ class DiscoveryScheduler(QObject):
 
         This does not affect the periodic schedule.
         """
-        self.logger.info("[DISCOVERY SCHEDULER] Manual discovery triggered")
+        self._get_logger().info("[DISCOVERY SCHEDULER] Manual discovery triggered")
         self._execute_discovery()
 
     def _on_timer_tick(self):
         """Handle timer tick event"""
-        self.logger.info("[DISCOVERY SCHEDULER] Timer tick - starting discovery")
+        self._get_logger().info("[DISCOVERY SCHEDULER] Timer tick - starting discovery")
         self._execute_discovery()
 
     def _execute_discovery(self):
         """Execute discovery job"""
         # Don't start new discovery if one is already running
         if self.worker and self.worker.isRunning():
-            self.logger.warning("[DISCOVERY SCHEDULER] Discovery already running, skipping")
+            self._get_logger().warning("[DISCOVERY SCHEDULER] Discovery already running, skipping")
             return
 
         # Get directories from database
@@ -104,7 +120,7 @@ class DiscoveryScheduler(QObject):
             analysis_db.close()
 
         if not directories:
-            self.logger.warning("[DISCOVERY SCHEDULER] No active directories configured")
+            self._get_logger().warning("[DISCOVERY SCHEDULER] No active directories configured")
             return
 
         # Create worker
@@ -127,7 +143,7 @@ class DiscoveryScheduler(QObject):
         Args:
             count: Number of new files discovered
         """
-        self.logger.info(f"[DISCOVERY SCHEDULER] Discovery finished - {count} new files")
+        self._get_logger().info(f"[DISCOVERY SCHEDULER] Discovery finished - {count} new files")
 
         # Update last run timestamp in config
         timestamp = datetime.now().isoformat()
@@ -143,7 +159,7 @@ class DiscoveryScheduler(QObject):
         Args:
             error: Error message
         """
-        self.logger.error(f"[DISCOVERY SCHEDULER] Discovery error: {error}")
+        self._get_logger().error(f"[DISCOVERY SCHEDULER] Discovery error: {error}")
 
         # Emit error signal
         self.discovery_error.emit(error)

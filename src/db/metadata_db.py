@@ -5,7 +5,8 @@ Maintains existing API while delegating to focused repository classes.
 """
 
 import hashlib
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
 from db.connection import DatabaseConnection, get_appdata_db_path
 from db.repositories import (
@@ -15,9 +16,13 @@ from db.repositories import (
     RotationRepository,
 )
 from db.schema import create_all_tables
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class MetadataDB:
@@ -49,6 +54,15 @@ class MetadataDB:
         self._companies_cache: list[str] | None = None
         self._titles_cache: list[str] | None = None
 
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
     @staticmethod
     def compute_file_hash(file_path: str) -> str:
         """
@@ -72,15 +86,22 @@ class MetadataDB:
                     sha256_hash.update(byte_block)
             return sha256_hash.hexdigest()
         except FileNotFoundError as e:
-            logger.error(f"[FILE HASH] File not found: {file_path}")
+            # Lazy initialization for static method
+            from services.logging_service import get_logger as _get_logger
+
+            _get_logger().error(f"[FILE HASH] File not found: {file_path}")
             raise FileNotFoundError(
                 f"Cannot compute hash - file does not exist: {file_path}"
             ) from e
         except PermissionError as e:
-            logger.error(f"[FILE HASH] Permission denied: {file_path}")
+            from services.logging_service import get_logger as _get_logger
+
+            _get_logger().error(f"[FILE HASH] Permission denied: {file_path}")
             raise PermissionError(f"Cannot access file for hashing: {file_path}") from e
         except OSError as e:
-            logger.error(f"[FILE HASH] OS error: {file_path} - {e}")
+            from services.logging_service import get_logger as _get_logger
+
+            _get_logger().error(f"[FILE HASH] OS error: {file_path} - {e}")
             raise OSError(f"Failed to read file for hashing: {e}") from e
 
     def save_metadata(

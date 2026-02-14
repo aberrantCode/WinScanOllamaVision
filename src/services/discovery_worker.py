@@ -3,16 +3,22 @@ Discovery Worker Thread
 Background worker for running file discovery without blocking UI.
 """
 
+import logging
 import sqlite3
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from services.discovery_service import DiscoveryService
-from services.logging_service import get_logger
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class DiscoveryWorker(QThread):
@@ -36,13 +42,22 @@ class DiscoveryWorker(QThread):
         self.directories = directories
         self._stop_requested = False
 
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
     def run(self):
         """Execute discovery in background thread"""
         # Create thread-local database connection
         thread_analysis_db = None
 
         try:
-            logger.info("[DISCOVERY WORKER] Starting discovery worker")
+            self._get_logger().info("[DISCOVERY WORKER] Starting discovery worker")
 
             # Create new database instance for this thread
             thread_analysis_db = AnalysisDB()
@@ -61,32 +76,32 @@ class DiscoveryWorker(QThread):
 
             # Emit finished signal with count
             self.finished.emit(count)
-            logger.info(f"[DISCOVERY WORKER] Completed - {count} new files")
+            self._get_logger().info(f"[DISCOVERY WORKER] Completed - {count} new files")
 
         except InterruptedError:
             # Discovery was cancelled
-            logger.info("[DISCOVERY WORKER] Discovery cancelled by user")
+            self._get_logger().info("[DISCOVERY WORKER] Discovery cancelled by user")
             self.finished.emit(0)
 
         except sqlite3.Error as e:
             import traceback
 
             error_msg = f"Database error: {str(e)}\n{traceback.format_exc()}"
-            logger.error(f"[DISCOVERY WORKER] {error_msg}")
+            self._get_logger().error(f"[DISCOVERY WORKER] {error_msg}")
             self.error.emit(error_msg)
 
         except OSError as e:
             import traceback
 
             error_msg = f"File system error: {str(e)}\n{traceback.format_exc()}"
-            logger.error(f"[DISCOVERY WORKER] {error_msg}")
+            self._get_logger().error(f"[DISCOVERY WORKER] {error_msg}")
             self.error.emit(error_msg)
 
         except Exception as e:
             import traceback
 
             error_msg = f"Unexpected discovery error: {str(e)}\n{traceback.format_exc()}"
-            logger.error(f"[DISCOVERY WORKER] {error_msg}")
+            self._get_logger().error(f"[DISCOVERY WORKER] {error_msg}")
             self.error.emit(error_msg)
 
         finally:
@@ -97,7 +112,7 @@ class DiscoveryWorker(QThread):
     def stop(self):
         """Request worker to stop"""
         self._stop_requested = True
-        logger.info("[DISCOVERY WORKER] Stop requested")
+        self._get_logger().info("[DISCOVERY WORKER] Stop requested")
 
 
 # Example usage

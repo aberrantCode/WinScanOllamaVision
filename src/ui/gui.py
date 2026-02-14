@@ -43,19 +43,26 @@ except ImportError:
     )
     sys.exit(1)
 
+import logging
+from typing import TYPE_CHECKING
+
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
 from services.bundling_service import BundlingService
 from services.file_service import FileService
-from services.logging_service import get_logger
 from ui.analysis_status_window import AnalysisStatusWindow
 from ui.bundle_widgets import BundleSuggestionsView
 from ui.settings_window_enhanced import EnhancedSettingsWindow
 from ui.styles import show_critical, show_information, show_question, show_warning
 
-logger = get_logger()
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
+
+logger: logging.Logger | None = None
 
 
 class ProgressBannerWidget(QWidget):
@@ -69,6 +76,15 @@ class ProgressBannerWidget(QWidget):
         super().__init__(parent)
         self.details_expanded = False
         self._init_ui()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self):
         self.setStyleSheet("""
@@ -315,6 +331,15 @@ class OllamaWorker(QThread):
         self.args = args
         self.kwargs = kwargs
 
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
     def run(self):
         try:
             # Add progress callback to kwargs if method supports it
@@ -349,6 +374,15 @@ class FinalConfirmationDialog(QDialog):
         self.setGeometry(100, 100, 700, 500)
         self.pdf_path = pdf_path
         self._init_ui(source_paths, expected, actual, searchable)
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self, source_paths, expected, actual, searchable):
         main_layout = QVBoxLayout(self)
@@ -417,6 +451,15 @@ class ExpandablePromptEdit(QPlainTextEdit):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setPlaceholderText("Click to edit prompt...")
 
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
     def focusInEvent(self, event):  # noqa: N802
         """Expand when focused"""
         super().focusInEvent(event)
@@ -473,6 +516,15 @@ class PagePreviewWidget(QWidget):
         page_label.setWordWrap(True)
         layout.addWidget(page_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
     def is_selected(self) -> bool:
         return cast(bool, self.checkbox.isChecked())
 
@@ -511,6 +563,15 @@ class ConvertPDFsWindow(QMainWindow):
         # If no PDF files provided, load from scan folder
         if not self.pdf_files:
             self._load_pdfs()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self):
         """Initialize the UI with 3-step workflow"""
@@ -835,6 +896,15 @@ class ImageGalleryWidget(QWidget):
         self.checked_files: set[str] = set()  # file paths that are checked
         self.current_file: str | None = None  # Currently selected file path
         self._init_ui()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self):
         """Initialize the image gallery UI"""
@@ -1242,6 +1312,15 @@ class MetadataDisplayWidget(QWidget):
         self.current_file_path: str | None = None
         self.current_bundle_files: list[str] = []  # file paths in current bundle
         self._init_ui()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self):
         """Initialize the metadata display UI"""
@@ -1719,6 +1798,15 @@ class ConvertImagesWindow(QMainWindow):
         # Auto-start import scans after UI is initialized
         # Start immediately to reduce perceived loading time
         QTimer.singleShot(0, self._scan_and_group)
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self):
         """Initialize the three-step workflow UI"""
@@ -2495,13 +2583,13 @@ class ConvertImagesWindow(QMainWindow):
             # Refresh preview with rotation applied
             self._refresh_preview_zoom()
 
-            logger.info(
+            self._get_logger().info(
                 f"[Rotation] Set rotation for {os.path.basename(self.current_page_path)} to {new_rotation} degrees (display-only, source file unchanged)"
             )
 
         except Exception as e:
             show_warning(self, "Rotation Failed", f"Could not save rotation: {e}")
-            logger.error(f"[Rotation] Error: {e}", exc_info=True)
+            self._get_logger().error(f"[Rotation] Error: {e}", exc_info=True)
 
     # ===== VISUAL FEEDBACK METHODS (PHASE 6) =====
 
@@ -3455,9 +3543,9 @@ class ConvertImagesWindow(QMainWindow):
         if hasattr(self, "created_pdf_path") and os.path.exists(self.created_pdf_path):
             try:
                 os.remove(self.created_pdf_path)
-                logger.debug(f"Deleted preview PDF: {self.created_pdf_path}")
+                self._get_logger().debug(f"Deleted preview PDF: {self.created_pdf_path}")
             except Exception as e:
-                logger.warning(f"Could not delete preview PDF: {e}")
+                self._get_logger().warning(f"Could not delete preview PDF: {e}")
 
         # Return to Step 3
         self._setup_step3_ui()
@@ -3492,7 +3580,9 @@ class ConvertImagesWindow(QMainWindow):
 
         # Safety check: ensure we're still in Step 3 (Ordering)
         if not hasattr(self, "current_step") or self.current_step != WorkflowStep.ORDERING:
-            logger.warning("Content ordering completed but UI has moved to a different step")
+            self._get_logger().warning(
+                "Content ordering completed but UI has moved to a different step"
+            )
             return
 
         if isinstance(result, Exception):
@@ -3519,7 +3609,7 @@ class ConvertImagesWindow(QMainWindow):
                         f"✓ Pages reordered by content analysis (confidence: {confidence}). Review and approve."
                     )
                 except RuntimeError:
-                    logger.warning("Status label no longer exists")
+                    self._get_logger().warning("Status label no longer exists")
         except Exception as e:
             show_critical(self, "Ordering Error", f"Failed to apply content-based ordering: {e}")
 
@@ -3953,7 +4043,9 @@ class ConvertImagesWindow(QMainWindow):
                     f"Found {len(analyzed_files)} analyzed file(s). Generating bundle suggestions..."
                 )
 
-            logger.info(f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling")
+            self._get_logger().info(
+                f"[ConvertImages] Using {len(analyzed_files)} analyzed files for bundling"
+            )
 
             # Generate bundle suggestions immediately (no analysis needed)
             self._load_and_show_bundle_suggestions()
@@ -3973,7 +4065,9 @@ class ConvertImagesWindow(QMainWindow):
 
             # Check if this file has already been processed (in page_states)
             if next_file in self.page_states:
-                logger.debug(f"Skipping already processed file: {os.path.basename(next_file)}")
+                self._get_logger().debug(
+                    f"Skipping already processed file: {os.path.basename(next_file)}"
+                )
                 self.current_file_index += 1
                 continue
 
@@ -4079,7 +4173,7 @@ Files being sent to Ollama:
 
         if cached_metadata and cached_metadata.get("belongs_to_same_doc") is not None:
             # Use cached metadata instead of calling Ollama
-            logger.debug(f"Using cached metadata for {os.path.basename(next_file)}")
+            self._get_logger().debug(f"Using cached metadata for {os.path.basename(next_file)}")
 
             # Convert cached data to expected format
             result = {
@@ -4099,7 +4193,7 @@ Files being sent to Ollama:
             return
 
         # No cache or stale cache - call Ollama
-        logger.info(f"Fetching fresh metadata for {os.path.basename(next_file)}")
+        self._get_logger().info(f"Fetching fresh metadata for {os.path.basename(next_file)}")
 
         # Start spinner animation
         if hasattr(self, "step1_spinner_timer"):
@@ -4132,7 +4226,9 @@ Files being sent to Ollama:
 
         # Safety check: ensure we're still in Step 1 (Stitching)
         if not hasattr(self, "current_step") or self.current_step != WorkflowStep.STITCHING:
-            logger.warning("Page validation completed but UI has moved to a different step")
+            self._get_logger().warning(
+                "Page validation completed but UI has moved to a different step"
+            )
             return
 
         # Hide cancel request button, keep abort visible
@@ -4140,7 +4236,7 @@ Files being sent to Ollama:
             try:
                 self.cancel_request_button.setVisible(False)
             except RuntimeError:
-                logger.warning("Step 1 UI no longer exists")
+                self._get_logger().warning("Step 1 UI no longer exists")
                 return
 
         # Extract validation result and comprehensive metadata
@@ -4217,7 +4313,7 @@ Files being sent to Ollama:
                         f"Group has {len(self.current_group)} page(s). Use buttons to override."
                     )
                 except RuntimeError:
-                    logger.warning("Status label no longer exists")
+                    self._get_logger().warning("Status label no longer exists")
             return
 
         if belongs:
@@ -4239,7 +4335,7 @@ Files being sent to Ollama:
                         f"({files_remaining} remaining)"
                     )
                 except RuntimeError:
-                    logger.warning("Status label no longer exists")
+                    self._get_logger().warning("Status label no longer exists")
 
             # Auto-load next page
             if self.current_file_index < len(self.all_files):
@@ -4253,7 +4349,7 @@ Files being sent to Ollama:
                             f"Click Exclude to finish stitching."
                         )
                     except RuntimeError:
-                        logger.warning("Status label no longer exists")
+                        self._get_logger().warning("Status label no longer exists")
         else:
             # Ollama says NO - mark as excluded visually, let user decide
             self._update_thumbnail_state(evaluated_file, "excluded")
@@ -4280,7 +4376,7 @@ Files being sent to Ollama:
                         f"Use buttons to Include, Skip, or Finish Group."
                     )
                 except RuntimeError:
-                    logger.warning("Status label no longer exists")
+                    self._get_logger().warning("Status label no longer exists")
 
             # Start auto-approval on Approve button if group is not empty
             if (
@@ -4291,7 +4387,7 @@ Files being sent to Ollama:
                 try:
                     self._start_auto_approval(self.exclude_button, "Approve")
                 except RuntimeError:
-                    logger.warning("Exclude button no longer exists")
+                    self._get_logger().warning("Exclude button no longer exists")
 
     def _on_include_current_page(self):
         """User clicked Include button - change excluded page to included or include new page"""
@@ -4643,9 +4739,11 @@ Files being sent to Ollama:
                 cursor = self.metadata_db.conn.cursor()
                 cursor.execute("DELETE FROM active_metadata WHERE file_path = ?", (current_page,))
                 self.metadata_db.conn.commit()
-                logger.debug(f"Cleared cached metadata for {os.path.basename(current_page)}")
+                self._get_logger().debug(
+                    f"Cleared cached metadata for {os.path.basename(current_page)}"
+                )
         except Exception as e:
-            logger.warning(f"Error clearing cache: {e}")
+            self._get_logger().warning(f"Error clearing cache: {e}")
 
         # Remove from page_metadata_list
         self.page_metadata_list = [
@@ -4875,7 +4973,7 @@ Files being sent to Ollama:
         """Add a thumbnail to the thumbnail strip with status indicator"""
         # Check if this image is already in the thumbnail strip
         if image_path in self.page_states:
-            logger.debug(
+            self._get_logger().debug(
                 f"Skipping duplicate thumbnail: {os.path.basename(image_path)} (already in strip)"
             )
             return
@@ -4884,7 +4982,9 @@ Files being sent to Ollama:
         for i in range(self.thumbnail_layout.count()):
             widget = self.thumbnail_layout.itemAt(i).widget()
             if widget and widget.property("image_path") == image_path:
-                logger.debug(f"Thumbnail already exists in layout: {os.path.basename(image_path)}")
+                self._get_logger().debug(
+                    f"Thumbnail already exists in layout: {os.path.basename(image_path)}"
+                )
                 return
 
         self.page_states[image_path] = state
@@ -5148,10 +5248,12 @@ Files being sent to Ollama:
         # DEBUG: Verify current_group contents
         import os
 
-        logger.debug("Metadata Extraction - current_group length: %d", len(self.current_group))
+        self._get_logger().debug(
+            "Metadata Extraction - current_group length: %d", len(self.current_group)
+        )
         for i, img_path in enumerate(self.current_group, 1):
             exists = os.path.exists(img_path) if img_path else False
-            logger.debug("  Image %d: exists=%s | path=%s", i, exists, img_path)
+            self._get_logger().debug("  Image %d: exists=%s | path=%s", i, exists, img_path)
 
         # Store the request prompt for debugging (with file paths)
         file_list = "\n".join(
@@ -5190,14 +5292,18 @@ Files being sent to Ollama:
 
         # Safety check: ensure UI elements still exist (user may have navigated away)
         if not hasattr(self, "cancel_ollama_button") or not self.cancel_ollama_button:
-            logger.warning("Metadata extraction completed but UI has changed - ignoring result")
+            self._get_logger().warning(
+                "Metadata extraction completed but UI has changed - ignoring result"
+            )
             return
 
         # Try to access button, but handle gracefully if deleted
         try:
             self.cancel_ollama_button.setEnabled(False)
         except RuntimeError:
-            logger.warning("Metadata extraction completed but Step 2 UI no longer exists")
+            self._get_logger().warning(
+                "Metadata extraction completed but Step 2 UI no longer exists"
+            )
             return
 
         if isinstance(result, Exception):
@@ -5227,7 +5333,7 @@ Files being sent to Ollama:
             if hasattr(self, "date_edit") and self.date_edit:
                 self.date_edit.setText(result.get("date", "") or "")
         except RuntimeError as e:
-            logger.warning(f"UI elements deleted during metadata update: {e}")
+            self._get_logger().warning(f"UI elements deleted during metadata update: {e}")
             return
 
         # Store raw response for debugging
@@ -5241,7 +5347,7 @@ Files being sent to Ollama:
             if hasattr(self, "continue_button") and self.continue_button:
                 self.continue_button.setEnabled(True)
         except RuntimeError as e:
-            logger.warning(f"Button access failed: {e}")
+            self._get_logger().warning(f"Button access failed: {e}")
             return
 
         self.status_label.setText("✓ Metadata extracted successfully. Review and click Approve.")
@@ -5481,7 +5587,7 @@ Files being sent to Ollama:
                     document_metadata=document_metadata,
                 )
 
-                logger.info(
+                self._get_logger().info(
                     f"Archived metadata for {os.path.basename(self.created_pdf_path)} - "
                     f"{len(self.current_group)} source files, "
                     f"Company: {document_metadata.get('company')}, "
@@ -5489,7 +5595,7 @@ Files being sent to Ollama:
                 )
 
             except Exception as e:
-                logger.warning(f"Failed to archive metadata: {e}")
+                self._get_logger().warning(f"Failed to archive metadata: {e}")
                 # Don't fail the whole operation if archival fails
 
             # Reset UI state before processing
@@ -5555,7 +5661,7 @@ Files being sent to Ollama:
 
     def _on_analysis_complete_proceed_to_bundling(self, stats):
         """Analysis complete - proceed to bundle suggestions"""
-        logger.info(f"[ConvertImages] Analysis complete: {stats}")
+        self._get_logger().info(f"[ConvertImages] Analysis complete: {stats}")
         if hasattr(self, "status_label") and self.status_label:
             self.status_label.setText(
                 f"Analysis complete. Generating bundle suggestions for {len(self.all_files)} file(s)..."
@@ -5567,13 +5673,13 @@ Files being sent to Ollama:
         """Generate and display bundle suggestions using guided workflow"""
         try:
             # Generate bundle suggestions using BundlingService
-            logger.info(
+            self._get_logger().info(
                 f"[Bundle Suggestions] Generating recommendations for {len(self.all_files)} files..."
             )
             bundles = self.bundling_service.generate_bundle_recommendations(self.all_files)
 
             if bundles and len(bundles) > 0:
-                logger.info(
+                self._get_logger().info(
                     f"[Bundle Suggestions] Launching guided workflow with {len(bundles)} suggestions"
                 )
 
@@ -5607,7 +5713,7 @@ Files being sent to Ollama:
 
             else:
                 # No bundles found, skip to manual workflow
-                logger.info(
+                self._get_logger().info(
                     "[Bundle Suggestions] No bundles generated, skipping to manual workflow"
                 )
                 self.status_label.setText(
@@ -5616,7 +5722,9 @@ Files being sent to Ollama:
                 QTimer.singleShot(1000, self._on_skip_to_manual_workflow)
 
         except Exception as e:
-            logger.error(f"[Bundle Suggestions] Error generating suggestions: {e}", exc_info=True)
+            self._get_logger().error(
+                f"[Bundle Suggestions] Error generating suggestions: {e}", exc_info=True
+            )
             # Fall back to manual workflow
             show_warning(
                 self,
@@ -5675,7 +5783,7 @@ Files being sent to Ollama:
 
     def _on_bundle_accepted_from_workflow(self, bundle):
         """Handle bundle acceptance from guided workflow."""
-        logger.info(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
+        self._get_logger().info(f"Bundle accepted from workflow: {bundle.get('bundle_id')}")
         # The workflow already handled PDF conversion and database updates
         # Just track it in completed groups
         file_paths = bundle.get("file_paths", [])
@@ -5696,7 +5804,7 @@ Files being sent to Ollama:
         bundle_id = bundle.get("bundle_id")
         if bundle_id:
             # Already marked as rejected in database by workflow
-            logger.info(f"Bundle rejected from workflow: {bundle_id}")
+            self._get_logger().info(f"Bundle rejected from workflow: {bundle_id}")
 
     def _on_workflow_completed(self, stats):
         """Handle workflow completion."""
@@ -5709,15 +5817,15 @@ Files being sent to Ollama:
         if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
             try:
                 self._analysis_status_window._refresh_all()
-                logger.debug("[Auto-refresh] Updated metrics after bundle operation")
+                self._get_logger().debug("[Auto-refresh] Updated metrics after bundle operation")
             except Exception as e:
-                logger.warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
+                self._get_logger().warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     # ===== PHASE 7: Bundle Suggestion Handlers =====
 
     def _on_bundle_accepted(self, bundle_data):
         """Handle bundle acceptance - add to completed groups"""
-        logger.info(
+        self._get_logger().info(
             f"[Bundle] Accepted: {bundle_data.get('document_type')} - {bundle_data.get('company')}"
         )
         file_paths = bundle_data.get("file_paths", [])
@@ -5801,7 +5909,7 @@ Files being sent to Ollama:
 
     def _on_bundle_modified(self, bundle_data):
         """Handle bundle modification - launch bundle review window"""
-        logger.info(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
+        self._get_logger().info(f"[Bundle] Modify requested: {bundle_data.get('document_type')}")
 
         bundle_id = bundle_data.get("id")
         if not bundle_id:
@@ -5833,7 +5941,9 @@ Files being sent to Ollama:
         bundle_id = result_data.get("bundle_id")
         file_paths = result_data.get("file_paths", [])
 
-        logger.info(f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages")
+        self._get_logger().info(
+            f"[Bundle Review] Confirmed bundle {bundle_id} with {len(file_paths)} pages"
+        )
 
         # Remove this bundle from display
         self._remove_bundle_card(bundle_id)
@@ -5854,7 +5964,7 @@ Files being sent to Ollama:
         """Handle bundle review rejection."""
         bundle_id = bundle_data.get("bundle_id")
 
-        logger.info(f"[Bundle Review] Rejected bundle {bundle_id}")
+        self._get_logger().info(f"[Bundle Review] Rejected bundle {bundle_id}")
 
         # Mark bundle as rejected in database
         from services.bundling_service import BundlingService
@@ -5887,7 +5997,7 @@ Files being sent to Ollama:
 
     def _on_bundle_rejected(self, bundle_data):
         """Handle bundle rejection - pages remain in pool for manual processing"""
-        logger.info(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
+        self._get_logger().info(f"[Bundle] Rejected: {bundle_data.get('document_type')}")
         file_paths = bundle_data.get("file_paths", [])
 
         # Display confirmation
@@ -6022,7 +6132,7 @@ Files being sent to Ollama:
 
     def _show_bundle_view(self):
         """Show bundle suggestions view and hide three-column layout"""
-        logger.info("[Bundle View] Showing bundle suggestions view")
+        self._get_logger().info("[Bundle View] Showing bundle suggestions view")
 
         # Stop and clear any loading UI
         if hasattr(self, "loading_spinner_timer") and self.loading_spinner_timer.isActive():
@@ -6059,7 +6169,7 @@ Files being sent to Ollama:
 
     def _show_manual_view(self):
         """Show three-column manual stitching view and hide bundle suggestions"""
-        logger.info("[Manual View] Showing three-column layout")
+        self._get_logger().info("[Manual View] Showing three-column layout")
 
         # Hide bundle suggestions view
         self.bundle_suggestions_view.setVisible(False)
@@ -6077,7 +6187,7 @@ Files being sent to Ollama:
 
     def _on_skip_to_manual_workflow(self):
         """Skip bundle suggestions and go to manual stitching"""
-        logger.info("[Bundle] Skipping to manual workflow")
+        self._get_logger().info("[Bundle] Skipping to manual workflow")
 
         # Setup Step 1 UI if not already done
         if self.current_step != WorkflowStep.STITCHING:
@@ -6112,6 +6222,15 @@ class StartupWindow(QWidget):
         self.analysis_db = AnalysisDB()
         self.metadata_db = MetadataDB()
         self._init_ui()
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def _init_ui(self):
         # Branded blue background (intentional - this is the landing page)
@@ -6865,18 +6984,16 @@ class StartupWindow(QWidget):
         """Check for unanalyzed files and show welcome dialog if needed"""
         import glob
 
-        from services.logging_service import get_logger
-
-        logger = get_logger()
+        from services.logging_service import get_logger  # noqa: F401
 
         # Use shared analysis_db instance
         analysis_db = self.analysis_db
 
         # Get scan folder
         scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
-        logger.debug(f"Scan folder: {scan_folder}")
+        self._get_logger().debug(f"Scan folder: {scan_folder}")
         if not scan_folder or not os.path.exists(scan_folder):
-            logger.debug("Scan folder doesn't exist or not set")
+            self._get_logger().debug("Scan folder doesn't exist or not set")
             return
 
         # Count PNG/JPG files (use set to avoid duplicates)
@@ -6886,9 +7003,9 @@ class StartupWindow(QWidget):
         image_files = list(image_files_set)
 
         total_files = len(image_files)
-        logger.debug(f"Total files found: {total_files}")
+        self._get_logger().debug(f"Total files found: {total_files}")
         if total_files == 0:
-            logger.debug("No files found, returning")
+            self._get_logger().debug("No files found, returning")
             return
 
         # Count analyzed files
@@ -6898,16 +7015,16 @@ class StartupWindow(QWidget):
                 analyzed_count += 1
 
         unanalyzed_count = total_files - analyzed_count
-        logger.debug(f"Analyzed: {analyzed_count}, Unanalyzed: {unanalyzed_count}")
+        self._get_logger().debug(f"Analyzed: {analyzed_count}, Unanalyzed: {unanalyzed_count}")
 
         # Show welcome dialog if many unanalyzed files
         if unanalyzed_count > 0:
-            logger.debug(f"Showing dialog for {unanalyzed_count} unanalyzed files")
-            logger.debug(
+            self._get_logger().debug(f"Showing dialog for {unanalyzed_count} unanalyzed files")
+            self._get_logger().debug(
                 f"Window visible: {self.isVisible()}, Window active: {self.isActiveWindow()}"
             )
             try:
-                logger.debug("Entered dialog display block")
+                self._get_logger().debug("Entered dialog display block")
                 # Estimate time (rough estimate: 3 seconds per page)
                 estimated_minutes = (unanalyzed_count * 3) // 60
                 time_estimate = (
@@ -6916,14 +7033,14 @@ class StartupWindow(QWidget):
                     else "less than a minute"
                 )
 
-                logger.debug("Calling activateWindow()")
+                self._get_logger().debug("Calling activateWindow()")
                 # Ensure window is active and has focus before showing dialog
                 self.activateWindow()
 
-                logger.debug("Calling raise_()")
+                self._get_logger().debug("Calling raise_()")
                 self.raise_()
 
-                logger.debug("About to call show_question()")
+                self._get_logger().debug("About to call show_question()")
                 reply = show_question(
                     self,
                     "Analyze Documents?",
@@ -6932,10 +7049,10 @@ class StartupWindow(QWidget):
                     f"Estimated time: {time_estimate}\n\n"
                     f"Analysis enables AI-powered bundle suggestions and automatic document organization.",
                 )
-                logger.debug(f"Dialog closed, reply: {reply}")
+                self._get_logger().debug(f"Dialog closed, reply: {reply}")
 
                 if reply == QMessageBox.StandardButton.Yes:
-                    logger.info(f"User chose to analyze {unanalyzed_count} documents")
+                    self._get_logger().info(f"User chose to analyze {unanalyzed_count} documents")
                     # Open status window with auto-start using shared DB instances
                     status_window = AnalysisStatusWindow(
                         parent=self,
@@ -6950,9 +7067,9 @@ class StartupWindow(QWidget):
                     status_window.show()
                     self._analysis_status_window = status_window
                 else:
-                    logger.info("User chose to skip document analysis")
+                    self._get_logger().info("User chose to skip document analysis")
             except Exception as e:
-                logger.error(f"Exception showing dialog: {e}", exc_info=True)
+                self._get_logger().error(f"Exception showing dialog: {e}", exc_info=True)
 
     def _refresh_metrics_after_bundle_operation(self, bundle_data=None):
         """Refresh metrics in analysis status window if it's open.
@@ -6963,9 +7080,9 @@ class StartupWindow(QWidget):
         if hasattr(self, "_analysis_status_window") and self._analysis_status_window:
             try:
                 self._analysis_status_window._refresh_all()
-                logger.debug("[Auto-refresh] Updated metrics after bundle operation")
+                self._get_logger().debug("[Auto-refresh] Updated metrics after bundle operation")
             except Exception as e:
-                logger.warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
+                self._get_logger().warning(f"[Auto-refresh] Failed to refresh metrics: {e}")
 
     def closeEvent(self, event):  # noqa: N802
         """Handle window close event with optional confirmation"""
@@ -7012,6 +7129,15 @@ class AnalysisWorker(QThread):
         self._cancelled = False
         self._abort_mode = False
         self.current_stats = {"analyzed": 0, "cached": 0, "errors": 0, "total_files": 0}
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def run(self):
         """Run analysis in background thread"""
@@ -7068,7 +7194,7 @@ class AnalysisWorker(QThread):
                     }
                 )
         except Exception as e:
-            logger.error(f"Analysis error: {e}", exc_info=True)
+            self._get_logger().error(f"Analysis error: {e}", exc_info=True)
             self.finished.emit(
                 {
                     "total_files": 0,
@@ -7100,6 +7226,15 @@ class SpecificFilesAnalysisWorker(QThread):
         self.config_manager = config_manager
         self.file_paths = file_paths
         self._cancelled = False
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
 
     def run(self):
         """Run analysis for specific files in background thread"""
@@ -7138,7 +7273,7 @@ class SpecificFilesAnalysisWorker(QThread):
                 }
             )
         except Exception as e:
-            logger.error(f"Analysis error: {e}", exc_info=True)
+            self._get_logger().error(f"Analysis error: {e}", exc_info=True)
             self.finished.emit(
                 {
                     "total_files": len(self.file_paths),

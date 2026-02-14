@@ -405,9 +405,10 @@ class AnalysisDB:
         """Get count of documents by type."""
         assert self.connection.connection is not None
         cursor = self.connection.connection.cursor()
+        # document_type is stored in metadata table, not analysis_results
         cursor.execute("""
             SELECT document_type, COUNT(*) as count
-            FROM analysis_results
+            FROM metadata
             WHERE document_type IS NOT NULL
             GROUP BY document_type
         """)

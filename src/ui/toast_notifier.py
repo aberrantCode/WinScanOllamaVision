@@ -3,12 +3,17 @@ Toast Notifier
 Windows toast notification utility for discovery events.
 """
 
+import logging
 import os
 import sys
+from typing import TYPE_CHECKING
 
-from services.logging_service import get_logger
+if TYPE_CHECKING:
+    from services.logging_service import get_logger
+else:
+    get_logger = None
 
-logger = get_logger()
+logger: logging.Logger | None = None
 
 # Try importing windows-toasts at module level
 try:
@@ -30,6 +35,15 @@ class ToastNotifier:
         """Initialize toast notifier"""
         self._toasts_available = self._check_toasts_available()
 
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
     def _check_toasts_available(self) -> bool:
         """
         Check if windows-toasts is available and Windows 10/11 is running.
@@ -39,11 +53,11 @@ class ToastNotifier:
         """
         # Check if running on Windows
         if sys.platform != "win32":
-            logger.debug("[TOAST] Not running on Windows, toasts disabled")
+            self._get_logger().debug("[TOAST] Not running on Windows, toasts disabled")
             return False
 
         if not WINDOWS_TOASTS_AVAILABLE:
-            logger.warning(
+            self._get_logger().warning(
                 "[TOAST] windows-toasts not installed, toasts disabled. "
                 "Install with: pip install windows-toasts"
             )
@@ -62,7 +76,7 @@ class ToastNotifier:
             True if toast was shown successfully, False otherwise
         """
         if not self._toasts_available:
-            logger.debug("[TOAST] Toasts not available, skipping notification")
+            self._get_logger().debug("[TOAST] Toasts not available, skipping notification")
             return False
 
         try:
@@ -97,15 +111,15 @@ class ToastNotifier:
                 if os.path.exists(icon_path):
                     toast.AddImage(ToastDisplayImage.fromPath(icon_path))
             except Exception as e:
-                logger.debug(f"[TOAST] Could not load icon: {e}")
+                self._get_logger().debug(f"[TOAST] Could not load icon: {e}")
 
             # Show toast
             toaster.show_toast(toast)
-            logger.info(f"[TOAST] Showed discovery toast: {count} new files")
+            self._get_logger().info(f"[TOAST] Showed discovery toast: {count} new files")
             return True
 
         except Exception as e:
-            logger.error(f"[TOAST] Failed to show toast notification: {e}")
+            self._get_logger().error(f"[TOAST] Failed to show toast notification: {e}")
             return False
 
 
