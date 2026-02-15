@@ -143,9 +143,9 @@ class TestLoggingService:
         with patch.dict(os.environ, {"APPDATA": temp_appdata}):
             service.initialize(app_name="TestApp", max_bytes=1024, backup_count=3)
 
-        # Assert
+        # Assert - only file handler by default (console_output=False by default)
         handlers = service.logger.handlers
-        assert len(handlers) == 2  # File + Console
+        assert len(handlers) == 1  # File handler only
         file_handler = handlers[0]
         assert isinstance(file_handler, logging.handlers.RotatingFileHandler)
 

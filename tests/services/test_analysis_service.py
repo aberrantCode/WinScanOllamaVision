@@ -415,12 +415,9 @@ class TestScanAllDirectories:
         with patch.object(service, "_analyze_single_page") as mock_analyze:
             mock_analyze.return_value = {"success": True, "cached": False, "skipped": False}
 
-            # Act
-            result = service.scan_all_directories(abort_check=abort_check)
-
-            # Assert - when aborted, no results should be saved
-            assert result["total_files"] == 1
-            assert result["analyzed"] == 1
+            # Act & Assert - scan should raise InterruptedError when aborted
+            with pytest.raises(InterruptedError, match="Analysis aborted by user"):
+                service.scan_all_directories(abort_check=abort_check)
 
     @patch("glob.glob")
     @patch("os.path.exists")
@@ -823,9 +820,9 @@ class TestTaxRelatedFeature:
         # Assert - check for tax document examples
         tax_keywords = ["W-2", "1099", "tax return", "property tax", "IRS", "deductible"]
         found_keywords = [keyword for keyword in tax_keywords if keyword in prompt]
-        assert len(found_keywords) >= 3, (
-            f"Expected at least 3 tax keywords, found: {found_keywords}"
-        )
+        assert (
+            len(found_keywords) >= 3
+        ), f"Expected at least 3 tax keywords, found: {found_keywords}"
 
     @pytest.fixture
     def mock_config(self):
