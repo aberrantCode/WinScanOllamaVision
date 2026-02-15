@@ -2,6 +2,7 @@
 Tests for DiscoveryWorker
 """
 
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -306,4 +307,104 @@ def test_discovery_worker_empty_directories(mock_service_class, mock_db_class, q
     assert finished_count[0] == 0
 
     # Verify database was closed
+    mock_db.close.assert_called_once()
+
+
+@patch("services.discovery_worker.AnalysisDB")
+@patch("services.discovery_worker.DiscoveryService")
+def test_discovery_worker_handles_sqlite_error(
+    mock_service_class, mock_db_class, qapp, mock_config
+):
+    """Test DiscoveryWorker handles sqlite3.Error specifically"""
+    # Setup mocks
+    mock_db = MagicMock()
+    mock_db_class.return_value = mock_db
+
+    mock_service = MagicMock()
+    mock_service_class.return_value = mock_service
+    # Simulate sqlite3.Error during discovery
+    mock_service.discover_images.side_effect = sqlite3.Error("Database is locked")
+
+    # Create worker
+    directories = ["/test/dir"]
+    worker = DiscoveryWorker(mock_config, directories)
+
+    # Track signals
+    error_messages = []
+
+    def on_error(error):
+        error_messages.append(error)
+
+    worker.error.connect(on_error)
+
+    # Run worker in event loop
+    worker.start()
+
+    # Wait for thread to finish with timeout
+    event_loop = QEventLoop()
+    worker.error.connect(event_loop.quit)
+    worker.finished.connect(event_loop.quit)
+
+    # Timeout after 2 seconds
+    QTimer.singleShot(2000, event_loop.quit)
+    event_loop.exec()
+
+    # Wait for thread to actually finish
+    worker.wait(1000)
+
+    # Verify error signal was emitted with sqlite3 error
+    assert len(error_messages) == 1
+    assert "Database error" in error_messages[0]
+    assert "Database is locked" in error_messages[0]
+
+    # Verify database was closed even after error
+    mock_db.close.assert_called_once()
+
+
+@patch("services.discovery_worker.AnalysisDB")
+@patch("services.discovery_worker.DiscoveryService")
+def test_discovery_worker_handles_oserror(mock_service_class, mock_db_class, qapp, mock_config):
+    """Test DiscoveryWorker handles OSError specifically"""
+    # Setup mocks
+    mock_db = MagicMock()
+    mock_db_class.return_value = mock_db
+
+    mock_service = MagicMock()
+    mock_service_class.return_value = mock_service
+    # Simulate OSError during discovery (e.g., permission denied, file not found)
+    mock_service.discover_images.side_effect = OSError("Permission denied")
+
+    # Create worker
+    directories = ["/test/dir"]
+    worker = DiscoveryWorker(mock_config, directories)
+
+    # Track signals
+    error_messages = []
+
+    def on_error(error):
+        error_messages.append(error)
+
+    worker.error.connect(on_error)
+
+    # Run worker in event loop
+    worker.start()
+
+    # Wait for thread to finish with timeout
+    event_loop = QEventLoop()
+    worker.error.connect(event_loop.quit)
+    worker.finished.connect(event_loop.quit)
+
+    # Timeout after 2 seconds
+    QTimer.singleShot(2000, event_loop.quit)
+    event_loop.exec()
+
+    # Wait for thread to actually finish
+    worker.wait(1000)
+
+    # Verify error signal was emitted with OSError
+    assert len(error_messages) == 1
+    assert "File system error" in error_messages[0]
+    assert "Permission denied" in error_messages[0]
+
+    # Verify database was closed even after error
     mock_db.close.assert_called_once()
