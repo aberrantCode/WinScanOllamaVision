@@ -1961,10 +1961,17 @@ class AnalysisStatusWindow(QDialog):
             for row in rows:
                 bundle_id, pdf_path, created_at, page_count, company, doc_type, doc_date = row
 
-                # Format created_at timestamp (convert UTC to local)
-                from ui.datetime_utils import format_db_timestamp
+                # Format created_at timestamp
+                if created_at:
+                    from datetime import datetime
 
-                created_str = format_db_timestamp(created_at, "%Y-%m-%d %I:%M:%S %p")
+                    try:
+                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                        created_str = dt.strftime("%Y-%m-%d %I:%M:%S %p")
+                    except (ValueError, AttributeError):
+                        created_str = str(created_at)
+                else:
+                    created_str = ""
 
                 # Add row to table
                 row_position = self.document_table.rowCount()
