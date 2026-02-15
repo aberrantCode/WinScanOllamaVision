@@ -112,10 +112,26 @@ class MetadataDB:
         processing_time_ms: int | None = None,
     ) -> None:
         """Save or update metadata for a file."""
+        import os
+
         # Get or register image file
         image_file = self._image_files.get_by_path(file_path)
         if not image_file:
-            return
+            # Auto-register the file if it doesn't exist
+            if not os.path.exists(file_path):
+                return
+
+            file_hash = self.compute_file_hash(file_path)
+            file_size = os.path.getsize(file_path)
+            file_mtime = os.path.getmtime(file_path)
+            directory_path = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+
+            image_file_id = self._image_files.register(
+                file_path, file_hash, directory_path, filename, file_size, file_mtime
+            )
+            # Use the returned ID directly
+            image_file = {"id": image_file_id}
 
         # Update metadata via repository
         self._metadata.update_from_user(image_file["id"], metadata)

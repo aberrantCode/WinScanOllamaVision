@@ -103,13 +103,13 @@ class MetadataRepository:
 
     def update_from_user(self, image_file_id: int, updates: dict[str, Any]) -> None:
         """
-        Update metadata after user edit.
+        Update metadata after user edit (creates if not exists).
 
         Args:
             image_file_id: Image file ID
             updates: Dictionary of fields to update
         """
-        # Build dynamic UPDATE query
+        # Build dynamic UPSERT query
         allowed_fields = {
             "company",
             "document_type",
@@ -131,19 +131,25 @@ class MetadataRepository:
         if not filtered_updates:
             return
 
-        # Build SET clause
-        set_clauses = [f"{field} = ?" for field in filtered_updates]
-        set_clause = ", ".join(set_clauses)
+        # Build INSERT columns and values
+        columns = ["image_file_id"] + list(filtered_updates.keys())
+        placeholders = ["?"] * len(columns)
+        values = [image_file_id] + list(filtered_updates.values())
 
-        # Add provenance tracking
-        set_clause += ", user_verified = 1, last_edited_by = 'user', updated_at = CURRENT_TIMESTAMP"
+        # Build ON CONFLICT DO UPDATE clause
+        update_clauses = [f"{field} = excluded.{field}" for field in filtered_updates]
+        update_clause = ", ".join(update_clauses)
+        update_clause += (
+            ", user_verified = 1, last_edited_by = 'user', updated_at = CURRENT_TIMESTAMP"
+        )
 
-        # Execute update
-        values = list(filtered_updates.values())
-        values.append(image_file_id)
-
+        # Execute UPSERT
         self.conn.execute(
-            f"UPDATE metadata SET {set_clause} WHERE image_file_id = ?",
+            f"""
+            INSERT INTO metadata ({', '.join(columns)})
+            VALUES ({', '.join(placeholders)})
+            ON CONFLICT(image_file_id) DO UPDATE SET {update_clause}
+        """,
             tuple(values),
         )
         try:
