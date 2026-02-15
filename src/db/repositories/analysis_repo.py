@@ -153,13 +153,31 @@ class AnalysisRepository:
             image_file_id: Foreign key to image_files table
 
         Returns:
-            Analysis dict if found, None otherwise
+            Analysis dict if found, None otherwise.
+            Includes file_path, file_hash from image_files and normalized metadata
+            for bundling service compatibility.
         """
         return self.conn.fetch_one_dict(
             """
-            SELECT * FROM analysis_results
-            WHERE image_file_id = ?
-            ORDER BY analyzed_at DESC
+            SELECT
+                ar.*,
+                img.file_path,
+                img.file_hash,
+                -- Normalized metadata from metadata table (for bundling)
+                m.company,
+                m.document_type,
+                m.document_date,
+                m.page_number,
+                m.total_pages,
+                m.belongs_to_same_doc,
+                m.confidence_score as metadata_confidence_score,
+                m.tax_related,
+                m.is_blank
+            FROM analysis_results ar
+            INNER JOIN image_files img ON ar.image_file_id = img.id
+            LEFT JOIN metadata m ON m.image_file_id = img.id
+            WHERE ar.image_file_id = ?
+            ORDER BY ar.analyzed_at DESC
             LIMIT 1
             """,
             (image_file_id,),
