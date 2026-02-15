@@ -138,12 +138,14 @@ class TestAnalysisStatusWindow:
         window._calculate_collection_statistics()
 
         # Verify the PDFs generated query was called
-        # The query should select COUNT(*) from document_bundles WHERE status = 'completed' AND pdf_path IS NOT NULL
+        # After schema refactoring: SELECT COUNT(*) FROM pdf_files INNER JOIN document_bundles WHERE status = 'completed'
         execute_calls = [str(call) for call in mock_cursor.execute.call_args_list]
 
-        # Find the PDFs generated query
+        # Find the PDFs generated query (updated for new schema)
         pdfs_query_found = any(
-            "status = 'completed'" in str(call) and "pdf_path IS NOT NULL" in str(call)
+            "pdf_files" in str(call)
+            and "document_bundles" in str(call)
+            and "status = 'completed'" in str(call)
             for call in execute_calls
         )
 
