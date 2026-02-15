@@ -2,7 +2,19 @@
 Tests for ToastNotifier
 """
 
+import logging
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def initialize_logging():
+    """Initialize logging service for toast notifier tests."""
+    from services.logging_service import LoggingService
+
+    LoggingService().initialize(log_level=logging.WARNING, console_output=False)
+    yield
 
 
 @patch("ui.toast_notifier.sys.platform", "win32")
