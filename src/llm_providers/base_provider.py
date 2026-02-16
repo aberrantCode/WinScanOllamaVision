@@ -44,7 +44,7 @@ class BaseLLMProvider(ABC):
         Raises:
             Exception: If analysis fails
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def get_available_models(self) -> list[str]:
@@ -54,7 +54,7 @@ class BaseLLMProvider(ABC):
         Returns:
             List of model names/identifiers
         """
-        pass
+        pass  # pragma: no cover
 
     @abstractmethod
     def test_connection(self) -> bool:
@@ -64,7 +64,7 @@ class BaseLLMProvider(ABC):
         Returns:
             True if connection successful, False otherwise
         """
-        pass
+        pass  # pragma: no cover
 
     def get_default_model(self) -> str | None:
         """

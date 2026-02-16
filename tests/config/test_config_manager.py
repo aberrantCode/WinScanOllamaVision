@@ -420,3 +420,146 @@ class TestConfigManager:
 
         # Assert
         assert result == 99
+
+    def test_get_logger_fallback_when_service_unavailable(self, monkeypatch):
+        """Test _get_logger() uses fallback logging when service unavailable (lines 14-18)."""
+
+        # Arrange - make get_logger import fail
+        def mock_import_error(*args):
+            raise ImportError("Service not available")
+
+        # Patch __import__ to raise error for logging_service
+        import builtins
+
+        original_import = builtins.__import__
+
+        def custom_import(name, *args, **kwargs):
+            if "logging_service" in name:
+                raise ImportError("Service not available")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", custom_import)
+
+        # Act - import config_manager which will trigger _get_logger
+        from config.config_manager import _get_logger
+
+        logger = _get_logger()
+
+        # Assert - should get basic logger, not fail
+        assert logger is not None
+        assert hasattr(logger, "debug")
+
+    def test_check_disk_space_returns_true_on_exception(self, config_manager, monkeypatch):
+        """Test _check_disk_space() returns True when disk_usage raises exception (lines 52-54)."""
+        # Arrange - make disk_usage raise exception
+        import shutil
+
+        def mock_disk_usage(path):
+            raise OSError("Disk check failed")
+
+        monkeypatch.setattr(shutil, "disk_usage", mock_disk_usage)
+
+        # Act
+        result = config_manager._check_disk_space("/some/path", 1000)
+
+        # Assert - should fail open (return True)
+        assert result is True
+
+    def test_load_config_handles_corrupted_file(self, temp_config_file):
+        """Test _load_config() handles corrupted config file gracefully (lines 66-76)."""
+        # Arrange - create corrupted config file
+        with open(temp_config_file, "w") as f:
+            f.write("[Invalid\nthis is not valid INI\n{{{}}")
+
+        # Act - should backup corrupted file and create defaults
+        config = ConfigManager(temp_config_file)
+
+        # Assert - backup should exist
+        backup_file = f"{temp_config_file}.corrupted"
+        assert os.path.exists(backup_file)
+
+        # Verify defaults were created
+        assert config.get_setting("LLMProvider", "active_provider") is not None
+
+        # Cleanup backup
+        if os.path.exists(backup_file):
+            os.remove(backup_file)
+
+    def test_save_config_raises_error_on_insufficient_disk_space(self, config_manager, monkeypatch):
+        """Test _save_config() raises OSError when disk space insufficient (lines 199-202)."""
+        # Arrange - mock _check_disk_space to return False
+        monkeypatch.setattr(config_manager, "_check_disk_space", lambda *args: False)
+
+        # Act & Assert
+        with pytest.raises(OSError, match="Insufficient disk space"):
+            config_manager._save_config()
+
+    def test_save_config_handles_permission_error(self, temp_config_file, monkeypatch):
+        """Test _save_config() handles PermissionError gracefully (lines 220-222)."""
+        # Arrange
+        config = ConfigManager(temp_config_file)
+
+        # Mock open to raise PermissionError
+        original_open = open
+
+        def mock_open(file, mode="r", *args, **kwargs):
+            if file.endswith(".tmp") and "w" in mode:
+                raise PermissionError("Access denied")
+            return original_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        # Act & Assert
+        with pytest.raises(PermissionError, match="Cannot save configuration"):
+            config._save_config()
+
+    def test_save_config_handles_os_error(self, temp_config_file, monkeypatch):
+        """Test _save_config() handles OSError gracefully (lines 223-225)."""
+        # Arrange
+        config = ConfigManager(temp_config_file)
+
+        # Mock open to raise OSError
+        original_open = open
+
+        def mock_open(file, mode="r", *args, **kwargs):
+            if file.endswith(".tmp") and "w" in mode:
+                raise OSError("Disk full")
+            return original_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        # Act & Assert
+        with pytest.raises(OSError, match="Failed to save configuration"):
+            config._save_config()
+
+    def test_get_float_returns_float_value(self, config_manager):
+        """Test get_float() returns float value."""
+        # Arrange
+        config_manager.set_setting("Test", "float_key", "3.14")
+
+        # Act
+        result = config_manager.get_float("Test", "float_key")
+
+        # Assert
+        assert result == 3.14
+        assert isinstance(result, float)
+
+    def test_get_float_returns_default_for_invalid_value(self, config_manager):
+        """Test get_float() returns default for invalid value (lines 357-364)."""
+        # Arrange
+        config_manager.set_setting("Test", "float_key", "not_a_float")
+
+        # Act
+        result = config_manager.get_float("Test", "float_key", default=9.99)
+
+        # Assert - should return default when value cannot be converted to float
+        assert result == 9.99
+        assert isinstance(result, float)
+
+    def test_get_float_returns_default_when_not_exists(self, config_manager):
+        """Test get_float() returns default when key doesn't exist."""
+        # Act
+        result = config_manager.get_float("NonExistent", "key", default=7.77)
+
+        # Assert
+        assert result == 7.77

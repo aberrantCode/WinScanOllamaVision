@@ -212,3 +212,150 @@ class TestMetadataDBCore:
 
         # Assert
         assert version >= 1
+
+    def test_compute_file_hash_raises_file_not_found_error(self):
+        # Act & Assert
+        with pytest.raises(FileNotFoundError) as exc_info:
+            MetadataDB.compute_file_hash("/nonexistent/file.jpg")
+
+        assert "does not exist" in str(exc_info.value)
+
+    def test_compute_file_hash_raises_permission_error(self, temp_file, monkeypatch):
+        # Arrange - Mock open to raise PermissionError
+        def mock_open(*args, **kwargs):
+            raise PermissionError("Access denied")
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        # Act & Assert
+        with pytest.raises(PermissionError) as exc_info:
+            MetadataDB.compute_file_hash(temp_file)
+
+        assert "Cannot access file" in str(exc_info.value)
+
+    def test_compute_file_hash_raises_os_error(self, temp_file, monkeypatch):
+        # Arrange - Mock open to raise OSError
+        def mock_open(*args, **kwargs):
+            raise OSError("Disk read error")
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        # Act & Assert
+        with pytest.raises(OSError) as exc_info:
+            MetadataDB.compute_file_hash(temp_file)
+
+        assert "Failed to read file" in str(exc_info.value)
+
+    def test_save_metadata_skips_nonexistent_file(self, db):
+        # Arrange
+        nonexistent_file = "/nonexistent/file.jpg"
+        metadata = {"company": "Test"}
+
+        # Act - should not raise error, just return early
+        db.save_metadata(nonexistent_file, metadata)
+
+        # Assert - metadata should not be saved
+        result = db.get_metadata(nonexistent_file)
+        assert result is None
+
+    def test_cleanup_orphaned_metadata(self, db, temp_file):
+        # Arrange - save metadata for temp file
+        db.save_metadata(temp_file, {"company": "Test Corp"})
+
+        # Delete the actual file (making metadata orphaned)
+        os.remove(temp_file)
+
+        # Act
+        deleted_count = db.cleanup_orphaned_metadata()
+
+        # Assert
+        assert deleted_count == 1
+        # Metadata should be removed
+        assert db.get_metadata(temp_file) is None
+
+    def test_cleanup_orphaned_metadata_with_no_orphans(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"company": "Test Corp"})
+
+        # Act - file still exists, so no orphans
+        deleted_count = db.cleanup_orphaned_metadata()
+
+        # Assert
+        assert deleted_count == 0
+        # Metadata should still exist
+        assert db.get_metadata(temp_file) is not None
+
+    def test_create_backup_with_auto_timestamp(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"company": "Test"})
+
+        # Act - create backup with auto-generated path
+        backup_path = db.create_backup()
+
+        # Assert
+        assert os.path.exists(backup_path)
+        assert "_backup_" in backup_path
+        assert backup_path.endswith(".db")
+
+        # Cleanup
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+
+    def test_create_backup_with_custom_path(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"company": "Test"})
+        custom_backup_path = db.db_path.replace(".db", "_custom_backup.db")
+
+        # Act
+        returned_path = db.create_backup(custom_backup_path)
+
+        # Assert
+        assert returned_path == custom_backup_path
+        assert os.path.exists(custom_backup_path)
+
+        # Cleanup
+        if os.path.exists(custom_backup_path):
+            os.remove(custom_backup_path)
+
+    def test_get_unique_titles_uses_cache(self, db, temp_file):
+        # Arrange
+        db.save_metadata(temp_file, {"document_type": "Invoice"})
+
+        # Act - first call populates cache
+        titles1 = db.get_unique_titles(use_cache=True)
+        # Second call uses cache (line 251 coverage)
+        titles2 = db.get_unique_titles(use_cache=True)
+
+        # Assert
+        assert titles1 == titles2
+        assert "Invoice" in titles1
+
+    def test_init_with_default_appdata_path(self, monkeypatch):
+        # Arrange - create temp directory to use as AppData
+        with tempfile.TemporaryDirectory() as temp_appdata:
+            # Mock get_appdata_db_path to return a path in our temp directory
+            temp_db_path = os.path.join(temp_appdata, "metadata.db")
+
+            def mock_get_appdata_db_path():
+                return temp_db_path
+
+            monkeypatch.setattr("db.metadata_db.get_appdata_db_path", mock_get_appdata_db_path)
+
+            # Act - initialize with None (should use default AppData path)
+            db = MetadataDB(db_path=None)
+
+            try:
+                # Assert
+                assert db.db_path == temp_db_path
+                assert os.path.exists(temp_db_path)
+            finally:
+                db.close()
+
+    def test_get_logger_initializes_logger(self, db):
+        # Act
+        logger = db._get_logger()
+
+        # Assert
+        assert logger is not None
+        assert hasattr(logger, "info")
+        assert hasattr(logger, "error")

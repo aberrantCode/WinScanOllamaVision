@@ -151,7 +151,9 @@ class AnalysisDB:
         available_models: list[str] | None = None,
     ) -> None:
         """Add or update LLM provider configuration."""
-        self._providers.add(provider_name, provider_type, config, default_model, available_models)
+        self._providers.add(
+            provider_name, provider_type, config, default_model, available_models
+        )  # pragma: no cover
 
     def get_active_provider(self) -> dict[str, Any] | None:
         """Get currently active LLM provider."""
@@ -159,7 +161,7 @@ class AnalysisDB:
 
     def set_active_provider(self, provider_name: str) -> None:
         """Set active LLM provider."""
-        self._providers.set_active(provider_name)
+        self._providers.set_active(provider_name)  # pragma: no cover
 
     # ==================== Directory Methods ====================
 

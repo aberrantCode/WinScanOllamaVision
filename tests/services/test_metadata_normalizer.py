@@ -181,3 +181,28 @@ class TestMetadataNormalizer:
         assert normalized["belongs_to_same_doc"] is False
         assert normalized["confidence_score"] is None
         assert normalized["tax_related"] is False
+
+    def test_normalize_raises_type_error_for_non_dict(self):
+        """Test that normalize raises TypeError for non-dict input."""
+        import pytest
+
+        with pytest.raises(TypeError) as exc_info:
+            self.normalizer.normalize("not a dict")  # type: ignore
+
+        assert "must be dict" in str(exc_info.value)
+
+    def test_normalize_document_type_empty_after_strip(self):
+        """Test document type with string that becomes empty after strip."""
+        assert self.normalizer.normalize_document_type("   ") is None
+
+    def test_normalize_date_empty_after_strip(self):
+        """Test date with string that becomes empty after strip."""
+        assert self.normalizer.normalize_date("   ") is None
+
+    def test_normalize_rotation_string_integer(self):
+        """Test rotation normalization from string representation of integer."""
+        # This tests the try/except block that parses string as int (line 207)
+        assert self.normalizer.normalize_rotation("90") == 90
+        assert self.normalizer.normalize_rotation("180") == 180
+        assert self.normalizer.normalize_rotation("270") == 270
+        assert self.normalizer.normalize_rotation("135") == 0  # Invalid rotation

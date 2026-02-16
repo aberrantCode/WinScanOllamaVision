@@ -254,14 +254,12 @@ class AnalysisRepository:
         """)
         row = cursor.fetchone()
 
-        if row:
-            return {
-                "total": row[0] or 0,
-                "successful": row[1] or 0,
-                "errors": row[2] or 0,
-            }
-
-        return {"total": 0, "successful": 0, "errors": 0}
+        # COUNT(*) always returns a row, even if no matches (returns 0)
+        return {
+            "total": row[0] or 0,
+            "successful": row[1] or 0,
+            "errors": row[2] or 0,
+        }
 
     def delete_by_image_file_id(self, image_file_id: int) -> int:
         """

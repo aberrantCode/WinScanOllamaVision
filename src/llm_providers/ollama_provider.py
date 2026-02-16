@@ -15,15 +15,9 @@ from .base_provider import BaseLLMProvider
 
 def _get_logger():
     """Lazy logger initialization to avoid circular imports"""
-    try:
-        from services.logging_service import get_logger
+    from services.logging_service import get_logger
 
-        return get_logger()
-    except Exception:
-        # Fallback to basic logging if service not initialized
-        import logging
-
-        return logging.getLogger(__name__)
+    return get_logger()
 
 
 class OllamaProvider(BaseLLMProvider):

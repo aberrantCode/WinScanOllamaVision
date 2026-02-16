@@ -196,6 +196,44 @@ class TestGeminiCliProvider:
         # Assert
         assert result is False
 
+    @patch("llm_providers.gemini_cli_provider.subprocess.run")
+    def test_test_connection_handles_file_not_found(self, mock_run, provider):
+        """Test test_connection handles FileNotFoundError (lines 191-193)."""
+        # Arrange
+        mock_run.side_effect = FileNotFoundError("gemini: command not found")
+
+        # Act
+        result = provider.test_connection()
+
+        # Assert
+        assert result is False
+
+    @patch("llm_providers.gemini_cli_provider.subprocess.run")
+    def test_test_connection_handles_timeout(self, mock_run, provider):
+        """Test test_connection handles TimeoutExpired (lines 194-196)."""
+        # Arrange
+        from subprocess import TimeoutExpired
+
+        mock_run.side_effect = TimeoutExpired(cmd="gemini", timeout=5)
+
+        # Act
+        result = provider.test_connection()
+
+        # Assert
+        assert result is False
+
+    def test_validate_config_fails_with_empty_config(self):
+        """Test validate_config returns parent class error when config is empty (line 210)."""
+        # Arrange
+        provider = GeminiCliProvider({})
+
+        # Act
+        is_valid, error = provider.validate_config()
+
+        # Assert
+        assert is_valid is False
+        assert "Configuration is empty" in error
+
     def test_validate_config_fails_without_command_template(self):
         # Arrange
         config = {"command_template": ""}
@@ -230,3 +268,37 @@ class TestGeminiCliProvider:
 
         # Assert
         assert result == "gemini-2.0-flash-exp"
+
+    @patch("llm_providers.gemini_cli_provider.subprocess.run")
+    def test_analyze_images_handles_file_not_found_error(self, mock_run, provider):
+        """Test analyze_images handles FileNotFoundError when CLI not installed (lines 143-145)."""
+        # Arrange
+        mock_run.side_effect = FileNotFoundError("gemini: command not found")
+
+        # Act
+        result = provider.analyze_images(
+            image_paths=["/test/image.jpg"], prompt="Test prompt", model="test-model"
+        )
+
+        # Assert
+        assert result["success"] is False
+        assert "Gemini CLI not found" in result["error"]
+        assert result["processing_time_ms"] >= 0
+
+    @patch("llm_providers.gemini_cli_provider.subprocess.run")
+    def test_analyze_images_handles_timeout_error(self, mock_run, provider):
+        """Test analyze_images handles TimeoutExpired (lines 192-193, 195-196)."""
+        # Arrange
+        from subprocess import TimeoutExpired
+
+        mock_run.side_effect = TimeoutExpired(cmd="gemini", timeout=30)
+
+        # Act
+        result = provider.analyze_images(
+            image_paths=["/test/image.jpg"], prompt="Test prompt", model="test-model"
+        )
+
+        # Assert
+        assert result["success"] is False
+        assert "timed out" in result["error"]
+        assert result["processing_time_ms"] >= 0

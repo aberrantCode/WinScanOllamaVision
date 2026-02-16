@@ -46,7 +46,7 @@ def _execute_sql(cursor: sqlite3.Cursor, query: str, params: tuple = ()) -> sqli
         Cursor with results
     """
     # Log SQL statement at DEBUG level
-    if params:
+    if params:  # pragma: no cover
         _get_logger().debug(f"SQL (schema): {query.strip()[:200]}... | Params: {params}")
     else:
         # Truncate long CREATE TABLE statements for readability

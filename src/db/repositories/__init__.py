@@ -11,13 +11,8 @@ from db.repositories.image_files_repo import ImageFilesRepository
 from db.repositories.metadata_repo import MetadataRepository
 from db.repositories.pdf_files_repo import PdfFilesRepository
 from db.repositories.pdf_image_pages_repo import PdfImagePagesRepository
+from db.repositories.provider_repo import ProviderRepository
 from db.repositories.rotation_repo import RotationRepository
-
-# Import ProviderRepository if it exists
-try:
-    from db.repositories.provider_repo import ProviderRepository
-except ImportError:
-    ProviderRepository = None  # type: ignore
 
 __all__ = [
     "AnalysisRepository",

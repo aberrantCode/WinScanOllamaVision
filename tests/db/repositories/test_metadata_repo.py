@@ -835,3 +835,189 @@ class TestMetadataAnalysisHistory:
         history = repo.get_analysis_history(image_id)
 
         assert history == []
+
+
+class TestMetadataLinkToPdf:
+    """Tests for link_to_pdf method."""
+
+    @pytest.fixture
+    def temp_db_path(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        yield db_path
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+    @pytest.fixture
+    def conn(self, temp_db_path):
+        connection = DatabaseConnection(temp_db_path)
+        create_all_tables(connection)
+        yield connection
+        connection.close()
+
+    @pytest.fixture
+    def repo(self, conn):
+        return MetadataRepository(conn)
+
+    @pytest.fixture
+    def image_repo(self, conn):
+        return ImageFilesRepository(conn)
+
+    def test_link_to_pdf_links_images_to_bundle(self, repo, image_repo, conn):
+        """Test link_to_pdf adds images to PDF's bundle."""
+        # Create images
+        image1_id = image_repo.register(
+            "/test/img1.jpg", "hash1", "/test", "img1.jpg", 1024, 12345.0
+        )
+        image2_id = image_repo.register(
+            "/test/img2.jpg", "hash2", "/test", "img2.jpg", 2048, 12346.0
+        )
+
+        # Create bundle
+        conn.execute(
+            "INSERT INTO document_bundles (bundle_name, status) VALUES (?, ?)",
+            ("Test Bundle", "completed"),
+        )
+        bundle_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+
+        # Create PDF linked to bundle
+        conn.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id) VALUES (?, ?, ?)",
+            ("/output/test.pdf", "test.pdf", bundle_id),
+        )
+        pdf_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+        conn.commit()
+
+        # Link images to PDF
+        repo.link_to_pdf([image1_id, image2_id], pdf_id)
+
+        # Verify images were added to bundle
+        cursor = conn.connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM bundle_images WHERE bundle_id = ?", (bundle_id,))
+        count = cursor.fetchone()[0]
+
+        assert count == 2
+
+    def test_link_to_pdf_returns_early_for_empty_list(self, repo):
+        """Test link_to_pdf returns early for empty image list."""
+        # Should not raise error
+        repo.link_to_pdf([], 999)
+
+    def test_link_to_pdf_returns_early_for_nonexistent_pdf(self, repo, image_repo):
+        """Test link_to_pdf returns early when PDF doesn't exist."""
+        image_id = image_repo.register("/test/img.jpg", "hash", "/test", "img.jpg", 1024, 12345.0)
+
+        # Should not raise error
+        repo.link_to_pdf([image_id], 999999)
+
+    def test_link_to_pdf_returns_early_for_pdf_without_bundle(self, repo, image_repo, conn):
+        """Test link_to_pdf returns early when PDF has no bundle."""
+        image_id = image_repo.register("/test/img.jpg", "hash", "/test", "img.jpg", 1024, 12345.0)
+
+        # Create PDF without bundle_id
+        conn.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id) VALUES (?, ?, NULL)",
+            ("/output/test.pdf", "test.pdf"),
+        )
+        pdf_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+        conn.commit()
+
+        # Should not raise error
+        repo.link_to_pdf([image_id], pdf_id)
+
+    def test_link_to_pdf_handles_operational_error(self, repo, image_repo, conn):
+        """Test link_to_pdf handles OperationalError during commit."""
+        image_id = image_repo.register("/test/img.jpg", "hash", "/test", "img.jpg", 1024, 12345.0)
+
+        # Create bundle and PDF
+        conn.execute(
+            "INSERT INTO document_bundles (bundle_name, status) VALUES (?, ?)",
+            ("Bundle", "completed"),
+        )
+        bundle_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+
+        conn.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id) VALUES (?, ?, ?)",
+            ("/output/test.pdf", "test.pdf", bundle_id),
+        )
+        pdf_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+        conn.commit()
+
+        # Mock commit to raise OperationalError
+        with patch.object(
+            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+            repo.link_to_pdf([image_id], pdf_id)
+
+    def test_link_to_pdf_handles_database_error(self, repo, image_repo, conn):
+        """Test link_to_pdf handles generic database error during commit."""
+        image_id = image_repo.register("/test/img.jpg", "hash", "/test", "img.jpg", 1024, 12345.0)
+
+        # Create bundle and PDF
+        conn.execute(
+            "INSERT INTO document_bundles (bundle_name, status) VALUES (?, ?)",
+            ("Bundle", "completed"),
+        )
+        bundle_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+
+        conn.execute(
+            "INSERT INTO pdf_files (pdf_path, pdf_filename, bundle_id) VALUES (?, ?, ?)",
+            ("/output/test.pdf", "test.pdf", bundle_id),
+        )
+        pdf_id = conn.fetch_one("SELECT last_insert_rowid()")[0]
+        conn.commit()
+
+        # Mock commit to raise generic Error
+        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("constraint violation")):
+            with pytest.raises(sqlite3.Error, match="Failed to link images to PDF"):
+                repo.link_to_pdf([image_id], pdf_id)
+
+
+class TestMetadataCreateFromAnalysisEdgeCases:
+    """Additional edge case tests for create_from_analysis."""
+
+    @pytest.fixture
+    def temp_db_path(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        yield db_path
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+    @pytest.fixture
+    def conn(self, temp_db_path):
+        connection = DatabaseConnection(temp_db_path)
+        create_all_tables(connection)
+        yield connection
+        connection.close()
+
+    @pytest.fixture
+    def repo(self, conn):
+        return MetadataRepository(conn)
+
+    @pytest.fixture
+    def image_repo(self, conn):
+        return ImageFilesRepository(conn)
+
+    def test_create_from_analysis_raises_error_when_lastrowid_is_none(
+        self, repo, image_repo, monkeypatch
+    ):
+        """Test create_from_analysis raises RuntimeError when cursor.lastrowid is None."""
+        image_id = image_repo.register("/test/img.jpg", "hash", "/test", "img.jpg", 1024, 12345.0)
+
+        # Mock execute to return a cursor with lastrowid = None
+        class MockCursor:
+            lastrowid = None
+
+        def mock_execute(*args, **kwargs):
+            return MockCursor()
+
+        monkeypatch.setattr(repo.conn, "execute", mock_execute)
+        monkeypatch.setattr(repo.conn, "commit", lambda: None)
+
+        with pytest.raises(RuntimeError, match="Failed to retrieve inserted metadata ID"):
+            repo.create_from_analysis(
+                image_file_id=image_id,
+                analysis_result_id=None,
+                normalized_metadata={"company": "Test"},
+            )

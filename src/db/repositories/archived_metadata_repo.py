@@ -159,9 +159,7 @@ class ArchivedMetadataRepository:
         """)
         row = cursor.fetchone()
 
-        if not row:
-            return {"total_pdfs": 0, "total_pages": 0}
-
+        # COUNT(*) always returns a row, even if no matches (returns 0)
         return {
             "total_pdfs": row[0] or 0,
             "total_pages": row[1] or 0,

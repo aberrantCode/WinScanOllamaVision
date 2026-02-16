@@ -381,3 +381,267 @@ class TestAnalysisDBCore:
         ).fetchone()
         assert result is not None
         assert result["updated_at"] is not None
+
+    def test_init_uses_default_appdata_path_when_none(self):
+        """Test that AnalysisDB uses AppData path when db_path is None (line 38)."""
+        # Arrange - create temporary directory for AppData simulation
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Temporarily replace get_appdata_db_path behavior
+            import db.analysis_db as analysis_db_module
+
+            original_get_appdata = analysis_db_module.get_appdata_db_path
+            test_db_path = os.path.join(tmpdir, "test_appdata.db")
+            analysis_db_module.get_appdata_db_path = lambda: test_db_path
+
+            try:
+                # Act
+                db_instance = AnalysisDB(db_path=None)
+
+                # Assert
+                assert db_instance.db_path == test_db_path
+                assert os.path.exists(test_db_path)
+
+                db_instance.close()
+            finally:
+                # Restore original function
+                analysis_db_module.get_appdata_db_path = original_get_appdata
+
+    def test_save_analysis_uses_existing_image_file_id(self, db):
+        """Test save_analysis uses existing image_file_id when file already registered (line 85)."""
+        # Arrange - pre-register the image file
+        file_path = "/test/existing.jpg"
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash_first",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data={"company": "First Corp"},
+            raw_response="{}",
+            processing_time_ms=100,
+        )
+
+        # Act - save another analysis for the same file (should reuse image_file_id)
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash_second",
+            provider_name="claude",
+            model_name="test-model-2",
+            analysis_data={"company": "Second Corp"},
+            raw_response="{}",
+            processing_time_ms=200,
+        )
+
+        # Assert - verify only one image_file record exists
+        cursor = db.connection.connection.cursor()
+        count = cursor.execute(
+            "SELECT COUNT(*) FROM image_files WHERE file_path = ?", (file_path,)
+        ).fetchone()[0]
+        assert count == 1
+
+        # Verify two analysis_results records exist
+        analysis_count = cursor.execute(
+            "SELECT COUNT(*) FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (file_path,),
+        ).fetchone()[0]
+        assert analysis_count == 2
+
+    def test_get_analysis_with_metadata_returns_combined_data(self, db):
+        """Test get_analysis_with_metadata returns analysis + metadata (lines 123-124)."""
+        # Arrange
+        file_path = "/test/combined.jpg"
+        analysis_data = {
+            "company": "Test Corp",
+            "document_type": "Invoice",
+            "document_date": "2024-01-15",
+        }
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash123",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data=analysis_data,
+            raw_response="{}",
+            processing_time_ms=100,
+        )
+
+        # Act
+        result = db.get_analysis_with_metadata(file_path)
+
+        # Assert
+        assert result is not None
+        assert "file_path" in result
+        assert result["file_path"] == file_path
+
+    def test_get_analysis_with_metadata_returns_none_when_not_exists(self, db):
+        """Test get_analysis_with_metadata returns None for non-existent file."""
+        # Act
+        result = db.get_analysis_with_metadata("/nonexistent.jpg")
+
+        # Assert
+        assert result is None or result.get("/nonexistent.jpg") is None
+
+    def test_update_analysis_metadata_returns_early_when_file_not_found(self, db):
+        """Test update_analysis_metadata returns early when file not found (lines 129-134)."""
+        # Act - try to update metadata for non-existent file
+        db.update_analysis_metadata("/nonexistent.jpg", {"company": "Test Corp"})
+
+        # Assert - no exception should be raised, method should return early
+        # Verify no metadata was created
+        cursor = db.connection.connection.cursor()
+        count = cursor.execute("SELECT COUNT(*) FROM metadata").fetchone()[0]
+        assert count == 0
+
+    def test_update_analysis_metadata_updates_existing_metadata(self, db):
+        """Test update_analysis_metadata calls update_from_user (line 134)."""
+        # Arrange - create an image file with analysis and metadata
+        file_path = "/test/update_meta.jpg"
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash123",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data={"company": "Original Corp", "document_type": "Invoice"},
+            raw_response="{}",
+            processing_time_ms=100,
+        )
+
+        # Act - update metadata
+        db.update_analysis_metadata(file_path, {"company": "Updated Corp"})
+
+        # Assert - verify metadata was updated in metadata table
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            """
+            SELECT company FROM metadata
+            WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)
+            """,
+            (file_path,),
+        ).fetchone()
+        assert result is not None
+        assert result[0] == "Updated Corp"
+
+    def test_update_bundle_metadata_updates_bundle_name(self, db):
+        """Test update_bundle_metadata updates bundle_name when present (lines 215-216)."""
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/page.jpg"], {"company": "Test"}, 0.9)
+
+        # Act
+        db.update_bundle_metadata(bundle_id, {"bundle_name": "Updated Bundle Name"})
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT bundle_name FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        assert result is not None
+        assert result[0] == "Updated Bundle Name"
+
+    def test_update_bundle_metadata_skips_bundle_name_when_not_present(self, db):
+        """Test update_bundle_metadata doesn't update bundle_name when not in metadata."""
+        # Arrange
+        bundle_id = db.save_bundle_suggestion(["/test/page.jpg"], {"bundle_name": "Original"}, 0.9)
+
+        # Act - update with metadata that doesn't include bundle_name
+        db.update_bundle_metadata(bundle_id, {"some_other_field": "value"})
+
+        # Assert - bundle_name should remain unchanged
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT bundle_name FROM document_bundles WHERE id = ?", (bundle_id,)
+        ).fetchone()
+        assert result is not None
+        assert result[0] == "Original"
+
+    def test_update_image_status_delegates_to_repository(self, db):
+        """Test update_image_status delegates to image_files repository (line 249)."""
+        # Arrange - create an image file first
+        file_path = "/test/status_test.jpg"
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash123",
+            provider_name="ollama",
+            model_name="test-model",
+            analysis_data={},
+            raw_response="{}",
+            processing_time_ms=100,
+        )
+
+        # Act
+        db.update_image_status(file_path, "processed")
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT status FROM image_files WHERE file_path = ?", (file_path,)
+        ).fetchone()
+        assert result is not None
+        assert result[0] == "processed"
+
+    def test_get_rotation_preference_returns_preference(self, db):
+        """Test get_rotation_preference returns rotation data (lines 261-265)."""
+        # Arrange
+        file_path = "/test/rotated.jpg"
+        db.save_rotation_preference(file_path, 90, "manual")
+
+        # Act
+        result = db.get_rotation_preference(file_path)
+
+        # Assert
+        assert result is not None
+        assert result["rotation_degrees"] == 90
+        assert result["rotation_source"] == "manual"
+
+    def test_get_rotation_preference_returns_none_when_not_exists(self, db):
+        """Test get_rotation_preference returns None for non-existent file."""
+        # Act
+        result = db.get_rotation_preference("/nonexistent.jpg")
+
+        # Assert
+        assert result is None
+
+    def test_get_all_errors_delegates_to_error_repository(self, db):
+        """Test get_all_errors delegates to error repository (line 293)."""
+        # Arrange
+        db.save_error("/test/error1.jpg", "Test error 1", "analysis_failed")
+        db.save_error("/test/error2.jpg", "Test error 2", "timeout")
+
+        # Act
+        errors = db.get_all_errors()
+
+        # Assert
+        assert len(errors) >= 2
+        error_paths = [err["file_path"] for err in errors]
+        assert "/test/error1.jpg" in error_paths
+        assert "/test/error2.jpg" in error_paths
+
+    def test_get_error_count_returns_total_count(self, db):
+        """Test get_error_count returns total error count (line 297)."""
+        # Arrange
+        db.save_error("/test/error1.jpg", "Error 1", "analysis_failed")
+        db.save_error("/test/error2.jpg", "Error 2", "timeout")
+        db.save_error("/test/error3.jpg", "Error 3", "invalid_format")
+
+        # Act
+        count = db.get_error_count()
+
+        # Assert
+        assert count >= 3
+
+    def test_clear_error_removes_error_record(self, db):
+        """Test clear_error removes error record (line 301)."""
+        # Arrange
+        file_path = "/test/clearable_error.jpg"
+        db.save_error(file_path, "Test error", "analysis_failed")
+
+        # Verify error exists
+        errors_before = db.get_all_errors()
+        assert any(err["file_path"] == file_path for err in errors_before)
+
+        # Act
+        db.clear_error(file_path)
+
+        # Assert - error should be removed
+        errors_after = db.get_all_errors()
+        assert not any(err["file_path"] == file_path for err in errors_after)
