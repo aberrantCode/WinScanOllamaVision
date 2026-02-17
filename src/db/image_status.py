@@ -9,6 +9,11 @@ class ImageStatus(Enum):
 
     Represents the various states an image can be in throughout
     the document processing workflow.
+
+    Note: The `is_ignored` flag (added in Migration 17) is stored separately
+    as a boolean field on the image_files table. Ignored images can still have
+    any of the statuses below, but will be skipped during analysis scans.
+    This separation allows for clean filtering without complicating status transitions.
     """
 
     REGISTERED = "registered"  # Initial state when file is discovered
