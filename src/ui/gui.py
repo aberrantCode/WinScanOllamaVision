@@ -6786,6 +6786,29 @@ class StartupWindow(QWidget):
         # Keep reference to prevent garbage collection
         self._settings_window = settings_window
 
+    def show_discover_window(self):
+        """Open Discover window for image review and management."""
+        from ui.discover_window import DiscoverWindow
+
+        discover_window = DiscoverWindow(
+            analysis_db=self.analysis_db, config_manager=self.config_manager, parent=self
+        )
+
+        # Connect signal to refresh file details grid when files change
+        discover_window.files_changed.connect(self._on_discover_files_changed)
+
+        # Show modal
+        discover_window.exec()
+
+    def _on_discover_files_changed(self):
+        """Handle files changed signal from Discover window."""
+        # Refresh file details grid if it exists
+        if hasattr(self, "file_grid") and self.file_grid:
+            self.file_grid.refresh_data()
+
+        # Update any other affected UI components
+        self._get_logger().info("[GUI] Discover window files changed - refreshing UI")
+
     def manual_discover_images(self):
         """Manually trigger image discovery - finds and registers new files"""
         from PyQt6.QtCore import QTimer

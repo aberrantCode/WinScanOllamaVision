@@ -175,6 +175,10 @@ class AnalysisService:
             image_files = sorted(image_files_set)
             all_files.extend([(directory, f) for f in image_files])
 
+        # Filter out ignored files (single database query for efficiency)
+        ignored_files = self._get_ignored_files()
+        all_files = [(dir, f) for dir, f in all_files if f not in ignored_files]
+
         stats["total_files"] = len(all_files)
         self._log(f"[SCAN] Starting analysis of {stats['total_files']} files")
 
@@ -448,6 +452,28 @@ class AnalysisService:
                 progress_callback(f"Analysis failed for {filename}")
 
         return result
+
+    def _get_ignored_files(self) -> set[str]:
+        """
+        Get set of file paths that are marked as ignored.
+
+        Returns:
+            Set of file paths to ignore during analysis
+        """
+        from db.repositories.image_files_repo import ImageFilesRepository
+
+        image_repo = ImageFilesRepository(self.analysis_db.connection)
+
+        # Get all images
+        all_images = image_repo.get_all()
+
+        # Filter to only ignored ones
+        ignored_paths = {img["file_path"] for img in all_images if img.get("is_ignored", False)}
+
+        if ignored_paths:
+            self._log(f"[SCAN] Filtering out {len(ignored_paths)} ignored file(s)")
+
+        return ignored_paths
 
 
 # Example usage
