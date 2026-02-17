@@ -567,3 +567,66 @@ class ImageFilesRepository:
             stats[f"status_{row['status']}"] = row["count"]
 
         return stats
+
+    def set_ignored(self, file_path: str, ignored: bool) -> None:
+        """
+        Set ignore status for an image.
+
+        Args:
+            file_path: Path to image file
+            ignored: True to ignore, False to un-ignore
+        """
+        self.conn.execute(
+            "UPDATE image_files SET is_ignored = ? WHERE file_path = ?", (ignored, file_path)
+        )
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+
+    def get_ignored_count(self) -> int:
+        """
+        Get count of ignored images.
+
+        Returns:
+            Number of ignored images
+        """
+        result = self.conn.fetch_one_dict(
+            "SELECT COUNT(*) as count FROM image_files WHERE is_ignored = 1"
+        )
+        return result.get("count", 0) if result else 0
+
+    def set_ignored_batch(self, file_paths: list[str], ignored: bool) -> int:
+        """
+        Set ignore status for multiple images (batch operation).
+
+        Args:
+            file_paths: List of file paths
+            ignored: True to ignore, False to un-ignore
+
+        Returns:
+            Number of rows affected
+        """
+        if not file_paths:
+            return 0
+
+        placeholders = ",".join("?" * len(file_paths))
+        # Column names from internal code, values parameterized - safe from injection
+        query = f"""
+            UPDATE image_files
+            SET is_ignored = ?
+            WHERE file_path IN ({placeholders})
+        """  # nosec B608
+
+        params = [ignored] + file_paths
+        cursor = self.conn.execute(query, tuple(params))
+
+        try:
+            self.conn.commit()
+            return cursor.rowcount if cursor else 0
+        except sqlite3.OperationalError as e:
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e

@@ -81,31 +81,27 @@ class TestFullWorkflow:
     def analysis_db(self, temp_db_dir):
         """Create test AnalysisDB with guaranteed cleanup.
 
-        Note: patch context remains active during test execution via yield.
+        Note: Explicitly passes db_path to prevent writing to production database.
         """
         db_path = os.path.join(temp_db_dir, "analysis.db")
-        with patch("config.appdata_manager.AppDataManager") as mock_appdata:
-            mock_appdata.return_value.get_analysis_db_path.return_value = db_path
-            db = AnalysisDB()
-            try:
-                yield db  # Patch remains active here during test execution
-            finally:
-                db.close()  # Cleanup before exiting patch context
+        db = AnalysisDB(db_path=db_path)  # FIX: Pass db_path explicitly
+        try:
+            yield db
+        finally:
+            db.close()  # Cleanup after test
 
     @pytest.fixture
     def metadata_db(self, temp_db_dir):
         """Create test MetadataDB with guaranteed cleanup.
 
-        Note: patch context remains active during test execution via yield.
+        Note: Explicitly passes db_path to prevent writing to production database.
         """
         db_path = os.path.join(temp_db_dir, "metadata.db")
-        with patch("config.appdata_manager.AppDataManager") as mock_appdata:
-            mock_appdata.return_value.get_metadata_db_path.return_value = db_path
-            db = MetadataDB()
-            try:
-                yield db  # Patch remains active here during test execution
-            finally:
-                db.close()  # Cleanup before exiting patch context
+        db = MetadataDB(db_path=db_path)  # FIX: Pass db_path explicitly
+        try:
+            yield db
+        finally:
+            db.close()  # Cleanup after test
 
     @patch("services.analysis_service.get_logger")
     @patch("services.analysis_service.ProviderFactory")

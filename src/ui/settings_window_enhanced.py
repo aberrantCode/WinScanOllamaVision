@@ -233,6 +233,43 @@ class PromptComparisonDialog(QDialog):
         return self.optimized_prompt
 
 
+class ModelLoadingWorker(QThread):
+    """Background worker for loading models from providers without blocking UI"""
+
+    finished = pyqtSignal()  # Emitted when all models are loaded
+    error = pyqtSignal(str)  # Emitted if loading fails
+
+    def __init__(self, settings_window: "EnhancedSettingsWindow"):
+        super().__init__()
+        self.settings_window = settings_window
+
+    def _get_logger(self) -> logging.Logger:
+        """Get logger instance (lazy initialization)."""
+        global logger
+        if logger is None:
+            from services.logging_service import get_logger as _get_logger
+
+            logger = _get_logger()
+        return logger
+
+    def run(self):
+        """Load models in background thread"""
+        try:
+            self._get_logger().debug("[MODEL LOADING] Starting background model loading")
+
+            # Load all models (these methods already have caching)
+            self.settings_window._load_ollama_models()
+            self.settings_window._load_claude_models()
+            self.settings_window._load_gemini_models()
+
+            self._get_logger().debug("[MODEL LOADING] All models loaded successfully")
+            self.finished.emit()
+
+        except Exception as e:
+            self._get_logger().error(f"[MODEL LOADING] Error loading models: {e}")
+            self.error.emit(str(e))
+
+
 class EnhancedSettingsWindow(QDialog):
     """Enhanced Settings Window with 5-tab interface"""
 
@@ -249,6 +286,9 @@ class EnhancedSettingsWindow(QDialog):
             # Track optimization thread
             self.optimization_thread = None
             self.optimization_prompt_edit = None
+
+            # Track model loading worker
+            self.model_loading_worker = None
 
             # Initialize Ollama service (for backward compatibility)
             timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
@@ -738,7 +778,7 @@ class EnhancedSettingsWindow(QDialog):
             QTabWidget::pane {
                 border: 1px solid #3D3D3D;
                 border-radius: 8px;
-                background-color: #1E1E1E;
+                background-color: #0B1120;
                 padding: 0;
             }
 
@@ -755,9 +795,9 @@ class EnhancedSettingsWindow(QDialog):
             }
 
             QTabBar::tab:selected {
-                background-color: #1E1E1E;
+                background-color: #0B1120;
                 color: #F3F4F6;
-                border-bottom: 2px solid #1E1E1E;
+                border-bottom: 2px solid #0B1120;
                 font-weight: 600;
             }
 
@@ -768,15 +808,15 @@ class EnhancedSettingsWindow(QDialog):
 
             /* ===== CONTENT WIDGETS ===== */
             QTabWidget > QWidget {
-                background-color: #1E1E1E;
+                background-color: #0B1120;
             }
 
             QStackedWidget {
-                background-color: #1E1E1E;
+                background-color: #0B1120;
             }
 
             QStackedWidget > QWidget {
-                background-color: #1E1E1E;
+                background-color: #0B1120;
             }
 
             /* ===== GROUP BOXES ===== */
@@ -804,7 +844,7 @@ class EnhancedSettingsWindow(QDialog):
 
             /* ===== TEXT INPUTS ===== */
             QLineEdit {
-                background-color: #2D2D2D;
+                background-color: #151D2F;
                 border: 2px solid #3D3D3D;
                 border-radius: 6px;
                 padding: 8px 12px;
@@ -830,7 +870,7 @@ class EnhancedSettingsWindow(QDialog):
             }
 
             QPlainTextEdit {
-                background-color: #2D2D2D;
+                background-color: #151D2F;
                 border: 2px solid #3D3D3D;
                 border-radius: 6px;
                 padding: 8px 12px;
@@ -867,7 +907,7 @@ class EnhancedSettingsWindow(QDialog):
 
             /* ===== DROPDOWNS ===== */
             QComboBox {
-                background-color: #2D2D2D;
+                background-color: #151D2F;
                 border: 2px solid #3D3D3D;
                 border-radius: 6px;
                 padding: 8px 12px;
@@ -902,7 +942,7 @@ class EnhancedSettingsWindow(QDialog):
             }
 
             QComboBox QAbstractItemView {
-                background-color: #2D2D2D;
+                background-color: #151D2F;
                 border: 2px solid #3D3D3D;
                 border-radius: 6px;
                 selection-background-color: #1E40AF;
@@ -923,7 +963,7 @@ class EnhancedSettingsWindow(QDialog):
 
             /* ===== SPINBOX ===== */
             QSpinBox {
-                background-color: #2D2D2D;
+                background-color: #151D2F;
                 border: 2px solid #3D3D3D;
                 border-radius: 6px;
                 padding: 8px 12px;
@@ -993,7 +1033,7 @@ class EnhancedSettingsWindow(QDialog):
                 height: 18px;
                 border: 2px solid #4B5563;
                 border-radius: 4px;
-                background-color: #2D2D2D;
+                background-color: #151D2F;
             }
 
             QCheckBox::indicator:hover {
@@ -1017,7 +1057,7 @@ class EnhancedSettingsWindow(QDialog):
 
             /* ===== LIST WIDGETS ===== */
             QListWidget {
-                background-color: #2D2D2D;
+                background-color: #151D2F;
                 border: 2px solid #3D3D3D;
                 border-radius: 6px;
                 color: #F3F4F6;
@@ -1033,7 +1073,7 @@ class EnhancedSettingsWindow(QDialog):
                 padding: 10px 12px;
                 border-radius: 4px;
                 color: #F3F4F6;
-                background-color: #2D2D2D;
+                background-color: #151D2F;
             }
 
             QListWidget::item:alternate {
@@ -1164,10 +1204,10 @@ class EnhancedSettingsWindow(QDialog):
         if current_theme == "dark":
             self.setStyleSheet("""
                 QDialog {
-                    background-color: #1E1E1E;
+                    background-color: #0B1120;
                 }
                 QDialogButtonBox {
-                    background-color: #1E1E1E;
+                    background-color: #0B1120;
                 }
                 /* Scoped: make buttons inside this dialog slightly smaller */
                 QDialog QPushButton {
@@ -1299,13 +1339,13 @@ class EnhancedSettingsWindow(QDialog):
             raise
 
     def showEvent(self, event):  # noqa: N802
-        """Override showEvent to load models and then capture final state."""
+        """Override showEvent to load models in background thread."""
         super().showEvent(event)
 
         # Only do this on first show
         if not hasattr(self, "_first_show_done"):
             self._first_show_done = True
-            self._get_logger().debug("showEvent: First show - starting async model loading")
+            self._get_logger().debug("showEvent: First show - starting background model loading")
 
             # Keep tracking disabled
             self._tracking_enabled = False
@@ -1313,37 +1353,43 @@ class EnhancedSettingsWindow(QDialog):
             # Show loading overlay
             self._show_loading_overlay()
 
-            # Load models asynchronously to avoid freezing UI
-            from PyQt6.QtCore import QTimer
+            # Create and start model loading worker
+            self.model_loading_worker = ModelLoadingWorker(self)
+            self.model_loading_worker.finished.connect(self._on_models_loaded)
+            self.model_loading_worker.error.connect(self._on_model_loading_error)
+            self.model_loading_worker.start()
 
-            def load_models_then_init():
-                try:
-                    # Load all models (using cache, so usually fast)
-                    self._load_ollama_models()
-                    self._load_claude_models()
-                    self._load_gemini_models()
+    def _on_models_loaded(self):
+        """Handle model loading completion (runs on main thread)"""
+        try:
+            self._get_logger().debug("showEvent: Models loaded, capturing original values")
 
-                    self._get_logger().debug("showEvent: Models loaded, capturing original values")
+            # Capture final state with all models loaded
+            self._capture_original_values()
+            self._get_logger().debug(
+                f"showEvent: Captured {len(self._original_values)} original values"
+            )
 
-                    # Capture final state with all models loaded
-                    self._capture_original_values()
-                    self._get_logger().debug(
-                        f"showEvent: Captured {len(self._original_values)} original values"
-                    )
+            # Enable tracking and disable button
+            self._tracking_enabled = True
+            if self.save_button:
+                self._update_save_button_style(False)
+                self._get_logger().debug(
+                    f"showEvent: Button disabled, enabled={self.save_button.isEnabled()}"
+                )
+        finally:
+            # Hide loading overlay
+            self._hide_loading_overlay()
 
-                    # Enable tracking and disable button
-                    self._tracking_enabled = True
-                    if self.save_button:
-                        self._update_save_button_style(False)
-                        self._get_logger().debug(
-                            f"showEvent: Button disabled, enabled={self.save_button.isEnabled()}"
-                        )
-                finally:
-                    # Hide loading overlay
-                    self._hide_loading_overlay()
-
-            # Run after a brief moment to let the window render first
-            QTimer.singleShot(50, load_models_then_init)
+    def _on_model_loading_error(self, error_msg: str):
+        """Handle model loading errors (runs on main thread)"""
+        self._get_logger().error(f"Model loading failed: {error_msg}")
+        self._hide_loading_overlay()
+        show_warning(
+            self,
+            "Model Loading Error",
+            f"Failed to load some models:\n\n{error_msg}\n\nYou can still use the settings window.",
+        )
 
     def _show_loading_overlay(self):
         """Show a loading overlay while models are being loaded."""
@@ -3061,10 +3107,10 @@ Return ONLY the JSON array, no other text."""
             try:
                 if data_type == "all":
                     self.analysis_db.purge_all_data()
-                    self.metadata_db.connection.execute("DELETE FROM active_metadata")
+                    self.metadata_db.connection.execute("DELETE FROM metadata")
                     self.metadata_db.connection.commit()
                 elif data_type == "cache":
-                    self.metadata_db.connection.execute("DELETE FROM active_metadata")
+                    self.metadata_db.connection.execute("DELETE FROM metadata")
                     self.metadata_db.connection.commit()
                 elif data_type == "analysis":
                     self.analysis_db.connection.execute("DELETE FROM analysis_results")
@@ -3368,7 +3414,7 @@ Return ONLY the JSON array, no other text."""
                 if current_theme == "dark":
                     style = """
                         QPushButton {
-                            background-color: #2D2D2D;
+                            background-color: #151D2F;
                             color: #555555;
                             border: 1px solid #3D3D3D;
                             border-radius: 6px;

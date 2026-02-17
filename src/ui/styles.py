@@ -781,50 +781,264 @@ def get_themed_message_box_style():
     """
 
 
-def show_information(parent, title, text):
-    """Show themed information message box"""
+def _get_message_box_stylesheet():
+    """
+    Get stylesheet for message boxes using ThemeManager colors.
+
+    This ensures message boxes always use current theme colors.
+    """
+    from config.config_manager import ConfigManager
+    from ui.theme_manager import ThemeManager
+
+    # Get current theme setting
+    try:
+        config = ConfigManager()
+        is_dark = config.get_bool("Appearance", "dark_mode", default=False)
+    except Exception:
+        is_dark = False
+
+    # Use ThemeManager colors for consistency
+    colors = ThemeManager.get_colors(is_dark)
+
+    return f"""
+        QMessageBox {{
+            background-color: {colors["bg_primary"]};
+        }}
+        QMessageBox QLabel {{
+            color: {colors["text_primary"]};
+            background-color: transparent;
+        }}
+        QMessageBox QPushButton {{
+            background-color: {colors["bg_tertiary"]};
+            color: {colors["text_primary"]};
+            border: 1px solid {colors["border"]};
+            border-radius: 4px;
+            padding: 6px 14px;
+            min-width: 70px;
+        }}
+        QMessageBox QPushButton:hover {{
+            background-color: {colors["bg_hover"]};
+            border-color: {colors["border_light"]};
+        }}
+        QMessageBox QPushButton:pressed {{
+            background-color: {colors["border"]};
+        }}
+        QMessageBox QPushButton:default {{
+            background-color: {colors["accent"]};
+            color: white;
+            border-color: {colors["accent"]};
+            font-weight: 600;
+        }}
+        QMessageBox QPushButton:default:hover {{
+            background-color: {colors["accent_hover"]};
+        }}
+    """
+
+
+def show_message(
+    parent,
+    title: str,
+    text: str,
+    icon=None,
+    buttons=None,
+    default_button=None,
+    detailed_text: str | None = None,
+):
+    """
+    Show a themed message box with full customization support.
+
+    This is the universal message box function that all other helpers use.
+    Ensures consistent theming across the entire application.
+
+    Args:
+        parent: Parent widget
+        title: Window title
+        text: Main message text
+        icon: QMessageBox.Icon (Information, Warning, Critical, Question, NoIcon)
+        buttons: Button combination (e.g., Yes | No, Save | Discard | Cancel)
+        default_button: Which button should be default (None = first button)
+        detailed_text: Optional detailed/expandable text
+
+    Returns:
+        QMessageBox.StandardButton representing which button was clicked
+
+    Examples:
+        # Simple information
+        show_message(self, "Success", "Operation completed",
+                    icon=QMessageBox.Icon.Information)
+
+        # Yes/No question
+        reply = show_message(self, "Confirm", "Are you sure?",
+                           icon=QMessageBox.Icon.Question,
+                           buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                           default_button=QMessageBox.StandardButton.No)
+
+        # Save/Discard/Cancel
+        reply = show_message(self, "Unsaved Changes", "Save before closing?",
+                           buttons=QMessageBox.StandardButton.Save |
+                                   QMessageBox.StandardButton.Discard |
+                                   QMessageBox.StandardButton.Cancel,
+                           default_button=QMessageBox.StandardButton.Save)
+    """
     from PyQt6.QtWidgets import QMessageBox
 
     msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Icon.Information)
+
+    # Set icon
+    if icon is not None:
+        msg_box.setIcon(icon)
+
+    # Set text
     msg_box.setWindowTitle(title)
     msg_box.setText(text)
-    msg_box.setStyleSheet(get_themed_message_box_style())
-    msg_box.exec()
 
+    # Set detailed text if provided
+    if detailed_text:
+        msg_box.setDetailedText(detailed_text)
 
-def show_warning(parent, title, text):
-    """Show themed warning message box"""
-    from PyQt6.QtWidgets import QMessageBox
+    # Set buttons
+    if buttons is not None:
+        msg_box.setStandardButtons(buttons)
+    else:
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Icon.Warning)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
-    msg_box.setStyleSheet(get_themed_message_box_style())
-    msg_box.exec()
+    # Set default button
+    if default_button is not None:
+        msg_box.setDefaultButton(default_button)
 
+    # Apply theme
+    msg_box.setStyleSheet(_get_message_box_stylesheet())
 
-def show_critical(parent, title, text):
-    """Show themed critical/error message box"""
-    from PyQt6.QtWidgets import QMessageBox
-
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Icon.Critical)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
-    msg_box.setStyleSheet(get_themed_message_box_style())
-    msg_box.exec()
-
-
-def show_question(parent, title, text):
-    """Show themed question message box with Yes/No buttons"""
-    from PyQt6.QtWidgets import QMessageBox
-
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Icon.Question)
-    msg_box.setWindowTitle(title)
-    msg_box.setText(text)
-    msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-    msg_box.setStyleSheet(get_themed_message_box_style())
     return msg_box.exec()
+
+
+def show_information(parent, title: str, text: str, detailed_text: str | None = None):
+    """
+    Show themed information message box (blue 'i' icon, OK button).
+
+    Args:
+        parent: Parent widget
+        title: Window title
+        text: Main message text
+        detailed_text: Optional detailed/expandable text
+    """
+    from PyQt6.QtWidgets import QMessageBox
+
+    show_message(
+        parent, title, text, icon=QMessageBox.Icon.Information, detailed_text=detailed_text
+    )
+
+
+def show_warning(parent, title: str, text: str, detailed_text: str | None = None):
+    """
+    Show themed warning message box (yellow warning icon, OK button).
+
+    Args:
+        parent: Parent widget
+        title: Window title
+        text: Main message text
+        detailed_text: Optional detailed/expandable text
+    """
+    from PyQt6.QtWidgets import QMessageBox
+
+    show_message(parent, title, text, icon=QMessageBox.Icon.Warning, detailed_text=detailed_text)
+
+
+def show_critical(parent, title: str, text: str, detailed_text: str | None = None):
+    """
+    Show themed critical/error message box (red X icon, OK button).
+
+    Args:
+        parent: Parent widget
+        title: Window title
+        text: Main message text
+        detailed_text: Optional detailed/expandable text
+    """
+    from PyQt6.QtWidgets import QMessageBox
+
+    show_message(parent, title, text, icon=QMessageBox.Icon.Critical, detailed_text=detailed_text)
+
+
+def show_question(parent, title: str, text: str, buttons=None, default_button=None):
+    """
+    Show themed question message box with customizable buttons.
+
+    Args:
+        parent: Parent widget
+        title: Window title
+        text: Main message text
+        buttons: Button combination (default: Yes | No)
+        default_button: Which button should be default (default: No for safety)
+
+    Returns:
+        QMessageBox.StandardButton representing which button was clicked
+
+    Examples:
+        # Simple Yes/No with No as default
+        reply = show_question(self, "Confirm Delete", "Delete this file?")
+        if reply == QMessageBox.StandardButton.Yes:
+            delete_file()
+
+        # Yes/No with Yes as default
+        reply = show_question(self, "Save Changes", "Save before closing?",
+                             default_button=QMessageBox.StandardButton.Yes)
+
+        # Save/Discard/Cancel
+        reply = show_question(self, "Unsaved Changes", "You have unsaved changes.",
+                             buttons=QMessageBox.StandardButton.Save |
+                                     QMessageBox.StandardButton.Discard |
+                                     QMessageBox.StandardButton.Cancel,
+                             default_button=QMessageBox.StandardButton.Save)
+    """
+    from PyQt6.QtWidgets import QMessageBox
+
+    if buttons is None:
+        buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+
+    if default_button is None:
+        # Safe default: No for Yes/No questions
+        default_button = QMessageBox.StandardButton.No
+
+    return show_message(
+        parent,
+        title,
+        text,
+        icon=QMessageBox.Icon.Question,
+        buttons=buttons,
+        default_button=default_button,
+    )
+
+
+def show_confirm(
+    parent,
+    title: str,
+    text: str,
+    confirm_text: str = "Yes",
+    cancel_text: str = "No",
+    default_cancel: bool = True,
+):
+    """
+    Show a simple confirmation dialog (convenience wrapper for Yes/No questions).
+
+    Args:
+        parent: Parent widget
+        title: Window title
+        text: Main message text
+        confirm_text: Text for confirmation button (default: "Yes")
+        cancel_text: Text for cancel button (default: "No")
+        default_cancel: If True, cancel is default (safer); if False, confirm is default
+
+    Returns:
+        bool: True if user confirmed, False if cancelled
+
+    Example:
+        if show_confirm(self, "Delete File", "Are you sure you want to delete this file?"):
+            delete_file()
+    """
+    from PyQt6.QtWidgets import QMessageBox
+
+    buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    default = QMessageBox.StandardButton.No if default_cancel else QMessageBox.StandardButton.Yes
+
+    reply = show_question(parent, title, text, buttons=buttons, default_button=default)
+    return reply == QMessageBox.StandardButton.Yes

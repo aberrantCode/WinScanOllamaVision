@@ -4735,10 +4735,8 @@ Files being sent to Ollama:
         try:
             # Use the metadata_db to clear this file's cache
             if hasattr(self, "metadata_db"):
-                # Clear from database
-                cursor = self.metadata_db.conn.cursor()
-                cursor.execute("DELETE FROM active_metadata WHERE file_path = ?", (current_page,))
-                self.metadata_db.conn.commit()
+                # Use proper delete method instead of direct SQL
+                self.metadata_db.delete_metadata(current_page)
                 self._get_logger().debug(
                     f"Cleared cached metadata for {os.path.basename(current_page)}"
                 )
@@ -6233,8 +6231,8 @@ class StartupWindow(QWidget):
         return logger
 
     def _init_ui(self):
-        # Branded blue background (intentional - this is the landing page)
-        self.setStyleSheet("background-color: #2563EB; color: white;")
+        # Very dark blue background (matches dark mode theme)
+        self.setStyleSheet("background-color: #0B1120; color: white;")
 
         # Define refined, professional button styles with glow and shadow
         # Discovery/Analysis buttons - Enhanced blue for visibility on blue background
@@ -6428,7 +6426,7 @@ class StartupWindow(QWidget):
         discover_button.setMinimumHeight(48)
         discover_button.setStyleSheet(discovery_button_style)
         discover_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        discover_button.clicked.connect(self.manual_discover_images)
+        discover_button.clicked.connect(self.show_discover_window)
         button_layout.addWidget(discover_button)
 
         # Analyze button - Blue gradient
@@ -6785,6 +6783,29 @@ class StartupWindow(QWidget):
 
         # Keep reference to prevent garbage collection
         self._settings_window = settings_window
+
+    def show_discover_window(self):
+        """Open Discover window for image review and management."""
+        from ui.discover_window import DiscoverWindow
+
+        discover_window = DiscoverWindow(
+            analysis_db=self.analysis_db, config_manager=self.config_manager, parent=self
+        )
+
+        # Connect signal to refresh file details grid when files change
+        discover_window.files_changed.connect(self._on_discover_files_changed)
+
+        # Show modal
+        discover_window.exec()
+
+    def _on_discover_files_changed(self):
+        """Handle files changed signal from Discover window."""
+        # Refresh file details grid if it exists
+        if hasattr(self, "file_grid") and self.file_grid:
+            self.file_grid.refresh_data()
+
+        # Update any other affected UI components
+        self._get_logger().info("[GUI] Discover window files changed - refreshing UI")
 
     def manual_discover_images(self):
         """Manually trigger image discovery - finds and registers new files"""

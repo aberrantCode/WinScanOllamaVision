@@ -640,6 +640,45 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         _get_logger().info("Migration 16 completed successfully")
         current_version = 16
 
+    # Migration 17: Add is_ignored field to image_files table
+    if current_version < 17:
+        _get_logger().info("Running Migration 17: Add is_ignored field to image_files table")
+
+        # Check if column already exists
+        columns_info = cursor.execute("PRAGMA table_info(image_files)").fetchall()
+        column_names = [col[1] for col in columns_info]
+
+        if "is_ignored" not in column_names:
+            _execute_sql(
+                cursor,
+                """
+                ALTER TABLE image_files
+                ADD COLUMN is_ignored BOOLEAN DEFAULT 0
+            """,
+            )
+            _get_logger().info("Added is_ignored column to image_files table")
+
+        # Create index for efficient filtering
+        _execute_sql(
+            cursor,
+            """
+            CREATE INDEX IF NOT EXISTS idx_image_files_ignored
+            ON image_files(is_ignored)
+        """,
+        )
+
+        _execute_sql(
+            cursor,
+            """
+            INSERT INTO schema_version (version, description)
+            VALUES (17, 'Add is_ignored field for excluding images from analysis')
+        """,
+        )
+
+        conn.commit()
+        _get_logger().info("Migration 17 completed successfully")
+        current_version = 17
+
 
 def get_schema_version(conn: DatabaseConnection) -> int:
     """

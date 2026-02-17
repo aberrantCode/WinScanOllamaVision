@@ -418,6 +418,34 @@ class AnalysisDB:
 
     # ==================== Utility Methods ====================
 
+    def purge_all_data(self) -> None:
+        """
+        Delete all data from all tables (preserves schema).
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+
+        # Delete data from all tables in dependency order (child tables first)
+        tables_to_purge = [
+            "bundle_images",  # References document_bundles and image_files
+            "pdf_image_pages",  # References pdf_files and image_files
+            "analysis_errors",  # References image_files
+            "rotation_preferences",  # References image_files
+            "analysis_results",  # References image_files
+            "document_bundles",  # No foreign key dependencies
+            "pdf_files",  # No foreign key dependencies
+            "image_files",  # Referenced by many tables
+            "audit_trail",  # No foreign key dependencies
+            "source_directories",  # No foreign key dependencies
+        ]
+
+        for table in tables_to_purge:
+            cursor.execute(f"DELETE FROM {table}")
+
+        self.connection.commit()
+
     def close(self):
         """Close database connection."""
         self.connection.close()
