@@ -6428,7 +6428,7 @@ class StartupWindow(QWidget):
         discover_button.setMinimumHeight(48)
         discover_button.setStyleSheet(discovery_button_style)
         discover_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        discover_button.clicked.connect(self.manual_discover_images)
+        discover_button.clicked.connect(self.show_discover_window)
         button_layout.addWidget(discover_button)
 
         # Analyze button - Blue gradient
