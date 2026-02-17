@@ -76,7 +76,7 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("file_hash", "Hash", False),
     ]
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._data: list[dict[str, Any]] = []
         self._visible_columns: list[int] = [
@@ -346,7 +346,7 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
     - Quick filter presets
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._column_filters: dict[str, Any] = {}
         self._search_text: str = ""

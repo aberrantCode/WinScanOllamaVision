@@ -24,7 +24,7 @@ class LoggingService:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the logging service (only once)"""
         if not LoggingService._initialized:
             self.logger: logging.Logger | None = None
