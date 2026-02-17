@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QTreeWidget,
@@ -34,6 +35,7 @@ from PyQt6.QtWidgets import (
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from db.repositories.image_files_repo import ImageFilesRepository
+from services.discovery_worker import DiscoveryWorker
 from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.styles import Colors
 
@@ -87,8 +89,10 @@ class DiscoverWindow(QDialog):
         self.directory_combo: QComboBox | None = None
         self.show_analyzed_checkbox: QCheckBox | None = None
         self.refresh_button: QPushButton | None = None
-        self.status_label: QLabel | None = None
+        self.discover_button: QPushButton | None = None
+        self.progress_bar: QProgressBar | None = None
         self.image_tree: QTreeWidget | None = None
+        self.tree_header_label: QLabel | None = None
         self.preview_widget: ImagePreviewWidget | None = None
         self.file_info_label: QLabel | None = None
         self.analysis_status_label: QLabel | None = None
@@ -96,8 +100,14 @@ class DiscoverWindow(QDialog):
         self.delete_button: QPushButton | None = None
         self.ignore_button: QPushButton | None = None
 
+        # Discovery worker
+        self.discovery_worker: DiscoveryWorker | None = None
+
         # Initialize UI
         self._init_ui()
+
+        # Populate directory dropdown from config
+        self._populate_directory_dropdown()
 
         # Load initial data
         self._refresh_images()
@@ -124,6 +134,13 @@ class DiscoverWindow(QDialog):
         controls_layout = self._create_controls_bar()
         layout.addLayout(controls_layout)
 
+        # Add progress bar (initially hidden)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFixedHeight(25)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
         # Add main content (splitter with tree and preview)
         splitter = self._create_main_splitter()
         layout.addWidget(splitter)
@@ -138,7 +155,7 @@ class DiscoverWindow(QDialog):
 
     def _create_controls_bar(self) -> QHBoxLayout:
         """
-        Create top controls bar with filters and status.
+        Create top controls bar with filters and discovery button.
 
         Returns:
             Layout containing filter controls
@@ -146,27 +163,36 @@ class DiscoverWindow(QDialog):
         controls_layout = QHBoxLayout()
 
         # Directory filter
-        controls_layout.addWidget(QLabel("Directory:"))
+        dir_label = QLabel("Directory:")
+        dir_label.setFixedHeight(30)
+        controls_layout.addWidget(dir_label)
+
         self.directory_combo = QComboBox()
+        self.directory_combo.setFixedHeight(30)
+        self.directory_combo.setMinimumWidth(200)
         self.directory_combo.currentIndexChanged.connect(self._refresh_images)
-        controls_layout.addWidget(self.directory_combo)
+        controls_layout.addWidget(self.directory_combo, stretch=1)  # Expand to fill space
 
         # Show analyzed checkbox
         self.show_analyzed_checkbox = QCheckBox("Show analyzed images")
+        self.show_analyzed_checkbox.setFixedHeight(30)
         self.show_analyzed_checkbox.setChecked(True)
         self.show_analyzed_checkbox.stateChanged.connect(self._refresh_images)
         controls_layout.addWidget(self.show_analyzed_checkbox)
 
         # Refresh button
         self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.setFixedHeight(30)
+        self.refresh_button.setFixedWidth(80)
         self.refresh_button.clicked.connect(self._refresh_images)
         controls_layout.addWidget(self.refresh_button)
 
-        # Status label
-        self.status_label = QLabel("Loading...")
-        controls_layout.addWidget(self.status_label)
-
-        controls_layout.addStretch()
+        # Discover button
+        self.discover_button = QPushButton("Discover Images")
+        self.discover_button.setFixedHeight(30)
+        self.discover_button.setFixedWidth(140)
+        self.discover_button.clicked.connect(self._on_discover_clicked)
+        controls_layout.addWidget(self.discover_button)
 
         return controls_layout
 
@@ -201,6 +227,16 @@ class DiscoverWindow(QDialog):
         """
         panel = QWidget()
         layout = QVBoxLayout(panel)
+
+        # Tree header with count
+        header_layout = QHBoxLayout()
+        header_title = QLabel("<b>Discovered Images</b>")
+        header_layout.addWidget(header_title)
+        header_layout.addStretch()
+        self.tree_header_label = QLabel("0 images found")
+        self.tree_header_label.setStyleSheet("color: #666;")
+        header_layout.addWidget(self.tree_header_label)
+        layout.addLayout(header_layout)
 
         # Image tree
         self.image_tree = QTreeWidget()
@@ -322,8 +358,13 @@ class DiscoverWindow(QDialog):
                 background-color: {colors['bg_primary']};
                 color: {colors['text_primary']};
             }}
+            QWidget {{
+                background-color: {colors['bg_primary']};
+                color: {colors['text_primary']};
+            }}
             QLabel {{
                 color: {colors['text_primary']};
+                background-color: transparent;
             }}
             QPushButton {{
                 background-color: {colors['button_bg']};
@@ -349,6 +390,24 @@ class DiscoverWindow(QDialog):
                 color: {colors['text_primary']};
                 border: 1px solid {colors['border']};
                 padding: 5px;
+            }}
+            QComboBox:drop-down {{
+                border: none;
+            }}
+            QCheckBox {{
+                color: {colors['text_primary']};
+                background-color: transparent;
+            }}
+            QProgressBar {{
+                background-color: {colors['bg_secondary']};
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                text-align: center;
+                color: {colors['text_primary']};
+            }}
+            QProgressBar::chunk {{
+                background-color: {colors['accent']};
+                border-radius: 3px;
             }}
         """
         )
@@ -397,12 +456,10 @@ class DiscoverWindow(QDialog):
         # Populate tree
         self._populate_tree(grouped_images)
 
-        # Update directory dropdown
-        self._populate_directory_dropdown(grouped_images)
-
-        # Update status label
+        # Update tree header label
         total_count = sum(len(images) for images in grouped_images.values())
-        self.status_label.setText(f"{total_count} image(s) found") if self.status_label else None
+        if self.tree_header_label:
+            self.tree_header_label.setText(f"{total_count} images found")
 
     def _populate_tree(self, grouped_images: dict[str, list[dict[str, Any]]]) -> None:
         """
@@ -449,12 +506,9 @@ class DiscoverWindow(QDialog):
                     img_item.setForeground(0, QColor(Colors.GRAY_600))
                     img_item.setText(1, "○ Registered")
 
-    def _populate_directory_dropdown(self, grouped_images: dict[str, list[dict[str, Any]]]) -> None:
+    def _populate_directory_dropdown(self) -> None:
         """
-        Populate directory filter dropdown.
-
-        Args:
-            grouped_images: Dict mapping directory_path to list of image dicts
+        Populate directory filter dropdown with all configured source directories.
         """
         if not self.directory_combo:
             return
@@ -469,7 +523,9 @@ class DiscoverWindow(QDialog):
         self.directory_combo.clear()
         self.directory_combo.addItem("All Directories")
 
-        for directory_path in sorted(grouped_images.keys()):
+        # Get all configured source directories from settings
+        configured_dirs = self.config_manager.get_directories()
+        for directory_path in sorted(configured_dirs):
             self.directory_combo.addItem(directory_path)
 
         # Restore selection if possible
@@ -777,3 +833,142 @@ class DiscoverWindow(QDialog):
 
             # Reload tree (ignored images will be filtered out)
             self._refresh_images()
+
+    def _on_discover_clicked(self) -> None:
+        """Start the discovery process."""
+        # Check if discovery is already running
+        if self.discovery_worker and self.discovery_worker.isRunning():
+            QMessageBox.warning(self, "Discovery In Progress", "Discovery is already running.")
+            return
+
+        # Get directories from config
+        directories = self.config_manager.get_directories()
+        if not directories:
+            QMessageBox.warning(
+                self,
+                "No Directories",
+                "No source directories configured.\n\nPlease add directories in Settings.",
+            )
+            return
+
+        # Disable buttons during discovery
+        if self.discover_button:
+            self.discover_button.setEnabled(False)
+        if self.refresh_button:
+            self.refresh_button.setEnabled(False)
+
+        # Show progress bar
+        if self.progress_bar:
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("Starting discovery...")
+
+        # Create and configure worker
+        self.discovery_worker = DiscoveryWorker(self.config_manager, directories)
+        self.discovery_worker.progress.connect(self._on_discovery_progress)
+        self.discovery_worker.finished.connect(self._on_discovery_finished)
+        self.discovery_worker.error.connect(self._on_discovery_error)
+
+        # Start discovery
+        self.discovery_worker.start()
+        self._get_logger().info("[DISCOVER WINDOW] Discovery started")
+
+    def _on_discovery_progress(self, status_text: str, current: int, total: int) -> None:
+        """
+        Handle discovery progress updates.
+
+        Args:
+            status_text: Current status message
+            current: Current file index
+            total: Total files to process
+        """
+        if self.progress_bar:
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(current)
+            self.progress_bar.setFormat(f"{current}/{total} - {status_text}")
+
+        # Refresh tree periodically (every 10 files) to show new discoveries
+        if current % 10 == 0:
+            self._refresh_images()
+
+    def _on_discovery_finished(self, new_file_count: int) -> None:
+        """
+        Handle discovery completion.
+
+        Args:
+            new_file_count: Number of newly discovered files
+        """
+        # Hide progress bar
+        if self.progress_bar:
+            self.progress_bar.setVisible(False)
+
+        # Re-enable buttons
+        if self.discover_button:
+            self.discover_button.setEnabled(True)
+        if self.refresh_button:
+            self.refresh_button.setEnabled(True)
+
+        # Refresh tree to show all discovered images
+        self._refresh_images()
+
+        # Show completion message
+        if new_file_count > 0:
+            QMessageBox.information(
+                self,
+                "Discovery Complete",
+                f"Discovery completed successfully!\n\n{new_file_count} new image(s) discovered and registered.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Discovery Complete", "Discovery completed.\n\nNo new images found."
+            )
+
+        self._get_logger().info(
+            f"[DISCOVER WINDOW] Discovery completed - {new_file_count} new files"
+        )
+
+    def _on_discovery_error(self, error_message: str) -> None:
+        """
+        Handle discovery errors.
+
+        Args:
+            error_message: Error message from worker
+        """
+        # Hide progress bar
+        if self.progress_bar:
+            self.progress_bar.setVisible(False)
+
+        # Re-enable buttons
+        if self.discover_button:
+            self.discover_button.setEnabled(True)
+        if self.refresh_button:
+            self.refresh_button.setEnabled(True)
+
+        # Show error dialog
+        QMessageBox.critical(
+            self, "Discovery Error", f"An error occurred during discovery:\n\n{error_message}"
+        )
+
+        self._get_logger().error(f"[DISCOVER WINDOW] Discovery error: {error_message}")
+
+    def closeEvent(self, event):  # noqa: N802
+        """Handle window close event - stop discovery worker if running."""
+        if self.discovery_worker and self.discovery_worker.isRunning():
+            # Ask user for confirmation
+            reply = QMessageBox.question(
+                self,
+                "Discovery In Progress",
+                "Discovery is still running. Do you want to cancel it and close the window?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                # Stop the worker
+                self.discovery_worker.stop()
+                self.discovery_worker.wait(3000)  # Wait up to 3 seconds
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()

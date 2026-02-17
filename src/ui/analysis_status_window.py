@@ -297,16 +297,16 @@ class AnalysisStatusWindow(QDialog):
         """Return color palette based on current theme"""
         if self.is_dark_mode:
             return {
-                "bg_primary": "#1E1E1E",
-                "bg_secondary": "#2D2D2D",
-                "bg_tertiary": "#3A3A3A",
+                "bg_primary": "#0B1120",
+                "bg_secondary": "#151D2F",
+                "bg_tertiary": "#1F2A40",
                 "text_primary": "#E0E0E0",
                 "text_secondary": "#B0B0B0",
                 "text_tertiary": "#808080",
-                "border": "#4A4A4A",
-                "tab_active_bg": "#2D2D2D",
-                "tab_inactive_bg": "#1E1E1E",
-                "tab_hover_bg": "#3A3A3A",
+                "border": "#2A3550",
+                "tab_active_bg": "#151D2F",
+                "tab_inactive_bg": "#0B1120",
+                "tab_hover_bg": "#1F2A40",
             }
         else:
             return {

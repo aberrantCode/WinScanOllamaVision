@@ -584,14 +584,14 @@ class FileDetailsDialog(QDialog):
         """Return color palette based on current theme"""
         if self.is_dark_mode:
             return {
-                "bg_primary": "#1E1E1E",
-                "bg_secondary": "#2D2D2D",
+                "bg_primary": "#0B1120",
+                "bg_secondary": "#151D2F",
                 "text_primary": "#E0E0E0",
                 "text_secondary": "#B0B0B0",
-                "border": "#4A4A4A",
+                "border": "#2A3550",
                 "accent": "#3B82F6",
-                "button_bg": "#3A3A3A",
-                "button_hover": "#4A4A4A",
+                "button_bg": "#1F2A40",
+                "button_hover": "#2A3550",
             }
         else:
             return {
@@ -619,8 +619,8 @@ class FileDetailsDialog(QDialog):
         splitter.setChildrenCollapsible(False)  # Prevent panels from collapsing completely
 
         # Style the splitter handle to make it visible and indicate it's draggable
-        handle_color = "#4A4A4A" if self.is_dark_mode else "#D1D5DB"
-        hover_color = "#6B7280" if self.is_dark_mode else "#9CA3AF"
+        handle_color = "#2A3550" if self.is_dark_mode else "#D1D5DB"
+        hover_color = "#3A4560" if self.is_dark_mode else "#9CA3AF"
         splitter.setStyleSheet(f"""
             QSplitter::handle {{
                 background-color: {handle_color};
@@ -2289,20 +2289,20 @@ class FileDetailsGrid(QWidget):
         """Return color palette based on current theme (matching analysis_status_window)"""
         if self.is_dark_mode:
             return {
-                "bg_primary": "#1E1E1E",
-                "bg_secondary": "#2D2D2D",
-                "bg_tertiary": "#3A3A3A",
+                "bg_primary": "#0B1120",
+                "bg_secondary": "#151D2F",
+                "bg_tertiary": "#1F2A40",
                 "text_primary": "#E0E0E0",
                 "text_secondary": "#B0B0B0",
                 "text_tertiary": "#808080",
-                "border": "#4A4A4A",
-                "input_bg": "#2D2D2D",
-                "button_bg": "#3A3A3A",
-                "button_hover": "#4A4A4A",
+                "border": "#2A3550",
+                "input_bg": "#151D2F",
+                "button_bg": "#1F2A40",
+                "button_hover": "#2A3550",
                 "accent": "#3B82F6",
-                "tab_active_bg": "#2D2D2D",
-                "tab_inactive_bg": "#1E1E1E",
-                "tab_hover_bg": "#3A3A3A",
+                "tab_active_bg": "#151D2F",
+                "tab_inactive_bg": "#0B1120",
+                "tab_hover_bg": "#1F2A40",
             }
         else:
             return {
@@ -2850,12 +2850,12 @@ class FileDetailsGrid(QWidget):
 
         # Get theme colors
         bg_secondary = self.theme_colors.get(
-            "bg_secondary", "#2D2D2D" if self.is_dark_mode else "#FFFFFF"
+            "bg_secondary", "#151D2F" if self.is_dark_mode else "#FFFFFF"
         )
         text_primary = self.theme_colors.get(
             "text_primary", "#E0E0E0" if self.is_dark_mode else "#111827"
         )
-        border = self.theme_colors.get("border", "#4A4A4A" if self.is_dark_mode else "#E5E7EB")
+        border = self.theme_colors.get("border", "#2A3550" if self.is_dark_mode else "#E5E7EB")
         accent = self.theme_colors.get("accent", "#3B82F6")
 
         menu.setStyleSheet(f"""
@@ -2913,12 +2913,12 @@ class FileDetailsGrid(QWidget):
 
         # Get theme colors with fallbacks
         bg_secondary = self.theme_colors.get(
-            "bg_secondary", "#2D2D2D" if self.is_dark_mode else "#FFFFFF"
+            "bg_secondary", "#151D2F" if self.is_dark_mode else "#FFFFFF"
         )
         text_primary = self.theme_colors.get(
             "text_primary", "#E0E0E0" if self.is_dark_mode else "#111827"
         )
-        border = self.theme_colors.get("border", "#4A4A4A" if self.is_dark_mode else "#E5E7EB")
+        border = self.theme_colors.get("border", "#2A3550" if self.is_dark_mode else "#E5E7EB")
         accent = self.theme_colors.get("accent", "#3B82F6")
 
         menu.setStyleSheet(f"""

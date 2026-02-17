@@ -4735,10 +4735,8 @@ Files being sent to Ollama:
         try:
             # Use the metadata_db to clear this file's cache
             if hasattr(self, "metadata_db"):
-                # Clear from database
-                cursor = self.metadata_db.conn.cursor()
-                cursor.execute("DELETE FROM active_metadata WHERE file_path = ?", (current_page,))
-                self.metadata_db.conn.commit()
+                # Use proper delete method instead of direct SQL
+                self.metadata_db.delete_metadata(current_page)
                 self._get_logger().debug(
                     f"Cleared cached metadata for {os.path.basename(current_page)}"
                 )
@@ -6233,8 +6231,8 @@ class StartupWindow(QWidget):
         return logger
 
     def _init_ui(self):
-        # Branded blue background (intentional - this is the landing page)
-        self.setStyleSheet("background-color: #2563EB; color: white;")
+        # Very dark blue background (matches dark mode theme)
+        self.setStyleSheet("background-color: #0B1120; color: white;")
 
         # Define refined, professional button styles with glow and shadow
         # Discovery/Analysis buttons - Enhanced blue for visibility on blue background

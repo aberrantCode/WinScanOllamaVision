@@ -15,10 +15,10 @@ class ThemeManager:
         if is_dark_mode:
             return {
                 # Backgrounds
-                "bg_primary": "#1E1E1E",
-                "bg_secondary": "#2D2D2D",
-                "bg_tertiary": "#3A3A3A",
-                "bg_hover": "#4A4A4A",
+                "bg_primary": "#0B1120",
+                "bg_secondary": "#151D2F",
+                "bg_tertiary": "#1F2A40",
+                "bg_hover": "#2A3550",
                 # Text
                 "text_primary": "#E0E0E0",
                 "text_secondary": "#B0B0B0",
@@ -573,6 +573,35 @@ class ThemeManager:
 
             QMessageBox QLabel {{
                 color: {c["text_primary"]};
+            }}
+
+            QMessageBox QPushButton {{
+                background-color: {c["bg_tertiary"]};
+                color: {c["text_primary"]};
+                border: 1px solid {c["border"]};
+                border-radius: 4px;
+                padding: 6px 14px;
+                min-width: 70px;
+            }}
+
+            QMessageBox QPushButton:hover {{
+                background-color: {c["bg_hover"]};
+                border-color: {c["border_light"]};
+            }}
+
+            QMessageBox QPushButton:pressed {{
+                background-color: {c["border"]};
+            }}
+
+            QMessageBox QPushButton:default {{
+                background-color: {c["accent"]};
+                color: white;
+                border-color: {c["accent"]};
+                font-weight: 600;
+            }}
+
+            QMessageBox QPushButton:default:hover {{
+                background-color: {c["accent_hover"]};
             }}
 
             /* ============================================
