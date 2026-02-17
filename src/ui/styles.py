@@ -790,12 +790,13 @@ def _get_message_box_stylesheet():
     from config.config_manager import ConfigManager
     from ui.theme_manager import ThemeManager
 
-    # Get current theme setting
+    # Get current theme setting (matches main.py logic)
     try:
         config = ConfigManager()
-        is_dark = config.get_bool("Appearance", "dark_mode", default=False)
+        theme = config.get_setting("Theme", "theme", "dark")
+        is_dark = theme == "dark"
     except Exception:
-        is_dark = False
+        is_dark = True  # Default to dark mode
 
     # Use ThemeManager colors for consistency
     colors = ThemeManager.get_colors(is_dark)
