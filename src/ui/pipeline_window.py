@@ -22,11 +22,8 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -554,13 +551,17 @@ class AnalyzePanel(QWidget):
         self,
         config_manager: ConfigManager,
         analysis_db: AnalysisDB,
+        metadata_db: MetadataDB | None,
         dark_mode: bool,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.config_manager = config_manager
         self.analysis_db = analysis_db
+        self.metadata_db = metadata_db
         self.dark_mode = dark_mode
+        # FileDetailsGrid reads is_dark_mode and config_manager from parent attributes
+        self.is_dark_mode = dark_mode
 
         self._queue = AnalysisQueue()
         self._worker = AnalysisWorker(self.config_manager, self._queue)
@@ -578,7 +579,7 @@ class AnalyzePanel(QWidget):
         self.status_lbl: QLabel | None = None
         self.progress_bar: QProgressBar | None = None
         self.stats_lbl: QLabel | None = None
-        self.file_table: QTableWidget | None = None
+        self.file_grid: Any | None = None  # FileDetailsGrid
 
         self._build_ui()
         self._connect_worker()
@@ -659,21 +660,15 @@ class AnalyzePanel(QWidget):
         self.stats_lbl.setStyleSheet(f"font-size: 9pt; color: {self._c()['text_tertiary']};")
         root.addWidget(self.stats_lbl)
 
-        # ── Per-file table
-        self.file_table = QTableWidget(0, 3)
-        self.file_table.setHorizontalHeaderLabels(["File", "Status", "Info"])
-        tbl_hdr = self.file_table.horizontalHeader()
-        assert tbl_hdr is not None
-        tbl_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        tbl_hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.file_table.setColumnWidth(1, 100)
-        tbl_hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.file_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        v_hdr = self.file_table.verticalHeader()
-        assert v_hdr is not None
-        v_hdr.setVisible(False)
-        root.addWidget(self.file_table, stretch=1)
+        # ── Full-featured file grid (21 columns, configurable visibility, context menu)
+        from ui.file_details_grid import FileDetailsGrid
+
+        self.file_grid = FileDetailsGrid(
+            parent=self,
+            analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
+        )
+        root.addWidget(self.file_grid, stretch=1)
 
         # ── Footer navigation
         root.addWidget(self._divider())
@@ -699,54 +694,99 @@ class AnalyzePanel(QWidget):
         root.addLayout(footer)
 
     def refresh(self) -> None:
-        """Load (or reload) current file statuses from the database."""
-        if not self.file_table:
+        """Load (or reload) current file statuses from the database into the grid."""
+        if not self.file_grid:
             return
-
-        self.file_table.setRowCount(0)
-
         try:
-            image_repo = ImageFilesRepository(self.analysis_db.connection)
-            all_images = image_repo.get_all()
-            # Exclude deleted / ignored
-            all_images = [
-                img
-                for img in all_images
-                if img.get("status") != "deleted" and not img.get("is_ignored", False)
-            ]
+            raw_data = self.analysis_db.get_analyzed_pages()
+            data = self._transform_data_for_grid(raw_data)
         except Exception as e:
-            _get_logger().warning(f"[AnalyzePanel] could not load images: {e}")
+            _get_logger().warning(f"[AnalyzePanel] could not load data: {e}")
             return
 
-        c = self._c()
-        for img in all_images:
-            status = img.get("status", "registered")
-            row = self.file_table.rowCount()
-            self.file_table.insertRow(row)
+        self.file_grid.refresh_data(data)
 
-            name_item = QTableWidgetItem(img["filename"])
-            name_item.setData(Qt.ItemDataRole.UserRole, img["file_path"])
-            name_item.setToolTip(img["file_path"])
-            self.file_table.setItem(row, 0, name_item)
-
-            status_item = QTableWidgetItem(status)
-            status_color = {
-                "analyzed": "#10B981",
-                "error": "#EF4444",
-                "cached": "#3B82F6",
-                "registered": c["text_tertiary"],
-            }.get(status, c["text_tertiary"])
-            status_item.setForeground(QColor(status_color))
-            self.file_table.setItem(row, 1, status_item)
-
-            self.file_table.setItem(row, 2, QTableWidgetItem(""))
-
-        total = len(all_images)
-        analyzed = sum(1 for img in all_images if img.get("status") == "analyzed")
+        total = len(data)
+        analyzed = sum(1 for r in data if r.get("status") in ("Analyzed", "analyzed"))
         if self.stats_lbl:
             self.stats_lbl.setText(
-                f"Total: {total}  ·  Analyzed: {analyzed}  " f"·  Pending: {total - analyzed}"
+                f"Total: {total}  ·  Analyzed: {analyzed}  ·  Pending: {total - analyzed}"
             )
+
+    def _transform_data_for_grid(self, db_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Transform raw DB rows to the format expected by FileDetailsGrid."""
+        from datetime import datetime
+
+        from db.image_status import ImageStatus
+
+        status_mapping = {
+            ImageStatus.REGISTERED.value: "Registered",
+            ImageStatus.PENDING.value: "Pending",
+            ImageStatus.ANALYZING.value: "Analyzing",
+            ImageStatus.ANALYZED.value: "Analyzed",
+            ImageStatus.ERROR.value: "Error",
+            ImageStatus.BUNDLED.value: "Bundled",
+            ImageStatus.DELETED.value: "Deleted",
+        }
+
+        seen_paths: set[str] = set()
+        transformed: list[dict[str, Any]] = []
+
+        for row in db_data:
+            file_path = row.get("file_path", "")
+            if file_path in seen_paths:
+                continue
+            seen_paths.add(file_path)
+
+            image_status = row.get("status", "registered")
+            status = status_mapping.get(image_status, image_status.title())
+            has_analysis = row.get("analysis_id") is not None
+            if (
+                image_status == ImageStatus.ANALYZED.value
+                and has_analysis
+                and row.get("confidence_score") is None
+            ):
+                status = "Failed"
+
+            file_mtime = row.get("file_mtime", 0)
+            modified_time = datetime.fromtimestamp(file_mtime) if file_mtime else None
+
+            transformed.append(
+                {
+                    "filename": row.get(
+                        "filename", os.path.basename(file_path) if file_path else "Unknown"
+                    ),
+                    "full_path": file_path,
+                    "status": status,
+                    "confidence": (row.get("confidence_score", 0) * 100)
+                    if row.get("confidence_score") is not None
+                    else None,
+                    "company": row.get("company", ""),
+                    "document_type": row.get("document_type", ""),
+                    "document_date": row.get("document_date", ""),
+                    "page_number": row.get("page_number"),
+                    "total_pages": row.get("total_pages"),
+                    "rotation": row.get("rotation", 0),
+                    "file_size": row.get("file_size", 0),
+                    "modified_time": modified_time,
+                    "analysis_time": row.get("analyzed_at"),
+                    "processing_duration": (row.get("processing_time_ms", 0) / 1000.0)
+                    if row.get("processing_time_ms")
+                    else None,
+                    "model_used": row.get("model_name", ""),
+                    "provider": row.get("provider_name", ""),
+                    "cache_hit": bool(row.get("is_cached", False)),
+                    "error_message": "",
+                    "file_hash": row.get("file_hash", ""),
+                    "raw_response": row.get("response_text", ""),
+                    "response_text": row.get("response_text", ""),
+                    "prompt_text": row.get("prompt_text", ""),
+                    "tax_related": bool(row.get("tax_related", False)),
+                    "is_blank": bool(row.get("is_blank", False)),
+                }
+            )
+
+        return transformed
 
     def _connect_worker(self) -> None:
         ct = Qt.ConnectionType.QueuedConnection
@@ -756,6 +796,8 @@ class AnalyzePanel(QWidget):
         self._worker.job_finished.connect(self._on_job_finished, ct)  # type: ignore[call-arg]
         self._worker.error.connect(self._on_worker_error, ct)  # type: ignore[call-arg]
         self._worker.queue_empty.connect(self._on_queue_empty, ct)  # type: ignore[call-arg]
+        if self.file_grid:
+            self.file_grid.re_analyze_requested.connect(self._on_re_analyze_requested)
 
     def _on_start(self) -> None:
         job = AnalysisJob.create(
@@ -808,44 +850,26 @@ class AnalyzePanel(QWidget):
             self.status_lbl.setText(status)
 
     def _on_file_status_changed(self, file_path: str, new_status: str) -> None:
-        if not self.file_table:
-            return
-        filename = os.path.basename(file_path)
+        # Refresh the full grid so all 21 columns reflect the latest DB state.
+        self.refresh()
 
-        # Update existing row or add new one
-        for row in range(self.file_table.rowCount()):
-            item = self.file_table.item(row, 0)
-            if item and item.data(Qt.ItemDataRole.UserRole) == file_path:
-                status_item = self.file_table.item(row, 1)
-                if status_item:
-                    status_item.setText(new_status)
-                    status_color = {
-                        "analyzed": "#10B981",
-                        "error": "#EF4444",
-                        "cached": "#3B82F6",
-                    }.get(new_status, self._c()["text_secondary"])
-                    status_item.setForeground(QColor(status_color))
-                return
-
-        row = self.file_table.rowCount()
-        self.file_table.insertRow(row)
-
-        name_item = QTableWidgetItem(filename)
-        name_item.setData(Qt.ItemDataRole.UserRole, file_path)
-        name_item.setToolTip(file_path)
-        self.file_table.setItem(row, 0, name_item)
-
-        status_item = QTableWidgetItem(new_status)
-        status_color = {
-            "analyzed": "#10B981",
-            "error": "#EF4444",
-            "cached": "#3B82F6",
-        }.get(new_status, self._c()["text_secondary"])
-        status_item.setForeground(QColor(status_color))
-        self.file_table.setItem(row, 1, status_item)
-
-        self.file_table.setItem(row, 2, QTableWidgetItem(""))
-        self.file_table.scrollToBottom()
+    def _on_re_analyze_requested(self, file_paths: list[str]) -> None:
+        """Queue re-analysis jobs for the given files."""
+        for fp in file_paths:
+            job = AnalysisJob.create(
+                job_type=JobType.ANALYZE_FILES,
+                priority=JobPriority.HIGH,
+                file_paths=[fp],
+            )
+            self._queue.enqueue(job)
+        if not self._worker.isRunning():
+            self._worker.start()
+        if self.start_btn:
+            self.start_btn.setVisible(False)
+        if self.stop_btn:
+            self.stop_btn.setVisible(True)
+        if self.abort_btn:
+            self.abort_btn.setVisible(True)
 
     def _on_job_finished(self, job_id: str, stats: dict) -> None:
         self._stats["analyzed"] += stats.get("analyzed", 0)
@@ -910,7 +934,9 @@ class BundlePanel(QWidget):
     """
     Stage 3: Bundle — review AI bundle suggestions and approve PDFs.
 
-    Shows available bundles and opens GuidedBundleWorkflow as a dialog.
+    Embeds GuidedBundleWorkflow directly as a child widget so the operator
+    never leaves the pipeline window.  A QStackedWidget switches between an
+    empty-state placeholder and the live review UI.
     """
 
     back_requested = pyqtSignal()
@@ -932,10 +958,10 @@ class BundlePanel(QWidget):
         self.dark_mode = dark_mode
         self._bundling_service = BundlingService(self.analysis_db)
         self._workflow_stats: dict = {}
+        self._embedded_workflow: Any | None = None  # GuidedBundleWorkflow instance
 
-        self.bundle_count_lbl: QLabel | None = None
-        self.accepted_lbl: QLabel | None = None
-        self.review_btn: QPushButton | None = None
+        self._content_stack: QStackedWidget | None = None
+        self._placeholder_page: QWidget | None = None
 
         self._build_ui()
 
@@ -944,64 +970,48 @@ class BundlePanel(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 8)
-        root.setSpacing(12)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Content area (placeholder or embedded workflow)
+        self._content_stack = QStackedWidget()
+
+        # Page 0: placeholder shown before bundles are loaded
+        placeholder = QWidget()
+        ph_layout = QVBoxLayout(placeholder)
+        ph_layout.setContentsMargins(24, 24, 24, 24)
+        ph_layout.setSpacing(12)
+
+        c = self._c()
 
         title = QLabel("Bundle — Review AI suggestions and create PDFs")
-        title.setStyleSheet(
-            f"font-size: 11pt; font-weight: 600; color: {self._c()['text_primary']};"
-        )
-        root.addWidget(title)
+        title.setStyleSheet(f"font-size: 11pt; font-weight: 600; color: {c['text_primary']};")
+        ph_layout.addWidget(title)
 
         desc = QLabel(
             "The AI has grouped your analyzed images into document bundles. "
-            "Review each bundle, adjust metadata or page order, then accept to produce a PDF."
+            "Navigate to this stage after running analysis to review them inline."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"font-size: 9pt; color: {self._c()['text_secondary']};")
-        root.addWidget(desc)
+        desc.setStyleSheet(f"font-size: 9pt; color: {c['text_secondary']};")
+        ph_layout.addWidget(desc)
 
-        # Stats area
-        stats_frame = QFrame()
-        stats_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        c = self._c()
-        stats_frame.setStyleSheet(
-            f"QFrame {{ background-color: {c['bg_secondary']}; "
-            f"border: 1px solid {c['border']}; border-radius: 4px; }}"
+        self._placeholder_status = QLabel("Loading bundles…")
+        self._placeholder_status.setStyleSheet(
+            f"font-size: 13pt; font-weight: 700; color: {c['text_primary']}; margin-top: 16px;"
         )
-        stats_layout = QVBoxLayout(stats_frame)
-        stats_layout.setContentsMargins(16, 12, 16, 12)
+        ph_layout.addWidget(self._placeholder_status)
 
-        self.bundle_count_lbl = QLabel("Loading bundle count…")
-        self.bundle_count_lbl.setStyleSheet(
-            f"font-size: 14pt; font-weight: 700; color: {c['text_primary']};"
-        )
-        stats_layout.addWidget(self.bundle_count_lbl)
+        ph_layout.addStretch()
+        self._placeholder_page = placeholder
+        self._content_stack.addWidget(placeholder)  # index 0
 
-        self.accepted_lbl = QLabel("")
-        self.accepted_lbl.setStyleSheet(f"font-size: 9pt; color: {c['text_secondary']};")
-        stats_layout.addWidget(self.accepted_lbl)
+        root.addWidget(self._content_stack, stretch=1)
 
-        root.addWidget(stats_frame)
-
-        # Review button
-        self.review_btn = QPushButton("Review Bundles →")
-        self.review_btn.setFixedHeight(42)
-        self.review_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.review_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {Colors.PRIMARY}; color: white; "
-            f"font-size: 11pt; font-weight: 600; border: none; border-radius: 4px; }}"
-            f"QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}"
-            f"QPushButton:pressed {{ background-color: #1D4ED8; }}"
-        )
-        self.review_btn.clicked.connect(self._on_review)
-        root.addWidget(self.review_btn)
-
-        root.addStretch()
-
-        # Footer
+        # ── Pipeline footer navigation (outside the embedded workflow)
         root.addWidget(self._divider())
         footer = QHBoxLayout()
+        footer.setContentsMargins(16, 6, 16, 8)
 
         back_btn = QPushButton("← Back")
         back_btn.setFixedHeight(30)
@@ -1020,37 +1030,44 @@ class BundlePanel(QWidget):
         self._next_btn.clicked.connect(self.next_requested)
         footer.addWidget(self._next_btn)
 
-        root.addLayout(footer)
+        footer_widget = QWidget()
+        footer_widget.setLayout(footer)
+        root.addWidget(footer_widget)
 
     def refresh_bundle_count(self) -> None:
-        """Update the displayed bundle count from the database."""
-        try:
-            bundles = self._bundling_service.generate_bundle_recommendations()
-            n = len(bundles) if bundles else 0
-            if self.bundle_count_lbl:
-                label = f"{n} bundle{'s' if n != 1 else ''} available"
-                self.bundle_count_lbl.setText(label)
-        except Exception as e:
-            _get_logger().warning(f"[Pipeline BundlePanel] could not count bundles: {e}")
-            if self.bundle_count_lbl:
-                self.bundle_count_lbl.setText("Bundle count unavailable")
-
-    def _on_review(self) -> None:
-        from ui.guided_bundle_workflow import GuidedBundleWorkflow
-
+        """Load bundles from the DB and (re)build the embedded workflow widget."""
         try:
             bundles = self._bundling_service.generate_bundle_recommendations()
         except Exception as e:
-            show_warning(self, "Bundle Error", f"Could not load bundles:\n{e}")
+            _get_logger().warning(f"[Pipeline BundlePanel] could not load bundles: {e}")
+            self._placeholder_status.setText("Could not load bundles — see log for details.")
+            if self._content_stack:
+                self._content_stack.setCurrentIndex(0)
             return
 
         if not bundles:
-            show_information(
-                self,
-                "No Bundles",
-                "No bundle suggestions found. Run analysis first or check your source directories.",
+            self._placeholder_status.setText(
+                "No bundles found. Run analysis first, then return here."
             )
+            if self._content_stack:
+                self._content_stack.setCurrentIndex(0)
             return
+
+        n = len(bundles)
+        self._placeholder_status.setText(f"{n} bundle{'s' if n != 1 else ''} ready to review.")
+        self._load_embedded_workflow(bundles)
+
+    def _load_embedded_workflow(self, bundles: list[dict]) -> None:
+        """Create (or recreate) the embedded GuidedBundleWorkflow widget."""
+        from ui.guided_bundle_workflow import GuidedBundleWorkflow
+
+        # Remove previous workflow widget if present
+        if self._embedded_workflow is not None and self._content_stack is not None:
+            idx = self._content_stack.indexOf(self._embedded_workflow)
+            if idx >= 0:
+                self._content_stack.removeWidget(self._embedded_workflow)
+            self._embedded_workflow.deleteLater()
+            self._embedded_workflow = None
 
         workflow_bundles = self._prepare_bundles(bundles)
 
@@ -1062,16 +1079,17 @@ class BundlePanel(QWidget):
             metadata_db=self.metadata_db,
             config_manager=self.config_manager,
             parent=self,
+            embedded_mode=True,
         )
         workflow.workflow_completed.connect(self._on_workflow_completed)
-        workflow.exec()
+
+        self._embedded_workflow = workflow
+        assert self._content_stack is not None
+        self._content_stack.addWidget(workflow)  # index 1
+        self._content_stack.setCurrentWidget(workflow)
 
     def _on_workflow_completed(self, stats: dict) -> None:
         self._workflow_stats = stats
-        accepted = stats.get("accepted", 0)
-        rejected = stats.get("rejected", 0)
-        if self.accepted_lbl:
-            self.accepted_lbl.setText(f"Accepted: {accepted}  ·  Rejected: {rejected}")
         self.bundles_completed.emit(stats)
 
     def _prepare_bundles(self, bundles: list[dict]) -> list[dict]:
@@ -1301,6 +1319,7 @@ class DocumentPipelineWindow(QMainWindow):
         self.analyze_panel = AnalyzePanel(
             config_manager=self.config_manager,
             analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
             dark_mode=self.dark_mode,
         )
         self.analyze_panel.back_requested.connect(lambda: self._go_to_stage(STAGE_IMPORT))

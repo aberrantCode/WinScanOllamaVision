@@ -125,6 +125,7 @@ class GuidedBundleWorkflow(QDialog):
         metadata_db=None,
         config_manager=None,
         parent=None,
+        embedded_mode=False,
     ):
         super().__init__(parent)
 
@@ -132,6 +133,9 @@ class GuidedBundleWorkflow(QDialog):
         self.analysis_db = analysis_db
         self.metadata_db = metadata_db
         self.config_manager = config_manager
+
+        # Embedded mode: run as child widget inside another layout (no dialog chrome/close)
+        self.embedded_mode = embedded_mode
 
         # State
         self.prototype_mode = prototype_mode
@@ -208,8 +212,12 @@ class GuidedBundleWorkflow(QDialog):
     def _init_ui(self):
         """Initialize the guided workflow UI."""
         self.setWindowTitle("Verify Documents")
-        self.setMinimumSize(1400, 900)
-        self.resize(1400, 900)
+        if self.embedded_mode:
+            # Don't constrain size — let the parent layout decide
+            self.setMinimumSize(600, 400)
+        else:
+            self.setMinimumSize(1400, 900)
+            self.resize(1400, 900)
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -373,17 +381,17 @@ class GuidedBundleWorkflow(QDialog):
         reanalyze_btn.setToolTip("Re-analyze current page")
         reanalyze_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {theme['button_bg']};
-                color: {theme['button_text']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["button_text"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 4px;
                 font-size: 10px;
                 font-weight: 600;
                 padding: 4px 8px;
             }}
             QPushButton:hover {{
-                background: {theme['button_hover']};
-                border-color: {theme['border']};
+                background: {theme["button_hover"]};
+                border-color: {theme["border"]};
             }}
         """)
         reanalyze_btn.clicked.connect(self._on_reanalyze_page)
@@ -394,17 +402,17 @@ class GuidedBundleWorkflow(QDialog):
         add_page_btn.setToolTip("Add page from other bundles")
         add_page_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {theme['button_bg']};
-                color: {theme['button_text']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["button_text"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 4px;
                 font-size: 10px;
                 font-weight: 600;
                 padding: 4px 8px;
             }}
             QPushButton:hover {{
-                background: {theme['button_hover']};
-                border-color: {theme['border']};
+                background: {theme["button_hover"]};
+                border-color: {theme["border"]};
             }}
         """)
         add_page_btn.clicked.connect(self._on_add_page)
@@ -430,13 +438,13 @@ class GuidedBundleWorkflow(QDialog):
         scroll.setStyleSheet(f"""
             QScrollArea {{
                 border: none;
-                background: {theme['bg_primary']};
+                background: {theme["bg_primary"]};
             }}
             QScrollArea > QWidget > QWidget {{
-                background: {theme['bg_primary']};
+                background: {theme["bg_primary"]};
             }}
             QScrollArea > QWidget {{
-                background: {theme['bg_primary']};
+                background: {theme["bg_primary"]};
             }}
         """)
 
@@ -500,7 +508,7 @@ class GuidedBundleWorkflow(QDialog):
         controls.setStyleSheet(f"""
             QWidget {{
                 background: rgba({bg_r}, {bg_g}, {bg_b}, 0.95);
-                border: 1px solid {theme['border']};
+                border: 1px solid {theme["border"]};
                 border-radius: 6px;
                 padding: 4px;
             }}
@@ -513,9 +521,9 @@ class GuidedBundleWorkflow(QDialog):
 
         btn_style = f"""
             QPushButton {{
-                background: {theme['button_bg']};
-                color: {theme['button_text']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["button_text"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
@@ -525,12 +533,12 @@ class GuidedBundleWorkflow(QDialog):
                 max-height: 28px;
             }}
             QPushButton:hover {{
-                background: {theme['button_hover']};
-                border-color: {theme['border']};
-                color: {theme['text_primary']};
+                background: {theme["button_hover"]};
+                border-color: {theme["border"]};
+                color: {theme["text_primary"]};
             }}
             QPushButton:pressed {{
-                background: {theme['selected']};
+                background: {theme["selected"]};
             }}
         """
 
@@ -549,21 +557,21 @@ class GuidedBundleWorkflow(QDialog):
         self.zoom_spinner.setFixedHeight(28)
         self.zoom_spinner.setStyleSheet(f"""
             QSpinBox {{
-                background: {theme['button_bg']};
-                color: {theme['text_primary']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["text_primary"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 4px;
                 padding: 4px;
                 font-size: 11px;
                 font-weight: 600;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
-                background: {theme['button_hover']};
+                background: {theme["button_hover"]};
                 border: none;
                 width: 14px;
             }}
             QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background: {theme['selected']};
+                background: {theme["selected"]};
             }}
         """)
         self.zoom_spinner.valueChanged.connect(self._on_zoom_changed)
@@ -721,7 +729,7 @@ class GuidedBundleWorkflow(QDialog):
                 font-weight: 600;
             }}
             QLineEdit:focus {{
-                border: 2px solid {theme['selected']};
+                border: 2px solid {theme["selected"]};
                 background: {input_bg};
             }}
         """)
@@ -794,16 +802,16 @@ class GuidedBundleWorkflow(QDialog):
                 arrow_color = theme["text_primary"]
                 widget.setStyleSheet(f"""
                     QComboBox {{
-                        background: {theme['bg_input']};
-                        color: {theme['text_primary']};
-                        border: 1px solid {theme['border']};
+                        background: {theme["bg_input"]};
+                        color: {theme["text_primary"]};
+                        border: 1px solid {theme["border"]};
                         border-radius: 4px;
                         padding: 8px;
                         padding-right: 30px;
                         font-size: 13px;
                     }}
                     QComboBox:focus {{
-                        border: 1px solid {theme['border_focus']};
+                        border: 1px solid {theme["border_focus"]};
                     }}
                     QComboBox::drop-down {{
                         subcontrol-origin: padding;
@@ -820,10 +828,10 @@ class GuidedBundleWorkflow(QDialog):
                         margin-right: 5px;
                     }}
                     QComboBox QAbstractItemView {{
-                        background: {theme['bg_input']};
-                        color: {theme['text_primary']};
-                        selection-background-color: {theme['selected']};
-                        border: 1px solid {theme['border']};
+                        background: {theme["bg_input"]};
+                        color: {theme["text_primary"]};
+                        selection-background-color: {theme["selected"]};
+                        border: 1px solid {theme["border"]};
                     }}
                 """)
 
@@ -862,18 +870,18 @@ class GuidedBundleWorkflow(QDialog):
                 widget.setChecked(bool(value))
                 widget.setStyleSheet(f"""
                     QCheckBox {{
-                        color: {theme['text_primary']};
+                        color: {theme["text_primary"]};
                         font-size: 13px;
                     }}
                     QCheckBox::indicator {{
                         width: 18px;
                         height: 18px;
-                        border: 2px solid {theme['border']};
+                        border: 2px solid {theme["border"]};
                         border-radius: 3px;
                     }}
                     QCheckBox::indicator:checked {{
-                        background: {theme['selected']};
-                        border-color: {theme['selected']};
+                        background: {theme["selected"]};
+                        border-color: {theme["selected"]};
                     }}
                 """)
             else:
@@ -883,15 +891,15 @@ class GuidedBundleWorkflow(QDialog):
                     widget.setPlaceholderText(placeholder)
                 widget.setStyleSheet(f"""
                     QLineEdit {{
-                        background: {theme['bg_input']};
-                        color: {theme['text_primary']};
-                        border: 1px solid {theme['border']};
+                        background: {theme["bg_input"]};
+                        color: {theme["text_primary"]};
+                        border: 1px solid {theme["border"]};
                         border-radius: 4px;
                         padding: 8px;
                         font-size: 13px;
                     }}
                     QLineEdit:focus {{
-                        border: 1px solid {theme['border_focus']};
+                        border: 1px solid {theme["border_focus"]};
                     }}
                 """)
 
@@ -989,10 +997,11 @@ class GuidedBundleWorkflow(QDialog):
         button_layout.addWidget(self.metadata_save_btn)
 
         self.metadata_cancel_btn = QPushButton("✖ Cancel")
+        _ct = self._get_theme_colors()
         self.metadata_cancel_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {Colors.GRAY_300};
-                color: {Colors.GRAY_800};
+                background-color: {_ct["button_bg"]};
+                color: {_ct["button_text"]};
                 border: none;
                 border-radius: 4px;
                 padding: 8px 16px;
@@ -1000,7 +1009,7 @@ class GuidedBundleWorkflow(QDialog):
                 font-size: 12px;
             }}
             QPushButton:hover {{
-                background-color: {Colors.GRAY_400};
+                background-color: {_ct["button_hover"]};
             }}
         """)
         self.metadata_cancel_btn.clicked.connect(self._on_cancel_metadata_changes)
@@ -1043,13 +1052,13 @@ class GuidedBundleWorkflow(QDialog):
         header.setCursor(Qt.CursorShape.PointingHandCursor)
         header.setStyleSheet(f"""
             QFrame {{
-                background-color: {theme['bg_tertiary']};
+                background-color: {theme["bg_tertiary"]};
                 border: none;
                 border-radius: 4px;
                 padding: 6px 10px;
             }}
             QFrame:hover {{
-                background-color: {theme['bg_hover']};
+                background-color: {theme["bg_hover"]};
             }}
         """)
 
@@ -1082,7 +1091,7 @@ class GuidedBundleWorkflow(QDialog):
         content_scroll.setObjectName("accordion_content")
         content_scroll.setStyleSheet(f"""
             QScrollArea {{
-                background-color: {theme['bg_secondary']};
+                background-color: {theme["bg_secondary"]};
                 border: none;
             }}
         """)
@@ -1398,20 +1407,20 @@ class GuidedBundleWorkflow(QDialog):
         # Zoom controls
         btn_style = f"""
             QPushButton {{
-                background: {theme['button_bg']};
-                color: {theme['button_text']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["button_text"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 4px;
                 font-size: 11px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background: {theme['button_hover']};
-                border-color: {theme['border']};
-                color: {theme['text_primary']};
+                background: {theme["button_hover"]};
+                border-color: {theme["border"]};
+                color: {theme["text_primary"]};
             }}
             QPushButton:pressed {{
-                background: {theme['selected']};
+                background: {theme["selected"]};
             }}
         """
 
@@ -1431,15 +1440,15 @@ class GuidedBundleWorkflow(QDialog):
         self.zoom_spinner.setFixedHeight(32)
         self.zoom_spinner.setStyleSheet(f"""
             QSpinBox {{
-                background: {theme['button_bg']};
-                color: {theme['text_primary']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["text_primary"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 4px;
                 padding: 2px 4px;
                 font-size: 11px;
             }}
             QSpinBox:focus {{
-                border-color: {theme['selected']};
+                border-color: {theme["selected"]};
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
                 width: 0px;
@@ -1800,11 +1809,11 @@ class GuidedBundleWorkflow(QDialog):
         thumbnail.setStyleSheet(f"""
             DraggableThumbnail {{
                 border: {border_width}px solid {border_color};
-                background: {theme['bg_primary']};
+                background: {theme["bg_primary"]};
                 border-radius: 4px;
             }}
             DraggableThumbnail:hover {{
-                border-color: {theme['selected']};
+                border-color: {theme["selected"]};
             }}
         """)
 
@@ -1828,10 +1837,10 @@ class GuidedBundleWorkflow(QDialog):
         # Consistent button style - all same size
         btn_style = f"""
             QPushButton {{
-                background: {theme['button_bg']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 2px;
-                color: {theme['text_primary']};
+                color: {theme["text_primary"]};
                 font-size: 8px;
                 font-weight: bold;
                 min-width: 20px;
@@ -1841,21 +1850,21 @@ class GuidedBundleWorkflow(QDialog):
                 padding: 0;
             }}
             QPushButton:hover {{
-                background: {theme['bg_hover']};
-                border-color: {theme['border_focus']};
+                background: {theme["bg_hover"]};
+                border-color: {theme["border_focus"]};
             }}
             QPushButton:disabled {{
-                background: {theme['bg_secondary']};
-                color: {theme['text_disabled']};
-                border-color: {theme['border_light']};
+                background: {theme["bg_secondary"]};
+                color: {theme["text_disabled"]};
+                border-color: {theme["border_light"]};
             }}
         """
 
         remove_style = f"""
             QPushButton {{
-                background: {theme['button_bg']};
-                color: {theme['text_primary']};
-                border: 1px solid {theme['border']};
+                background: {theme["button_bg"]};
+                color: {theme["text_primary"]};
+                border: 1px solid {theme["border"]};
                 border-radius: 2px;
                 font-size: 11px;
                 font-weight: bold;
@@ -1866,9 +1875,9 @@ class GuidedBundleWorkflow(QDialog):
                 padding: 0;
             }}
             QPushButton:hover {{
-                background: {theme['danger']};
+                background: {theme["danger"]};
                 color: white;
-                border-color: {theme['danger']};
+                border-color: {theme["danger"]};
             }}
         """
 
@@ -2409,9 +2418,10 @@ class GuidedBundleWorkflow(QDialog):
         progress = QProgressBar()
         progress.setMinimum(0)
         progress.setMaximum(0)  # Indeterminate
+        _ct = self._get_theme_colors()
         progress.setStyleSheet(f"""
             QProgressBar {{
-                background: {Colors.GRAY_200};
+                background: {_ct["bg_tertiary"]};
                 border-radius: 4px;
                 height: 8px;
             }}
@@ -2574,7 +2584,8 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             }
         )
 
-        self.accept()
+        if not self.embedded_mode:
+            self.accept()
 
     def _on_reanalyze_page(self):
         """Re-analyze the current page using LLM provider."""
@@ -3375,17 +3386,17 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
                 if "Re-analyze" in button.text() or "Add" in button.text():
                     button.setStyleSheet(f"""
                         QPushButton {{
-                            background: {theme['button_bg']};
-                            color: {theme['button_text']};
-                            border: 1px solid {theme['border']};
+                            background: {theme["button_bg"]};
+                            color: {theme["button_text"]};
+                            border: 1px solid {theme["border"]};
                             border-radius: 4px;
                             font-size: 10px;
                             font-weight: 600;
                             padding: 4px 8px;
                         }}
                         QPushButton:hover {{
-                            background: {theme['button_hover']};
-                            border-color: {theme['border']};
+                            background: {theme["button_hover"]};
+                            border-color: {theme["border"]};
                         }}
                     """)
 
@@ -3526,13 +3537,13 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
                 if header:
                     header.setStyleSheet(f"""
                         QFrame {{
-                            background-color: {theme['bg_tertiary']};
+                            background-color: {theme["bg_tertiary"]};
                             border: none;
                             border-radius: 4px;
                             padding: 6px 10px;
                         }}
                         QFrame:hover {{
-                            background-color: {theme['bg_hover']};
+                            background-color: {theme["bg_hover"]};
                         }}
                     """)
 
@@ -3557,7 +3568,7 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
                 if scroll:
                     scroll.setStyleSheet(f"""
                         QScrollArea {{
-                            background-color: {theme['bg_secondary']};
+                            background-color: {theme["bg_secondary"]};
                             border: none;
                         }}
                     """)
@@ -3611,7 +3622,7 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
                         font-weight: 600;
                     }}
                     QLineEdit:focus {{
-                        border: 2px solid {theme['selected']};
+                        border: 2px solid {theme["selected"]};
                         background: {input_bg};
                     }}
                 """)
