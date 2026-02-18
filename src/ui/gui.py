@@ -6420,7 +6420,16 @@ class StartupWindow(QWidget):
         button_layout.setSpacing(15)
         button_layout.addStretch()
 
-        # Discover button (topmost) - Blue gradient
+        # Pipeline button (unified workflow) - accent blue
+        pipeline_button = QPushButton("⚡  Pipeline")
+        pipeline_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        pipeline_button.setMinimumHeight(48)
+        pipeline_button.setStyleSheet(discovery_button_style)
+        pipeline_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        pipeline_button.clicked.connect(self.show_pipeline_window)
+        button_layout.addWidget(pipeline_button)
+
+        # Discover button - Blue gradient
         discover_button = QPushButton("📁  Discover")
         discover_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         discover_button.setMinimumHeight(48)
@@ -6797,6 +6806,20 @@ class StartupWindow(QWidget):
 
         # Show modal
         discover_window.exec()
+
+    def show_pipeline_window(self):
+        """Open the unified Document Pipeline window (Import → Analyze → Bundle → Export)."""
+        from ui.pipeline_window import DocumentPipelineWindow
+
+        pipeline = DocumentPipelineWindow(
+            analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
+            config_manager=self.config_manager,
+            parent=self,
+        )
+        pipeline.show()
+        pipeline.raise_()
+        pipeline.activateWindow()
 
     def _on_discover_files_changed(self):
         """Handle files changed signal from Discover window."""
