@@ -526,6 +526,7 @@ class FileDetailsDialog(QDialog):
         self.file_data = file_data
         self.analysis_db = analysis_db  # Store database reference
         self.metadata_db = metadata_db  # Store metadata database reference
+        self.config_manager = config_manager  # Store config manager reference
         self.setWindowTitle(
             f"File Details - {os.path.basename(file_data.get('filename', 'Unknown'))}"
         )
@@ -648,6 +649,8 @@ class FileDetailsDialog(QDialog):
             toolbar_size=ToolbarSize.COMPACT,
             toolbar_position=ToolbarPosition.BOTTOM_CENTER,
             theme_colors=self.theme_colors,
+            config_manager=self.config_manager,
+            analysis_db=self.analysis_db,
         )
         self.image_preview.setMinimumSize(400, 400)
 
@@ -663,7 +666,7 @@ class FileDetailsDialog(QDialog):
                 self.current_rotation = "none"
 
                 # Load into preview widget with fit to window
-                self.image_preview.set_pixmap(pixmap, apply_fit="window")
+                self.image_preview.set_pixmap(pixmap, apply_fit="window", file_path=file_path)
             else:
                 self.base_pixmap = None
                 self.original_pixmap = None
@@ -1339,10 +1342,14 @@ class FileDetailsDialog(QDialog):
         # ALWAYS get rotation from image_files table (authoritative source via MetadataDB)
         # Never use analysis_results.rotation_needed as it's just for historical reference
         rotation_value = "none"  # Default
-        if self.metadata_db:
+        if self.analysis_db:
             file_path = self.file_data.get("full_path")
             if file_path:
-                rotation_degrees = self.metadata_db.get_image_rotation(file_path)
+                # Get rotation from metadata table using RotationRepository
+                from db.repositories.rotation_repo import RotationRepository
+
+                rotation_repo = RotationRepository(self.analysis_db.connection)
+                rotation_degrees = rotation_repo.get(file_path)
                 # Convert degrees back to rotation_needed format
                 rotation_value = {
                     0: "none",
@@ -1351,7 +1358,7 @@ class FileDetailsDialog(QDialog):
                     180: "180",
                 }.get(rotation_degrees, "none")  # Default to "none" if unexpected value
                 logger.debug(
-                    f"[METADATA CONTENT] Loaded rotation from image_files: {rotation_degrees}° = '{rotation_value}'"
+                    f"[METADATA CONTENT] Loaded rotation from metadata table: {rotation_degrees}° = '{rotation_value}'"
                 )
 
         # Store initial rotation for later application
@@ -1771,34 +1778,28 @@ class FileDetailsDialog(QDialog):
                     logger.debug(
                         f"Converted rotation_needed to rotation_degrees: {rotation_degrees}"
                     )
-                    metadata_db.update_image_rotation(file_path, rotation_degrees)
+                    metadata_db.save_rotation(file_path, rotation_degrees)
 
                     # Update normalized metadata table (user edit) via MetadataDB
                     try:
-                        image_file = metadata_db.get_image_file(file_path)
-                        if image_file:
-                            metadata_updates = {
-                                "company": metadata.get("company"),
-                                "document_type": metadata.get("document_type"),
-                                "document_date": metadata.get("document_date"),
-                                "page_number": int(metadata["page_number"])
-                                if metadata.get("page_number")
-                                else None,
-                                "total_pages": int(metadata["total_pages"])
-                                if metadata.get("total_pages")
-                                else None,
-                                "rotation": rotation_degrees,
-                                "tax_related": metadata.get("tax_related", False),
-                                "output_filename": metadata.get("output_filename"),
-                                "document_category": metadata.get("document_category"),
-                            }
-                            # Use metadata_db for normalized metadata operations
-                            metadata_db.update_normalized_metadata(
-                                image_file["id"], metadata_updates
-                            )
-                            logger.debug(
-                                "Updated normalized metadata table via MetadataDB (user edit)"
-                            )
+                        metadata_updates = {
+                            "company": metadata.get("company"),
+                            "document_type": metadata.get("document_type"),
+                            "document_date": metadata.get("document_date"),
+                            "page_number": int(metadata["page_number"])
+                            if metadata.get("page_number")
+                            else None,
+                            "total_pages": int(metadata["total_pages"])
+                            if metadata.get("total_pages")
+                            else None,
+                            "rotation": rotation_degrees,
+                            "tax_related": metadata.get("tax_related", False),
+                            "output_filename": metadata.get("output_filename"),
+                            "document_category": metadata.get("document_category"),
+                        }
+                        # Use save_metadata which handles the metadata updates
+                        metadata_db.save_metadata(file_path, metadata_updates)
+                        logger.debug("Updated normalized metadata table via MetadataDB (user edit)")
                     except Exception as meta_error:
                         logger.warning(f"Failed to update normalized metadata: {meta_error}")
 
@@ -1829,8 +1830,8 @@ class FileDetailsDialog(QDialog):
                             f"Updated file_data - rotation_needed: {self.file_data.get('rotation_needed')}"
                         )
 
-                    # CRITICAL: Also reload rotation from image_files table (authoritative source via MetadataDB)
-                    fresh_rotation = metadata_db.get_image_rotation(file_path)
+                    # CRITICAL: Also reload rotation from metadata table (authoritative source via MetadataDB)
+                    fresh_rotation = metadata_db.get_rotation(file_path)
                     self.file_data["rotation"] = fresh_rotation
                     logger.debug(
                         f"Reloaded rotation from image_files: {fresh_rotation}° (authoritative source)"
@@ -2103,8 +2104,11 @@ class FileDetailsDialog(QDialog):
                     transform, Qt.TransformationMode.SmoothTransformation
                 )
 
-        # Reset and update the image preview widget
-        self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window")
+            # Reset and update the image preview widget
+            self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window", file_path=file_path)
+        else:
+            # If file doesn't exist, just update with current pixmap
+            self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window")
 
     def _store_original_metadata_values(self):
         """Store the original values of all metadata fields for change tracking."""
@@ -2438,9 +2442,15 @@ class FileDetailsGrid(QWidget):
         self.status_filter = QComboBox()
         self.status_filter.setStyleSheet(combo_style)
         self.status_filter.addItem("All Status", None)
-        self.status_filter.addItem("Analyzed", "Analyzed")
-        self.status_filter.addItem("Cached", "Cached")
-        self.status_filter.addItem("Failed", "Failed")
+
+        # Populate with all ImageStatus enum values
+        from db.image_status import ImageStatus
+
+        for status in ImageStatus:
+            # Format status name for display (e.g., ANALYZED -> Analyzed)
+            display_name = status.name.capitalize()
+            self.status_filter.addItem(display_name, status.value)
+
         self.status_filter.currentIndexChanged.connect(self._apply_column_filters)
 
         status_label = QLabel("Status:")
@@ -2991,7 +3001,9 @@ class FileDetailsGrid(QWidget):
             change_status_menu.setStyleSheet(menu.styleSheet())  # Apply same theme
 
             for status in ImageStatus:
-                status_action = QAction(status.display_name, change_status_menu)
+                # Format status name for display (e.g., ANALYZED -> Analyzed)
+                display_name = status.name.capitalize()
+                status_action = QAction(display_name, change_status_menu)
                 status_action.triggered.connect(
                     lambda checked=False, s=status.value: self._change_status_for_selected(s)
                 )
@@ -3124,8 +3136,8 @@ class FileDetailsGrid(QWidget):
         if not fresh_analysis:
             return
 
-        # Also get the rotation field from image_files table (not in analysis_results) via MetadataDB
-        rotation_degrees = self.metadata_db.get_image_rotation(file_path)
+        # Also get the rotation field from metadata table via MetadataDB
+        rotation_degrees = self.metadata_db.get_rotation(file_path)
         fresh_analysis["rotation"] = rotation_degrees
         logger.debug(
             f"[GRID UPDATE] Updating row for {file_path} with rotation={rotation_degrees}°"
@@ -3415,20 +3427,10 @@ class FileDetailsGrid(QWidget):
             try:
                 analysis_db.update_image_status(file_path, new_status)
                 updated_count += 1
+                # Update just this row in the grid (efficient per-row refresh)
+                self._on_metadata_saved(file_path)
             except Exception as e:
                 errors.append(f"{file_path}: {str(e)}")
-
-        # Refresh the grid
-        parent = self.parent()
-        if parent and hasattr(parent, "_refresh_file_grid"):
-            parent._refresh_file_grid()  # type: ignore[attr-defined]
-        else:
-            # Fallback: reload from database
-            try:
-                data = analysis_db.get_all_with_analysis()
-                self.refresh_data(data)
-            except Exception:
-                pass
 
         # Show result message
         if updated_count > 0:

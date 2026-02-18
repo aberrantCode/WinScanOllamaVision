@@ -276,6 +276,9 @@ class AnalysisService:
 
         # File needs analysis
         try:
+            # Update status to "analyzing"
+            self.analysis_db.update_image_status(image_path, "analyzing")
+
             self._log(f"[ANALYSIS] Starting analysis for: {os.path.basename(image_path)}")
             provider = self._get_provider()
             self._log(f"[ANALYSIS] Provider obtained: {provider.provider_name}")
@@ -294,6 +297,8 @@ class AnalysisService:
             if not result["success"]:
                 error_msg = result.get("error", "Unknown error")
                 self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
+                # Update status to "error"
+                self.analysis_db.update_image_status(image_path, "error")
                 return {"success": False, "cached": False, "skipped": False, "error": error_msg}
 
             # Save analysis to database
@@ -316,6 +321,9 @@ class AnalysisService:
                 processing_time_ms=result["processing_time_ms"],
             )
 
+            # Update status to "analyzed"
+            self.analysis_db.update_image_status(image_path, "analyzed")
+
             self._log("[ANALYSIS] Successfully saved to database")
             return {
                 "success": True,
@@ -332,6 +340,8 @@ class AnalysisService:
                 f"[ANALYSIS EXCEPTION] Error analyzing {os.path.basename(image_path)}: {str(e)}"
             )
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+            # Update status to "error"
+            self.analysis_db.update_image_status(image_path, "error")
             return {"success": False, "cached": False, "skipped": False, "error": str(e)}
 
     def _log(self, message: str):

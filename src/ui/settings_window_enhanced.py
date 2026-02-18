@@ -1504,7 +1504,38 @@ class EnhancedSettingsWindow(QDialog):
         )
         behavior_layout.addWidget(self.confirm_exit_checkbox)
 
+        self.persist_rotation_checkbox = QCheckBox("Persist Image Rotation")
+        persist_rotation_enabled = self.config_manager.get_bool("GUI", "persist_rotation", True)
+        self.persist_rotation_checkbox.setChecked(persist_rotation_enabled)
+        self.persist_rotation_checkbox.setToolTip(
+            "Automatically save and restore image rotation preferences"
+        )
+        behavior_layout.addWidget(self.persist_rotation_checkbox)
+
         layout.addWidget(behavior_group)
+
+        # Logging Group
+        logging_group = QGroupBox("Logging")
+        logging_layout = QVBoxLayout(logging_group)
+
+        self.log_sql_checkbox = QCheckBox("Log SQL Statements")
+        log_sql_enabled = self.config_manager.get_bool("Logging", "log_sql_statements", False)
+        self.log_sql_checkbox.setChecked(log_sql_enabled)
+        self.log_sql_checkbox.setToolTip(
+            "Enable logging of SQL statements to the application log.\n"
+            "When enabled, all database queries will be written to the log file.\n"
+            "Useful for debugging database issues, but can increase log file size significantly."
+        )
+        logging_layout.addWidget(self.log_sql_checkbox)
+
+        logging_info = QLabel(
+            "Note: SQL logging is primarily useful for debugging.\n"
+            "Keep this disabled during normal operation to reduce log file size."
+        )
+        logging_info.setWordWrap(True)
+        logging_layout.addWidget(logging_info)
+
+        layout.addWidget(logging_group)
 
         layout.addStretch()
         return widget
@@ -3149,6 +3180,16 @@ Return ONLY the JSON array, no other text."""
                 "confirm_before_exit",
                 "true" if self.confirm_exit_checkbox.isChecked() else "false",
             )
+            self.config_manager.set_setting(
+                "GUI",
+                "persist_rotation",
+                "true" if self.persist_rotation_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "Logging",
+                "log_sql_statements",
+                "true" if self.log_sql_checkbox.isChecked() else "false",
+            )
 
             # LLM Provider Tab
             active_provider = self.provider_combo.currentData()
@@ -3271,6 +3312,8 @@ Return ONLY the JSON array, no other text."""
                 self.auto_start_analysis_checkbox.isChecked()
             )
             self._original_values["confirm_exit"] = self.confirm_exit_checkbox.isChecked()
+            self._original_values["persist_rotation"] = self.persist_rotation_checkbox.isChecked()
+            self._original_values["log_sql"] = self.log_sql_checkbox.isChecked()
 
             # LLM Provider tab
             self._original_values["active_provider"] = self.provider_combo.currentData()
@@ -3319,6 +3362,8 @@ Return ONLY the JSON array, no other text."""
         self.audit_trail_checkbox.stateChanged.connect(self._check_for_changes)
         self.auto_start_analysis_checkbox.stateChanged.connect(self._check_for_changes)
         self.confirm_exit_checkbox.stateChanged.connect(self._check_for_changes)
+        self.persist_rotation_checkbox.stateChanged.connect(self._check_for_changes)
+        self.log_sql_checkbox.stateChanged.connect(self._check_for_changes)
 
         # LLM Provider tab
         self.provider_combo.currentIndexChanged.connect(self._check_for_changes)
@@ -3473,6 +3518,12 @@ Return ONLY the JSON array, no other text."""
             if self.confirm_exit_checkbox.isChecked() != self._original_values.get(
                 "confirm_exit", False
             ):
+                has_changes = True
+            if self.persist_rotation_checkbox.isChecked() != self._original_values.get(
+                "persist_rotation", True
+            ):
+                has_changes = True
+            if self.log_sql_checkbox.isChecked() != self._original_values.get("log_sql", False):
                 has_changes = True
 
             # LLM Provider tab

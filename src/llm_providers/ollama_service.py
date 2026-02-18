@@ -130,11 +130,20 @@ class OllamaService:
             if format_json:
                 chat_params["format"] = "json"
 
+            # Start timing
+            import time
+
+            start_time = time.time()
+
             # Use client with configured timeout
             response = self.client.chat(**chat_params)  # type: ignore[call-overload]
 
+            # Calculate elapsed time
+            elapsed_time = time.time() - start_time
+
             print("SDK Response received successfully")
             print(f"  Message content length: {len(response['message']['content'])} chars")
+            print(f"  Processing time: {elapsed_time:.2f} seconds")
             print(f"  Timeout setting: {self.timeout} seconds")
             print("==========================================\n")
 

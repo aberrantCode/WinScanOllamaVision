@@ -118,20 +118,6 @@ class TestRotationRepository:
         # Assert
         assert rotation == 90
 
-    def test_save_preference(self, repo, temp_file):
-        # Act
-        repo.save_preference(temp_file, 180, "manual")
-
-        # Assert - save_preference stores in rotation_preferences table
-        # Verify it was saved by querying directly
-        cursor = repo.conn.connection.cursor()
-        result = cursor.execute(
-            "SELECT rotation_degrees FROM rotation_preferences WHERE file_path = ?",
-            (temp_file,),
-        ).fetchone()
-        assert result is not None
-        assert result["rotation_degrees"] == 180
-
 
 class TestAuditRepository:
     """Tests for AuditRepository"""

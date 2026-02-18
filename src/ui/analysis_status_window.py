@@ -46,6 +46,7 @@ class AnalysisWorker(QThread):
     # Signals
     job_started = pyqtSignal(str, str)  # (job_id, description)
     progress = pyqtSignal(str, int, int)  # (status_text, current, total)
+    file_status_changed = pyqtSignal(str, str)  # (file_path, new_status) - for per-row updates
     job_finished = pyqtSignal(str, dict)  # (job_id, stats)
     error = pyqtSignal(str, str)  # (job_id, error_message)
     queue_empty = pyqtSignal()  # All jobs processed
@@ -129,18 +130,27 @@ class AnalysisWorker(QThread):
             def progress_callback(status_text, current, total):
                 if self.analysis_queue.is_job_cancelled(job.job_id):
                     raise InterruptedError("Job cancelled by user")
+                # Diagnostic logging
+                self._get_logger().debug(
+                    f"[WORKER PROGRESS] About to emit progress signal: '{status_text}' ({current}/{total})"
+                )
                 self.progress.emit(status_text, current, total)
+                self._get_logger().debug("[WORKER PROGRESS] Signal emitted successfully")
 
             def abort_check():
                 return self.analysis_queue.is_job_cancelled(job.job_id)
 
             # Execute based on job type
             if job.job_type == JobType.SCAN_ALL:
+                self._get_logger().debug(
+                    f"[WORKER] Starting scan_all_directories for job {job.job_id}"
+                )
                 stats = thread_analysis_service.scan_all_directories(
                     progress_callback=progress_callback,
                     incremental=not job.force_reanalysis,
                     abort_check=abort_check,
                 )
+                self._get_logger().debug(f"[WORKER] Completed scan_all_directories: {stats}")
             else:  # JobType.ANALYZE_FILES
                 # Process specific files
                 stats = {
@@ -155,6 +165,7 @@ class AnalysisWorker(QThread):
 
                     # Set status to "analyzing" when actually starting to process this file
                     thread_analysis_db.update_image_status(file_path, ImageStatus.ANALYZING.value)
+                    self.file_status_changed.emit(file_path, ImageStatus.ANALYZING.value)
 
                     progress_callback(
                         f"Analyzing {os.path.basename(file_path)}", idx, len(job.file_paths)
@@ -171,9 +182,12 @@ class AnalysisWorker(QThread):
                         thread_analysis_db.update_image_status(
                             file_path, ImageStatus.ANALYZED.value
                         )
+                        self.file_status_changed.emit(file_path, ImageStatus.ANALYZED.value)
                     else:
                         stats["errors"] += 1
-                        # Keep status as "analyzing" to indicate incomplete processing
+                        # Set status to "error" to indicate failed processing
+                        thread_analysis_db.update_image_status(file_path, ImageStatus.ERROR.value)
+                        self.file_status_changed.emit(file_path, ImageStatus.ERROR.value)
 
             # Mark job complete
             self.analysis_queue.mark_complete(job.job_id)
@@ -264,18 +278,32 @@ class AnalysisStatusWindow(QDialog):
         # Timer for live progress updates
         self._progress_timer: QTimer | None = None
         self._current_job_start_time: float | None = None
+        self._current_file_start_time: float | None = None  # Track per-file time
         self._avg_processing_time_ms: float | None = None
 
         # Initialize queue-based analysis system
         self.analysis_queue: AnalysisQueue = AnalysisQueue()
         self.analysis_worker = AnalysisWorker(self.config_manager, self.analysis_queue)
 
-        # Connect worker signals
-        self.analysis_worker.job_started.connect(self._on_job_started)
-        self.analysis_worker.progress.connect(self._on_analysis_progress_update)
-        self.analysis_worker.job_finished.connect(self._on_job_finished)
-        self.analysis_worker.error.connect(self._on_job_error)
-        self.analysis_worker.queue_empty.connect(self._on_queue_empty)
+        # Connect worker signals with explicit QueuedConnection for thread safety
+        from PyQt6.QtCore import Qt
+
+        self.analysis_worker.job_started.connect(
+            self._on_job_started, Qt.ConnectionType.QueuedConnection
+        )
+        self.analysis_worker.progress.connect(
+            self._on_analysis_progress_update, Qt.ConnectionType.QueuedConnection
+        )
+        self.analysis_worker.file_status_changed.connect(
+            self._on_file_status_changed, Qt.ConnectionType.QueuedConnection
+        )
+        self.analysis_worker.job_finished.connect(
+            self._on_job_finished, Qt.ConnectionType.QueuedConnection
+        )
+        self.analysis_worker.error.connect(self._on_job_error, Qt.ConnectionType.QueuedConnection)
+        self.analysis_worker.queue_empty.connect(
+            self._on_queue_empty, Qt.ConnectionType.QueuedConnection
+        )
 
         self._init_ui()
         self._load_all_data()
@@ -1554,28 +1582,46 @@ class AnalysisStatusWindow(QDialog):
 
     def _on_analysis_progress_update(self, status_text: str, current: int, total: int):
         """Handle progress updates from analysis thread"""
-        # Start timer on first progress update
-        if self._first_progress_update:
-            self._start_progress_timer()
+        try:
+            # Diagnostic logging
+            self._get_logger().debug(
+                f"[UI PROGRESS] Received progress update: '{status_text}' ({current}/{total})"
+            )
 
-        # Update toolbar status (timer display handled by _update_progress_display)
-        display_text = f"{status_text}"
-        self._update_toolbar_status("analyzing", display_text, "")
+            # Start timer on first progress update
+            if self._first_progress_update:
+                self._start_progress_timer()
 
-        # Force immediate timer display update
-        self._update_progress_display()
+            # Reset per-file timer when a new file starts processing
+            # This ensures the timer shows time for current file, not total job time
+            self._current_file_start_time = time.time()
 
-        # Stats are accumulated in _on_job_finished, not here.
-        # This handler only updates the UI to show progress.
+            # Update toolbar status (timer display handled by _update_progress_display)
+            display_text = f"{status_text}"
+            self._update_toolbar_status("analyzing", display_text, "")
 
-        # Refresh grid to show status changes
-        # First progress update: refresh immediately to show "Analyzing" status
-        # Subsequent updates: throttled to max once per second
-        current_time = time.time()
-        if self._first_progress_update or current_time - self._last_grid_refresh_time >= 1.0:
-            self._refresh_file_grid()
-            self._last_grid_refresh_time = current_time
-            self._first_progress_update = False  # Clear flag after first refresh
+            # Log after updating toolbar
+            self._get_logger().debug(f"[UI PROGRESS] Updated toolbar status to: '{display_text}'")
+
+            # Force immediate timer display update
+            self._update_progress_display()
+
+            # Stats are accumulated in _on_job_finished, not here.
+            # This handler only updates the UI to show progress.
+
+            # NOTE: Grid refresh removed from progress handler to prevent UI blocking.
+            # With 886 files, get_analyzed_pages() can take multiple seconds and block
+            # the main thread, preventing progress updates from being processed.
+            # Grid will refresh when jobs complete via _on_job_finished instead.
+
+            # Set flag after first refresh
+            if self._first_progress_update:
+                self._first_progress_update = False
+
+        except Exception as e:
+            self._get_logger().error(
+                f"[UI PROGRESS] Exception in progress update handler: {e}", exc_info=True
+            )
 
     def _on_analysis_complete(self, stats: dict):
         """Handle analysis completion"""
@@ -1680,6 +1726,29 @@ class AnalysisStatusWindow(QDialog):
             # Queue empty - delegate to existing completion handler
             self._on_analysis_complete(self._analysis_stats)
 
+    def _on_file_status_changed(self, file_path: str, new_status: str):
+        """Handle individual file status change during analysis.
+
+        Updates the specific row in the file grid when a file's status changes
+        (analyzing → analyzed/error). This provides real-time per-row updates
+        without refreshing the entire grid.
+
+        Args:
+            file_path: Absolute path to the file being processed
+            new_status: New status value (analyzing, analyzed, error)
+        """
+        # Only update grid if it exists and is initialized
+        if not hasattr(self, "file_grid") or self.file_grid is None:
+            return
+
+        # Trigger per-row update using the grid's existing mechanism
+        # This calls _on_metadata_saved which:
+        # 1. Gets fresh analysis data from database
+        # 2. Finds the matching row in the model
+        # 3. Updates just that row's data
+        # 4. Emits dataChanged signal for efficient repaint
+        self.file_grid._on_metadata_saved(file_path)
+
     def _on_job_error(self, job_id: str, error_message: str):
         """Worker encountered an error.
 
@@ -1734,7 +1803,14 @@ class AnalysisStatusWindow(QDialog):
             self.status_indicator.setStyleSheet(f"font-size: 14pt; color: {color};")
 
         # Update status text
-        self.status_text.setText(text or state.capitalize())
+        actual_text = text or state.capitalize()
+        self.status_text.setText(actual_text)
+
+        # Diagnostic: verify the text was actually set
+        current_text = self.status_text.text()
+        self._get_logger().debug(
+            f"[UI TOOLBAR] Set status_text to: '{actual_text}', state='{state}', verified text: '{current_text}'"
+        )
 
         # Update progress info
         # Don't hide if timer is active (it will manage visibility)
@@ -1791,14 +1867,17 @@ class AnalysisStatusWindow(QDialog):
         if self._progress_timer and self._progress_timer.isActive():
             self._progress_timer.stop()
         self._current_job_start_time = None
+        self._current_file_start_time = None
 
     def _update_progress_display(self):
         """Update the progress display with elapsed time and average."""
-        if self._current_job_start_time is None:
+        # Use per-file time if available, otherwise fall back to job time
+        if self._current_file_start_time is not None:
+            elapsed_seconds = int(time.time() - self._current_file_start_time)
+        elif self._current_job_start_time is not None:
+            elapsed_seconds = int(time.time() - self._current_job_start_time)
+        else:
             return
-
-        # Calculate elapsed time
-        elapsed_seconds = int(time.time() - self._current_job_start_time)
 
         # Format average time
         if self._avg_processing_time_ms:
@@ -1813,6 +1892,13 @@ class AnalysisStatusWindow(QDialog):
             self.progress_info.setText(display_text)
             self.progress_info.setVisible(True)
 
+            # Log every 10 seconds to avoid spam
+            if elapsed_seconds % 10 == 0:
+                current_status = self.status_text.text() if hasattr(self, "status_text") else "N/A"
+                self._get_logger().debug(
+                    f"[UI TIMER] Timer tick at {elapsed_seconds}s, current status_text: '{current_status}'"
+                )
+
     def _refresh_file_grid(self):
         """Refresh File Analysis Grid tab"""
         # Check if database connection is still valid
@@ -1826,7 +1912,57 @@ class AnalysisStatusWindow(QDialog):
         if hasattr(self, "file_grid"):
             try:
                 # Get analyzed pages and transform to grid format
-                data = self._transform_data_for_grid(self.analysis_db.get_analyzed_pages())
+                raw_data = self.analysis_db.get_analyzed_pages()
+
+                # Diagnostic logging to track data counts
+                conn = self.analysis_db.connection.connection
+                cursor = conn.cursor()
+
+                cursor.execute('SELECT COUNT(*) FROM image_files WHERE status != "deleted"')
+                non_deleted_count = cursor.fetchone()[0]
+
+                cursor.execute(
+                    'SELECT COUNT(DISTINCT file_path) FROM image_files WHERE status != "deleted"'
+                )
+                unique_files_count = cursor.fetchone()[0]
+
+                # Check for duplicate file_path entries (shouldn't happen with UNIQUE constraint)
+                cursor.execute("""
+                    SELECT file_path, COUNT(*) as cnt
+                    FROM image_files
+                    WHERE status != "deleted"
+                    GROUP BY file_path
+                    HAVING cnt > 1
+                """)
+                duplicates = cursor.fetchall()
+                if duplicates:
+                    self._get_logger().error(
+                        f"DUPLICATE file_path entries found in image_files table: {len(duplicates)} duplicates!"
+                    )
+                    for dup_path, dup_count in duplicates[:5]:  # Log first 5
+                        self._get_logger().error(f"  - {dup_path}: {dup_count} rows")
+
+                self._get_logger().debug(
+                    f"File grid refresh: raw_data={len(raw_data)} rows, "
+                    f"non_deleted={non_deleted_count}, unique_files={unique_files_count}"
+                )
+
+                if len(raw_data) != unique_files_count:
+                    self._get_logger().warning(
+                        f"Data count mismatch: query returned {len(raw_data)} rows "
+                        f"but there are only {unique_files_count} unique files. "
+                        f"Possible duplicate records in database."
+                    )
+
+                data = self._transform_data_for_grid(raw_data)
+
+                # Log if transform deduplicated rows
+                if len(data) != len(raw_data):
+                    self._get_logger().warning(
+                        f"Transform deduplicated {len(raw_data) - len(data)} rows "
+                        f"(raw: {len(raw_data)}, after dedup: {len(data)})"
+                    )
+
                 self.file_grid.refresh_data(data)
             except Exception as e:
                 # Log errors during shutdown (database may be closing)
@@ -1838,12 +1974,27 @@ class AnalysisStatusWindow(QDialog):
 
         Data now comes from image_files table (primary) with LEFT JOIN to analysis_results,
         so unanalyzed images will have NULL analysis fields.
+
+        Deduplicates by file_path to ensure each file appears only once.
         """
         import os
         from datetime import datetime
 
+        # Track seen file paths to deduplicate
+        seen_paths = set()
         transformed = []
+
         for row in db_data:
+            file_path = row.get("file_path", "")
+
+            # Skip if we've already processed this file_path
+            if file_path in seen_paths:
+                self._get_logger().warning(
+                    f"Duplicate file_path in query results: {file_path} (skipping duplicate)"
+                )
+                continue
+
+            seen_paths.add(file_path)
             file_path = row.get("file_path", "")
             has_analysis = row.get("analysis_id") is not None
 
@@ -1854,6 +2005,7 @@ class AnalysisStatusWindow(QDialog):
                 ImageStatus.PENDING.value: "Pending",
                 ImageStatus.ANALYZING.value: "Analyzing",
                 ImageStatus.ANALYZED.value: "Analyzed",
+                ImageStatus.ERROR.value: "Error",
                 ImageStatus.BUNDLED.value: "Bundled",
                 ImageStatus.DELETED.value: "Deleted",
             }

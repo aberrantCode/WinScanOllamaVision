@@ -100,25 +100,6 @@ class RotationRepository:
 
         return 0
 
-    def save_preference(self, file_path: str, rotation_degrees: int, rotation_source: str) -> None:
-        """
-        Save rotation preference for a file in analysis table.
-
-        Args:
-            file_path: Path to file
-            rotation_degrees: Rotation in degrees (90, 180, 270)
-            rotation_source: Source of rotation (ai_suggestion, manual)
-        """
-        self.conn.execute(
-            """
-            INSERT OR REPLACE INTO rotation_preferences (
-                file_path, rotation_degrees, rotation_source, applied_at
-            ) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        """,
-            (file_path, rotation_degrees, rotation_source),
-        )
-        self.conn.commit()
-
     @staticmethod
     def _compute_file_hash(file_path: str) -> str:
         """

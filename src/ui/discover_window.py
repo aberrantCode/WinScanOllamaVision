@@ -80,6 +80,9 @@ class DiscoverWindow(QDialog):
         self.config_manager = config_manager or ConfigManager()
         self.dark_mode = False
 
+        # Debug: Log instance ID
+        self._get_logger().info(f"[DISCOVER] DiscoverWindow __init__ - instance ID: {id(self)}")
+
         # Get theme
         if config_manager:
             theme = config_manager.get_setting("Theme", "theme", "light")
@@ -106,11 +109,11 @@ class DiscoverWindow(QDialog):
         # Initialize UI
         self._init_ui()
 
-        # Populate directory dropdown from config
-        self._populate_directory_dropdown()
+        # Populate directory dropdown and load initial data after UI is fully initialized
+        # Use QTimer to ensure all Qt initialization is complete
+        from PyQt6.QtCore import QTimer
 
-        # Load initial data
-        self._refresh_images()
+        QTimer.singleShot(0, self._post_init_setup)
 
     def _get_logger(self) -> logging.Logger:
         """Get logger instance (lazy initialization)."""
@@ -120,6 +123,31 @@ class DiscoverWindow(QDialog):
 
             logger = _get_logger()
         return logger
+
+    def _post_init_setup(self) -> None:
+        """
+        Complete initialization after Qt event loop starts.
+
+        Called via QTimer.singleShot to ensure all UI components are fully initialized.
+        """
+        # Debug: Check state at start of _post_init_setup
+        self._get_logger().info(
+            f"[DISCOVER] _post_init_setup called - directory_combo is {'None' if not self.directory_combo else 'OK'}, instance ID: {id(self)}"
+        )
+
+        # Populate directory dropdown
+        try:
+            self._populate_directory_dropdown()
+        except Exception as e:
+            self._get_logger().error(
+                f"[DISCOVER] Failed to populate directory dropdown: {e}", exc_info=True
+            )
+            # Ensure at least "All Directories" is present
+            if self.directory_combo:
+                self.directory_combo.addItem("All Directories")
+
+        # Load initial data
+        self._refresh_images()
 
     def _init_ui(self) -> None:
         """Initialize the user interface."""
@@ -134,6 +162,11 @@ class DiscoverWindow(QDialog):
         controls_layout = self._create_controls_bar()
         layout.addLayout(controls_layout)
 
+        # Debug: Check immediately after creating controls
+        self._get_logger().info(
+            f"[DISCOVER] After _create_controls_bar - directory_combo is {'None' if not self.directory_combo else 'OK'}"
+        )
+
         # Add progress bar (initially hidden)
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
@@ -145,6 +178,11 @@ class DiscoverWindow(QDialog):
         splitter = self._create_main_splitter()
         layout.addWidget(splitter)
 
+        # Debug: Check after creating splitter
+        self._get_logger().info(
+            f"[DISCOVER] After _create_main_splitter - directory_combo is {'None' if not self.directory_combo else 'OK'}"
+        )
+
         # Add dialog buttons
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         button_box.rejected.connect(self.reject)
@@ -153,6 +191,16 @@ class DiscoverWindow(QDialog):
         # Apply theme
         self._apply_theme()
 
+        # Debug: Check after applying theme
+        self._get_logger().info(
+            f"[DISCOVER] After _apply_theme - directory_combo is {'None' if not self.directory_combo else 'OK'}"
+        )
+
+        # Debug: Check if directory_combo is still valid after _init_ui completes
+        self._get_logger().info(
+            f"[DISCOVER] _init_ui completed - directory_combo is {'None' if not self.directory_combo else 'OK'}, instance ID: {id(self)}"
+        )
+
     def _create_controls_bar(self) -> QHBoxLayout:
         """
         Create top controls bar with filters and discovery button.
@@ -160,6 +208,7 @@ class DiscoverWindow(QDialog):
         Returns:
             Layout containing filter controls
         """
+        self._get_logger().info(f"[DISCOVER] _create_controls_bar called - instance ID: {id(self)}")
         controls_layout = QHBoxLayout()
 
         # Directory filter
@@ -167,8 +216,18 @@ class DiscoverWindow(QDialog):
         dir_label.setFixedHeight(30)
         controls_layout.addWidget(dir_label)
 
+        self._get_logger().info("[DISCOVER] Creating directory_combo")
         self.directory_combo = QComboBox()
+        self._get_logger().info(
+            f"[DISCOVER] IMMEDIATELY after assignment - directory_combo is {'None' if not self.directory_combo else 'OK'}, id={id(self.directory_combo) if self.directory_combo else 'N/A'}"
+        )
+        self._get_logger().info(
+            f"[DISCOVER] directory_combo created: {self.directory_combo is not None}"
+        )
         self.directory_combo.setFixedHeight(30)
+        self._get_logger().info(
+            f"[DISCOVER] After setFixedHeight - directory_combo is {'None' if not self.directory_combo else 'OK'}"
+        )
         self.directory_combo.setMinimumWidth(200)
         self.directory_combo.currentIndexChanged.connect(self._refresh_images)
         controls_layout.addWidget(self.directory_combo, stretch=1)  # Expand to fill space
@@ -194,6 +253,11 @@ class DiscoverWindow(QDialog):
         self.discover_button.clicked.connect(self._on_discover_clicked)
         controls_layout.addWidget(self.discover_button)
 
+        # Debug: Check directory_combo RIGHT before returning
+        self._get_logger().info(
+            f"[DISCOVER] Right before return from _create_controls_bar - directory_combo is {'None' if not self.directory_combo else 'OK'}, id={id(self.directory_combo) if self.directory_combo else 'N/A'}"
+        )
+        self._get_logger().info("[DISCOVER] _create_controls_bar completed successfully")
         return controls_layout
 
     def _create_main_splitter(self) -> QSplitter:
@@ -259,6 +323,20 @@ class DiscoverWindow(QDialog):
         actions_layout.addStretch()
         layout.addLayout(actions_layout)
 
+        # File info section
+        info_group = QLabel("<b>File Information</b>")
+        layout.addWidget(info_group)
+
+        # File info label
+        self.file_info_label = QLabel("No image selected")
+        self.file_info_label.setWordWrap(True)
+        self.file_info_label.setMaximumHeight(100)
+        layout.addWidget(self.file_info_label)
+
+        # Analysis status label
+        self.analysis_status_label = QLabel("")
+        layout.addWidget(self.analysis_status_label)
+
         return panel
 
     def _create_right_panel(self) -> QWidget:
@@ -274,22 +352,15 @@ class DiscoverWindow(QDialog):
         # Get theme colors
         theme_colors = self._get_theme_colors()
 
-        # Image preview
+        # Image preview (full height)
         self.preview_widget = ImagePreviewWidget(
             toolbar_size=ToolbarSize.COMPACT,
             toolbar_position=ToolbarPosition.BOTTOM_CENTER,
             theme_colors=theme_colors,
+            config_manager=self.config_manager,
+            analysis_db=self.analysis_db,
         )
         layout.addWidget(self.preview_widget, stretch=1)
-
-        # File info label
-        self.file_info_label = QLabel("No image selected")
-        self.file_info_label.setWordWrap(True)
-        layout.addWidget(self.file_info_label)
-
-        # Analysis status label
-        self.analysis_status_label = QLabel("")
-        layout.addWidget(self.analysis_status_label)
 
         # Action buttons
         actions_layout = QHBoxLayout()
@@ -390,9 +461,34 @@ class DiscoverWindow(QDialog):
                 color: {colors['text_primary']};
                 border: 1px solid {colors['border']};
                 padding: 5px;
+                min-height: 25px;
             }}
             QComboBox:drop-down {{
                 border: none;
+                width: 20px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid {colors['text_primary']};
+                width: 0;
+                height: 0;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['button_bg']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
+                selection-background-color: {colors['accent']};
+                selection-color: {colors['bg_primary']};
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 25px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {colors['button_hover']};
             }}
             QCheckBox {{
                 color: {colors['text_primary']};
@@ -506,11 +602,28 @@ class DiscoverWindow(QDialog):
                     img_item.setForeground(0, QColor(Colors.GRAY_600))
                     img_item.setText(1, "○ Registered")
 
+    def refresh_directory_dropdown(self) -> None:
+        """
+        Public method to refresh the directory dropdown.
+        Can be called externally when directories are updated in settings.
+        """
+        self._populate_directory_dropdown()
+
     def _populate_directory_dropdown(self) -> None:
         """
-        Populate directory filter dropdown with all configured source directories.
+        Populate directory filter dropdown with all directories containing registered images.
+        Falls back to configured source directories if no images found in database.
         """
+        # Debug: Log who's calling this and the state
+        import traceback
+
+        self._get_logger().info(
+            f"[DISCOVER] _populate_directory_dropdown called, directory_combo is {'None' if not self.directory_combo else 'OK'}, instance ID: {id(self)}"
+        )
+        self._get_logger().debug(f"[DISCOVER] Call stack:\n{''.join(traceback.format_stack())}")
+
         if not self.directory_combo:
+            self._get_logger().warning("[DISCOVER] directory_combo is None, cannot populate")
             return
 
         # Save current selection
@@ -523,10 +636,46 @@ class DiscoverWindow(QDialog):
         self.directory_combo.clear()
         self.directory_combo.addItem("All Directories")
 
-        # Get all configured source directories from settings
-        configured_dirs = self.config_manager.get_directories()
-        for directory_path in sorted(configured_dirs):
+        unique_directories: set[str] = set()
+
+        try:
+            # Use the existing image_files repository from AnalysisDB
+            all_images = self.analysis_db._image_files.get_all()
+
+            self._get_logger().info(f"[DISCOVER] Retrieved {len(all_images)} images from database")
+
+            # Extract unique directory paths (excluding ignored and deleted)
+            for img in all_images:
+                if not img.get("is_ignored", False):
+                    dir_path = img.get("directory_path")
+                    if dir_path:
+                        unique_directories.add(dir_path)
+                    else:
+                        self._get_logger().warning(
+                            f"[DISCOVER] Image {img.get('filename', 'unknown')} has no directory_path"
+                        )
+
+            self._get_logger().info(
+                f"[DISCOVER] Found {len(unique_directories)} unique directories from database"
+            )
+
+            # Fallback: If no directories from database, use configured source directories
+            if not unique_directories:
+                configured_dirs = self.config_manager.get_directories()
+                self._get_logger().info(
+                    f"[DISCOVER] No directories from database, using {len(configured_dirs)} configured directories"
+                )
+                unique_directories = set(configured_dirs)
+
+        except Exception as e:
+            self._get_logger().error(f"[DISCOVER] Failed to query database: {e}", exc_info=True)
+            # Fallback to configured directories on error
+            unique_directories = set(self.config_manager.get_directories())
+
+        # Add directories in sorted order
+        for directory_path in sorted(unique_directories):
             self.directory_combo.addItem(directory_path)
+            self._get_logger().debug(f"[DISCOVER] Added directory to combobox: {directory_path}")
 
         # Restore selection if possible
         index = self.directory_combo.findText(current_text)
@@ -534,6 +683,10 @@ class DiscoverWindow(QDialog):
             self.directory_combo.setCurrentIndex(index)
         else:
             self.directory_combo.setCurrentIndex(0)
+
+        self._get_logger().info(
+            f"[DISCOVER] Directory dropdown populated with {self.directory_combo.count()} items"
+        )
 
         # Unblock signals
         self.directory_combo.blockSignals(False)
@@ -588,7 +741,7 @@ class DiscoverWindow(QDialog):
 
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                self.preview_widget.set_pixmap(pixmap, apply_fit="window")
+                self.preview_widget.set_pixmap(pixmap, apply_fit="window", file_path=file_path)
 
         # Update file info
         file_size_mb = img_data["file_size"] / (1024 * 1024)
@@ -907,6 +1060,9 @@ class DiscoverWindow(QDialog):
             self.discover_button.setEnabled(True)
         if self.refresh_button:
             self.refresh_button.setEnabled(True)
+
+        # Refresh directory dropdown (in case new directories were discovered)
+        self._populate_directory_dropdown()
 
         # Refresh tree to show all discovered images
         self._refresh_images()

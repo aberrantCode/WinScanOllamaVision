@@ -173,6 +173,10 @@ class ConfigManager:
         if "AuditTrail" not in self.config:
             self.config["AuditTrail"] = {"enabled": "false"}
 
+        # Logging settings
+        if "Logging" not in self.config:
+            self.config["Logging"] = {"log_sql_statements": "false"}
+
         # Default GUI settings (can be expanded later)
         if "GUI" not in self.config:
             self.config["GUI"] = {
@@ -181,6 +185,7 @@ class ConfigManager:
                 "window_height": "768",
                 "auto_start_analysis": "false",
                 "confirm_before_exit": "true",
+                "persist_rotation": "true",
             }
 
     def _save_config(self):

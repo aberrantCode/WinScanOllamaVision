@@ -4169,7 +4169,7 @@ Files being sent to Ollama:
         self.last_ollama_response_type = "Page Validation"
 
         # Check metadata cache first (avoid unnecessary Ollama calls)
-        cached_metadata = self.metadata_db.get_normalized_metadata_by_path(next_file)
+        cached_metadata = self.metadata_db.get_metadata(next_file)
 
         if cached_metadata and cached_metadata.get("belongs_to_same_doc") is not None:
             # Use cached metadata instead of calling Ollama
@@ -5685,9 +5685,9 @@ Files being sent to Ollama:
                 workflow_bundles = self._prepare_bundles_for_workflow(bundles)
 
                 # Show GuidedBundleWorkflow instead of BundleSuggestionsView
-                from ui.verify_documents_window import BundleReviewWindow
+                from ui.guided_bundle_workflow import GuidedBundleWorkflow
 
-                self.bundle_workflow = BundleReviewWindow(
+                self.bundle_workflow = GuidedBundleWorkflow(
                     bundles=workflow_bundles,
                     start_index=0,
                     prototype_mode=False,
@@ -6575,13 +6575,13 @@ class StartupWindow(QWidget):
                     return
 
             # Launch guided workflow IMMEDIATELY with cached bundles
-            from ui.verify_documents_window import BundleReviewWindow
+            from ui.guided_bundle_workflow import GuidedBundleWorkflow
 
             # Prepare bundles for workflow
             workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
 
             # Create and show workflow
-            workflow = BundleReviewWindow(
+            workflow = GuidedBundleWorkflow(
                 bundles=workflow_bundles,
                 start_index=0,
                 prototype_mode=False,
@@ -6690,13 +6690,13 @@ class StartupWindow(QWidget):
                 return
 
             # Launch guided workflow
-            from ui.verify_documents_window import BundleReviewWindow
+            from ui.guided_bundle_workflow import GuidedBundleWorkflow
 
             # Prepare bundles for workflow
             workflow_bundles = self._prepare_workflow_bundles(bundles, analysis_db)
 
             # Create and show workflow
-            workflow = BundleReviewWindow(
+            workflow = GuidedBundleWorkflow(
                 bundles=workflow_bundles,
                 start_index=0,
                 prototype_mode=False,

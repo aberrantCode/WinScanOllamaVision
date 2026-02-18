@@ -5,6 +5,7 @@ Manages image file registration, status transitions, and lifecycle tracking.
 """
 
 import logging
+import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -62,6 +63,11 @@ class ImageFilesRepository:
         Returns:
             ID of registered image file
         """
+        # Normalize paths to use consistent separators (backslashes on Windows)
+        # This prevents duplicate entries with C:/ vs C:\ paths
+        file_path = os.path.normpath(file_path)
+        directory_path = os.path.normpath(directory_path)
+
         self.conn.execute(
             """
             INSERT OR REPLACE INTO image_files (
@@ -100,6 +106,8 @@ class ImageFilesRepository:
         Returns:
             Image file dict if found, None otherwise
         """
+        # Normalize path for consistent lookups
+        file_path = os.path.normpath(file_path)
         return self.conn.fetch_one_dict(
             "SELECT * FROM image_files WHERE file_path = ?", (file_path,)
         )
@@ -153,6 +161,9 @@ class ImageFilesRepository:
             file_path: Path to image file
             status: New status (registered, analyzing, analyzed, bundled, deleted)
         """
+        # Normalize path for consistent lookups
+        file_path = os.path.normpath(file_path)
+
         self.conn.execute(
             """
             UPDATE image_files
@@ -179,6 +190,7 @@ class ImageFilesRepository:
         Args:
             file_path: Path to image file
         """
+        file_path = os.path.normpath(file_path)
         self.conn.execute(
             """
             UPDATE image_files

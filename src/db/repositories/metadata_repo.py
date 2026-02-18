@@ -131,6 +131,16 @@ class MetadataRepository:
         if not filtered_updates:
             return
 
+        # Normalize text fields to title case for consistency
+        title_case_fields = {"company", "document_type", "document_category"}
+        for field in title_case_fields:
+            if (
+                field in filtered_updates
+                and filtered_updates[field]
+                and isinstance(filtered_updates[field], str)
+            ):
+                filtered_updates[field] = filtered_updates[field].title()
+
         # Build INSERT columns and values
         columns = ["image_file_id"] + list(filtered_updates.keys())
         placeholders = ["?"] * len(columns)

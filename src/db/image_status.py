@@ -20,5 +20,6 @@ class ImageStatus(Enum):
     PENDING = "pending"  # Queued for analysis
     ANALYZING = "analyzing"  # Currently being analyzed
     ANALYZED = "analyzed"  # Analysis complete
+    ERROR = "error"  # Analysis failed with error
     BUNDLED = "bundled"  # Grouped into a document bundle
     DELETED = "deleted"  # File has been deleted from disk

@@ -265,6 +265,10 @@ class MetadataDB:
 
         return titles
 
+    def get_unique_categories(self) -> list[str]:
+        """Get list of unique document categories."""
+        return self._metadata.get_unique_categories()
+
     def invalidate_field_history_cache(self) -> None:
         """Clear field history cache."""
         self._companies_cache = None

@@ -251,20 +251,30 @@ class AnalysisDB:
         self._image_files.update_status(file_path, status)
 
     # ==================== Rotation Methods ====================
+    # Note: Rotation is now stored in metadata.rotation column
+    # Use RotationRepository for rotation operations
 
-    def save_rotation_preference(
-        self, file_path: str, rotation_degrees: int, rotation_source: str
-    ) -> None:
-        """Save rotation preference for a file."""
-        self._rotation.save_preference(file_path, rotation_degrees, rotation_source)
+    def get_image_rotation(self, file_path: str) -> int:
+        """
+        Get rotation angle for an image file.
 
-    def get_rotation_preference(self, file_path: str) -> dict[str, Any] | None:
-        """Get rotation preference for a file."""
-        assert self.connection.connection is not None
-        cursor = self.connection.connection.cursor()
-        cursor.execute("SELECT * FROM rotation_preferences WHERE file_path = ?", (file_path,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        Args:
+            file_path: Absolute path to image file
+
+        Returns:
+            Rotation angle in degrees (0, 90, 180, 270)
+        """
+        return self._rotation.get(file_path)
+
+    def save_image_rotation(self, file_path: str, rotation_degrees: int) -> None:
+        """
+        Save rotation angle for an image file.
+
+        Args:
+            file_path: Absolute path to image file
+            rotation_degrees: Rotation angle in degrees (0, 90, 180, 270)
+        """
+        self._rotation.save(file_path, rotation_degrees)
 
     # ==================== Audit Trail Methods ====================
 
@@ -432,7 +442,6 @@ class AnalysisDB:
             "bundle_images",  # References document_bundles and image_files
             "pdf_image_pages",  # References pdf_files and image_files
             "analysis_errors",  # References image_files
-            "rotation_preferences",  # References image_files
             "analysis_results",  # References image_files
             "document_bundles",  # No foreign key dependencies
             "pdf_files",  # No foreign key dependencies
