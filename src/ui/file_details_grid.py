@@ -2336,6 +2336,38 @@ class FileDetailsGrid(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(12)
 
+        # Collapsible filter/search toggle button
+        self._filter_toggle_btn = QPushButton("▶  Filters & Search")
+        self._filter_toggle_btn.setCheckable(True)
+        self._filter_toggle_btn.setChecked(False)
+        self._filter_toggle_btn.setFixedHeight(26)
+        self._filter_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.theme_colors["bg_tertiary"]};
+                border: 1px solid {self.theme_colors["border"]};
+                border-radius: 4px;
+                padding: 3px 8px;
+                color: {self.theme_colors["text_secondary"]};
+                font-size: 9pt;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background-color: {self.theme_colors["button_hover"]};
+                color: {self.theme_colors["text_primary"]};
+            }}
+            QPushButton:checked {{
+                color: {self.theme_colors["text_primary"]};
+            }}
+        """)
+        layout.addWidget(self._filter_toggle_btn)
+
+        # Collapsible body — starts hidden
+        self._filter_body = QWidget()
+        self._filter_body.setVisible(False)
+        filter_body_layout = QVBoxLayout(self._filter_body)
+        filter_body_layout.setContentsMargins(0, 0, 0, 0)
+        filter_body_layout.setSpacing(12)
+
         # Filter toolbar with better styling
         filter_frame = QWidget()
         filter_frame.setStyleSheet(f"""
@@ -2502,7 +2534,7 @@ class FileDetailsGrid(QWidget):
 
         filter_main_layout.addLayout(dropdown_layout)
 
-        layout.addWidget(filter_frame)
+        filter_body_layout.addWidget(filter_frame)
 
         # Search bar with improved styling
         search_frame = QWidget()
@@ -2559,7 +2591,15 @@ class FileDetailsGrid(QWidget):
         export_btn.clicked.connect(self._export_csv)
         search_layout.addWidget(export_btn)
 
-        layout.addWidget(search_frame)
+        filter_body_layout.addWidget(search_frame)
+
+        layout.addWidget(self._filter_body)
+        self._filter_toggle_btn.toggled.connect(self._filter_body.setVisible)
+        self._filter_toggle_btn.toggled.connect(
+            lambda checked: self._filter_toggle_btn.setText(
+                "▼  Filters & Search" if checked else "▶  Filters & Search"
+            )
+        )
 
         # Table view with professional styling
         self.table_view = QTableView()

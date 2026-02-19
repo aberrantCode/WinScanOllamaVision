@@ -10,7 +10,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -85,8 +85,14 @@ class PipelineHeaderWidget(QWidget):
         super().__init__(parent)
         self._current_stage = STAGE_IMPORT
         self._completed: set[int] = set()
-        self.setFixedHeight(72)
+        self._bg_color = QColor("#0B1120")
+        self.setFixedHeight(58)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_bg_color(self, color: str) -> None:
+        """Set the header background colour and trigger a repaint."""
+        self._bg_color = QColor(color)
+        self.update()
 
     # ------------------------------------------------------------------
     # Public API
@@ -108,84 +114,70 @@ class PipelineHeaderWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        w, h = self.width(), self.height()
-        n = len(STAGE_LABELS)
-        node_r = 14
-        y_center = h // 2 - 8  # leave room for labels below
+        # Stylesheet background-color is ignored on custom-painted QWidgets
+        # unless we explicitly fill here.
+        painter.fillRect(self.rect(), self._bg_color)
 
-        # Evenly distribute nodes
+        w = self.width()
+        n = len(STAGE_LABELS)
+        node_w, node_h, corner_r = 76, 26, 8
+        y_center = (self.height() - node_h) // 2 + node_h // 2  # vertically centred
+
+        # Evenly distribute node centres
         xs = [int(w * (i + 0.5) / n) for i in range(n)]
 
         # Colors
-        col_complete = QColor("#10B981")  # green
-        col_active = QColor("#3B82F6")  # blue
-        col_pending = QColor("#4A4A4A")  # grey border, no fill
+        col_complete = QColor("#10B981")
+        col_active = QColor("#3B82F6")
+        col_pending = QColor("#4A4A4A")
         col_line = QColor("#4A4A4A")
 
-        pen = QPen(col_line, 2)
-        painter.setPen(pen)
-
-        # Connecting lines (behind nodes)
+        # Connecting lines (drawn behind nodes)
         for i in range(n - 1):
             x1, x2 = xs[i], xs[i + 1]
-            if i in self._completed:
-                painter.setPen(QPen(col_complete, 2))
-            else:
-                painter.setPen(QPen(col_line, 2))
-            painter.drawLine(x1 + node_r, y_center, x2 - node_r, y_center)
+            painter.setPen(QPen(col_complete if i in self._completed else col_line, 2))
+            painter.drawLine(x1 + node_w // 2, y_center, x2 - node_w // 2, y_center)
 
-        # Stage nodes and labels
+        # Stage nodes
         for i, label in enumerate(STAGE_LABELS):
             x = xs[i]
+            rx, ry = x - node_w // 2, y_center - node_h // 2
 
             if i in self._completed:
                 painter.setBrush(col_complete)
                 painter.setPen(QPen(col_complete, 2))
-                painter.drawEllipse(QPoint(x, y_center), node_r, node_r)
+                painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
                 # Checkmark
                 painter.setPen(QPen(QColor("white"), 2))
-                painter.drawLine(x - 6, y_center, x - 2, y_center + 5)
-                painter.drawLine(x - 2, y_center + 5, x + 6, y_center - 5)
+                painter.drawLine(x - 6, y_center, x - 2, y_center + 4)
+                painter.drawLine(x - 2, y_center + 4, x + 6, y_center - 4)
             elif i == self._current_stage:
                 painter.setBrush(col_active)
                 painter.setPen(QPen(col_active, 2))
-                painter.drawEllipse(QPoint(x, y_center), node_r, node_r)
+                painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
                 painter.setPen(QPen(QColor("white"), 1))
                 f = QFont()
                 f.setPointSize(8)
                 f.setBold(True)
                 painter.setFont(f)
-                painter.drawText(x - 4, y_center + 4, str(i + 1))
+                painter.drawText(rx, ry, node_w, node_h, Qt.AlignmentFlag.AlignCenter, label)
             else:
                 painter.setBrush(QColor("transparent"))
                 painter.setPen(QPen(col_pending, 2))
-                painter.drawEllipse(QPoint(x, y_center), node_r, node_r)
+                painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
                 painter.setPen(QPen(col_pending, 1))
                 f = QFont()
                 f.setPointSize(8)
                 painter.setFont(f)
-                painter.drawText(x - 4, y_center + 4, str(i + 1))
-
-            # Label below node
-            painter.setPen(
-                QPen(
-                    QColor("#E0E0E0") if i == self._current_stage else QColor("#808080"),
-                    1,
-                )
-            )
-            f = QFont()
-            f.setPointSize(8)
-            f.setBold(i == self._current_stage)
-            painter.setFont(f)
-            label_y = y_center + node_r + 16
-            painter.drawText(x - 30, label_y, 60, 14, Qt.AlignmentFlag.AlignCenter, label)
+                painter.drawText(rx, ry, node_w, node_h, Qt.AlignmentFlag.AlignCenter, label)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         w = self.width()
         n = len(STAGE_LABELS)
+        node_w = 76
         xs = [int(w * (i + 0.5) / n) for i in range(n)]
         for i, x in enumerate(xs):
-            if abs(event.pos().x() - x) < 20:
+            if abs(event.pos().x() - x) < node_w // 2 + 6:
                 self.stage_clicked.emit(i)
                 return
 
@@ -225,6 +217,9 @@ class ImportPanel(QWidget):
         self.tree_count_label: QLabel | None = None
         self.scan_progress_bar: QProgressBar | None = None
         self.scan_btn: QPushButton | None = None
+        self._splitter: QSplitter | None = None
+        self._select_all_btn: QPushButton | None = None
+        self._deselect_btn: QPushButton | None = None
 
         self._build_ui()
         QTimer.singleShot(0, self._post_init)
@@ -292,8 +287,6 @@ class ImportPanel(QWidget):
         root.addWidget(self.scan_progress_bar)
 
         # ── Tree / Preview splitter
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
         # Left: file tree
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -301,18 +294,39 @@ class ImportPanel(QWidget):
         left_layout.setSpacing(4)
 
         tree_header = QHBoxLayout()
+        tree_header.setSpacing(10)
         self.tree_count_label = QLabel("0 images")
         self.tree_count_label.setStyleSheet(f"color: {self._c()['text_tertiary']}; font-size: 9pt;")
         tree_header.addStretch()
         tree_header.addWidget(self.tree_count_label)
+
+        link_style = "QPushButton { border: none; padding: 0; font-size: 9pt; color: %s; } QPushButton:hover { text-decoration: underline; }"
+
+        self._select_all_btn = QPushButton("Select All")
+        self._select_all_btn.setFlat(True)
+        self._select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_all_btn.setStyleSheet(link_style % self._c().get("accent", "#3B82F6"))
+        self._select_all_btn.clicked.connect(self._on_select_all)
+        tree_header.addWidget(self._select_all_btn)
+
+        self._deselect_btn = QPushButton("Deselect")
+        self._deselect_btn.setFlat(True)
+        self._deselect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._deselect_btn.setStyleSheet(link_style % self._c().get("text_secondary", "#9CA3AF"))
+        self._deselect_btn.setVisible(False)
+        self._deselect_btn.clicked.connect(self._on_deselect)
+        tree_header.addWidget(self._deselect_btn)
+
         left_layout.addLayout(tree_header)
 
         self.image_tree = QTreeWidget()
-        self.image_tree.setHeaderLabels(["Image", "Status"])
+        self.image_tree.setHeaderLabels(["Image", "Status", "Date Created", "Size"])
         tree_hdr = self.image_tree.header()
         assert tree_hdr is not None
         tree_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.image_tree.setColumnWidth(1, 90)
+        self.image_tree.setColumnWidth(2, 96)
+        self.image_tree.setColumnWidth(3, 68)
         self.image_tree.itemSelectionChanged.connect(self._on_selection_changed)
         left_layout.addWidget(self.image_tree)
 
@@ -333,7 +347,8 @@ class ImportPanel(QWidget):
         act_bar.addStretch()
         left_layout.addLayout(act_bar)
 
-        splitter.addWidget(left)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(left)
 
         # Right: image preview
         c = self._c()
@@ -345,25 +360,15 @@ class ImportPanel(QWidget):
             config_manager=self.config_manager,
             analysis_db=self.analysis_db,
         )
-        splitter.addWidget(self.preview_widget)
-        splitter.setSizes([380, 580])
+        self._splitter.addWidget(self.preview_widget)
+        self._splitter.setSizes([380, 580])
+        self._splitter.setCollapsible(0, False)
+        self._splitter.setCollapsible(1, True)
+        self.preview_widget.setVisible(False)
 
-        root.addWidget(splitter, stretch=1)
+        root.addWidget(self._splitter, stretch=1)
 
         # ── Footer navigation
-        root.addWidget(self._divider())
-        footer = QHBoxLayout()
-        footer.addStretch()
-        next_btn = QPushButton("Next: Analyze →")
-        next_btn.setFixedHeight(30)
-        next_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {Colors.PRIMARY}; color: white; "
-            f"border: none; border-radius: 4px; padding: 4px 16px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}"
-        )
-        next_btn.clicked.connect(self.next_requested)
-        footer.addWidget(next_btn)
-        root.addLayout(footer)
 
     def _post_init(self) -> None:
         self._populate_directory_combo()
@@ -384,6 +389,8 @@ class ImportPanel(QWidget):
         self.directory_combo.blockSignals(False)
 
     def _refresh(self) -> None:
+        from datetime import datetime
+
         if not self.image_tree:
             return
 
@@ -414,15 +421,22 @@ class ImportPanel(QWidget):
         c = self._c()
 
         for dir_path, images in grouped.items():
-            dir_item = QTreeWidgetItem([os.path.basename(dir_path), ""])
+            dir_item = QTreeWidgetItem([os.path.basename(dir_path), "", "", ""])
             dir_item.setForeground(0, QColor(c["text_secondary"]))
             dir_item.setFont(0, QFont("Segoe UI", 9, QFont.Weight.Bold))
             self.image_tree.addTopLevelItem(dir_item)
 
             for img in images:
                 status = img.get("status", "registered")
-                file_item = QTreeWidgetItem([img["filename"], status])
+                mtime = img.get("file_mtime") or 0
+                date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d") if mtime else ""
+                size_str = self._fmt_size(img.get("file_size") or 0)
+
+                file_item = QTreeWidgetItem([img["filename"], status, date_str, size_str])
                 file_item.setData(0, Qt.ItemDataRole.UserRole, img["file_path"])
+                file_item.setTextAlignment(
+                    3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
 
                 status_color = {
                     "analyzed": "#10B981",
@@ -430,6 +444,8 @@ class ImportPanel(QWidget):
                     "registered": c["text_tertiary"],
                 }.get(status, c["text_tertiary"])
                 file_item.setForeground(1, QColor(status_color))
+                file_item.setForeground(2, QColor(c["text_tertiary"]))
+                file_item.setForeground(3, QColor(c["text_tertiary"]))
 
                 dir_item.addChild(file_item)
                 total += 1
@@ -453,12 +469,30 @@ class ImportPanel(QWidget):
         if not self.preview_widget or not self.image_tree:
             return
         paths = self._selected_paths()
-        if paths:
-            from PyQt6.QtGui import QPixmap
+        has_selection = len(paths) > 0
 
-            pixmap = QPixmap(paths[0])
-            if not pixmap.isNull():
-                self.preview_widget.set_pixmap(pixmap, apply_fit="window", file_path=paths[0])
+        self.preview_widget.setVisible(has_selection)
+        if self._deselect_btn:
+            self._deselect_btn.setVisible(has_selection)
+
+        if not has_selection:
+            return
+
+        from PyQt6.QtGui import QPixmap
+
+        pixmap = QPixmap(paths[0])
+        if not pixmap.isNull():
+            self.preview_widget.set_pixmap(pixmap, apply_fit="window", file_path=paths[0])
+
+    def _on_select_all(self) -> None:
+        """Select all image items in the tree."""
+        if self.image_tree:
+            self.image_tree.selectAll()
+
+    def _on_deselect(self) -> None:
+        """Clear the current tree selection."""
+        if self.image_tree:
+            self.image_tree.clearSelection()
 
     def _on_scan_clicked(self) -> None:
         if self._discovery_worker and self._discovery_worker.isRunning():
@@ -524,6 +558,14 @@ class ImportPanel(QWidget):
         self._refresh()
 
     @staticmethod
+    def _fmt_size(size_bytes: int) -> str:
+        if size_bytes >= 1_048_576:
+            return f"{size_bytes / 1_048_576:.1f} MB"
+        if size_bytes >= 1_024:
+            return f"{size_bytes / 1_024:.1f} KB"
+        return f"{size_bytes} B"
+
+    @staticmethod
     def _divider() -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -580,6 +622,10 @@ class AnalyzePanel(QWidget):
         self.progress_bar: QProgressBar | None = None
         self.stats_lbl: QLabel | None = None
         self.file_grid: Any | None = None  # FileDetailsGrid
+        self.image_preview: ImagePreviewWidget | None = None
+        self._content_splitter: QSplitter | None = None
+        self._select_all_btn: QPushButton | None = None
+        self._deselect_btn: QPushButton | None = None
 
         self._build_ui()
         self._connect_worker()
@@ -647,20 +693,44 @@ class AnalyzePanel(QWidget):
 
         root.addLayout(toolbar)
 
-        # ── Progress bar
+        # ── Progress bar (hidden until analysis is running)
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(18)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
         root.addWidget(self.progress_bar)
 
-        # ── Stats row
+        # ── Stats row (stats label left, selection actions right)
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(10)
+
         self.stats_lbl = QLabel("—")
         self.stats_lbl.setStyleSheet(f"font-size: 9pt; color: {self._c()['text_tertiary']};")
-        root.addWidget(self.stats_lbl)
+        stats_row.addWidget(self.stats_lbl)
+        stats_row.addStretch()
 
-        # ── Full-featured file grid (21 columns, configurable visibility, context menu)
+        link_style = "QPushButton { border: none; padding: 0; font-size: 9pt; color: %s; } QPushButton:hover { text-decoration: underline; }"
+
+        self._select_all_btn = QPushButton("Select All")
+        self._select_all_btn.setFlat(True)
+        self._select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_all_btn.setStyleSheet(link_style % self._c().get("accent", "#3B82F6"))
+        self._select_all_btn.clicked.connect(self._on_select_all)
+        stats_row.addWidget(self._select_all_btn)
+
+        self._deselect_btn = QPushButton("Deselect")
+        self._deselect_btn.setFlat(True)
+        self._deselect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._deselect_btn.setStyleSheet(link_style % self._c().get("text_secondary", "#9CA3AF"))
+        self._deselect_btn.setVisible(False)
+        self._deselect_btn.clicked.connect(self._on_deselect)
+        stats_row.addWidget(self._deselect_btn)
+
+        root.addLayout(stats_row)
+
+        # ── Content area: file grid (left) + image preview (right)
         from ui.file_details_grid import FileDetailsGrid
 
         self.file_grid = FileDetailsGrid(
@@ -668,30 +738,28 @@ class AnalyzePanel(QWidget):
             analysis_db=self.analysis_db,
             metadata_db=self.metadata_db,
         )
-        root.addWidget(self.file_grid, stretch=1)
+
+        c = self._c()
+        self.image_preview = ImagePreviewWidget(
+            parent=self,
+            toolbar_size=ToolbarSize.COMPACT,
+            toolbar_position=ToolbarPosition.BOTTOM_CENTER,
+            theme_colors={**c, "button_bg": c["bg_tertiary"], "button_hover": c["bg_hover"]},
+            config_manager=self.config_manager,
+            analysis_db=self.analysis_db,
+        )
+        self.image_preview.setMinimumWidth(180)
+
+        self._content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._content_splitter.addWidget(self.file_grid)
+        self._content_splitter.addWidget(self.image_preview)
+        self._content_splitter.setSizes([680, 380])
+        self._content_splitter.setCollapsible(0, False)
+        self._content_splitter.setCollapsible(1, True)
+        self.image_preview.setVisible(False)
+        root.addWidget(self._content_splitter, stretch=1)
 
         # ── Footer navigation
-        root.addWidget(self._divider())
-        footer = QHBoxLayout()
-
-        back_btn = QPushButton("← Back")
-        back_btn.setFixedHeight(30)
-        back_btn.clicked.connect(self.back_requested)
-        footer.addWidget(back_btn)
-
-        footer.addStretch()
-
-        self._next_btn = QPushButton("Next: Bundle →")
-        self._next_btn.setFixedHeight(30)
-        self._next_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {Colors.PRIMARY}; color: white; "
-            f"border: none; border-radius: 4px; padding: 4px 16px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}"
-        )
-        self._next_btn.clicked.connect(self.next_requested)
-        footer.addWidget(self._next_btn)
-
-        root.addLayout(footer)
 
     def refresh(self) -> None:
         """Load (or reload) current file statuses from the database into the grid."""
@@ -798,6 +866,9 @@ class AnalyzePanel(QWidget):
         self._worker.queue_empty.connect(self._on_queue_empty, ct)  # type: ignore[call-arg]
         if self.file_grid:
             self.file_grid.re_analyze_requested.connect(self._on_re_analyze_requested)
+            self.file_grid.table_view.selectionModel().selectionChanged.connect(
+                self._on_grid_selection_changed
+            )
 
     def _on_start(self) -> None:
         job = AnalysisJob.create(
@@ -815,6 +886,8 @@ class AnalyzePanel(QWidget):
             self.stop_btn.setVisible(True)
         if self.abort_btn:
             self.abort_btn.setVisible(True)
+        if self.progress_bar:
+            self.progress_bar.setVisible(True)
         if self.status_lbl:
             self.status_lbl.setText("Starting analysis…")
 
@@ -870,6 +943,46 @@ class AnalyzePanel(QWidget):
             self.stop_btn.setVisible(True)
         if self.abort_btn:
             self.abort_btn.setVisible(True)
+        if self.progress_bar:
+            self.progress_bar.setVisible(True)
+
+    def _on_grid_selection_changed(self) -> None:
+        """Update the inline image preview when the grid selection changes."""
+        if not self.file_grid or not self.image_preview:
+            return
+        selection = self.file_grid.table_view.selectionModel().selectedRows()
+        has_selection = len(selection) > 0
+
+        self.image_preview.setVisible(has_selection)
+        if self._deselect_btn:
+            self._deselect_btn.setVisible(has_selection)
+
+        if not has_selection:
+            return
+
+        proxy_index = selection[0]
+        source_index = self.file_grid.proxy_model.mapToSource(proxy_index)
+        row_data = self.file_grid.model.get_row_data(source_index.row())
+        if not row_data:
+            return
+        file_path = row_data.get("full_path", "")
+        if not file_path:
+            return
+        from PyQt6.QtGui import QPixmap
+
+        pixmap = QPixmap(file_path)
+        if not pixmap.isNull():
+            self.image_preview.set_pixmap(pixmap, apply_fit="window", file_path=file_path)
+
+    def _on_select_all(self) -> None:
+        """Select all rows in the file grid."""
+        if self.file_grid:
+            self.file_grid.table_view.selectAll()
+
+    def _on_deselect(self) -> None:
+        """Clear the current grid selection."""
+        if self.file_grid:
+            self.file_grid.table_view.clearSelection()
 
     def _on_job_finished(self, job_id: str, stats: dict) -> None:
         self._stats["analyzed"] += stats.get("analyzed", 0)
@@ -900,7 +1013,7 @@ class AnalyzePanel(QWidget):
         if self.status_lbl:
             self.status_lbl.setText("Analysis complete.")
         if self.progress_bar:
-            self.progress_bar.setFormat("Complete")
+            self.progress_bar.setVisible(False)
 
     def _update_stats_label(self) -> None:
         if not self.stats_lbl:
@@ -1007,32 +1120,6 @@ class BundlePanel(QWidget):
         self._content_stack.addWidget(placeholder)  # index 0
 
         root.addWidget(self._content_stack, stretch=1)
-
-        # ── Pipeline footer navigation (outside the embedded workflow)
-        root.addWidget(self._divider())
-        footer = QHBoxLayout()
-        footer.setContentsMargins(16, 6, 16, 8)
-
-        back_btn = QPushButton("← Back")
-        back_btn.setFixedHeight(30)
-        back_btn.clicked.connect(self.back_requested)
-        footer.addWidget(back_btn)
-
-        footer.addStretch()
-
-        self._next_btn = QPushButton("Next: Export →")
-        self._next_btn.setFixedHeight(30)
-        self._next_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {Colors.PRIMARY}; color: white; "
-            f"border: none; border-radius: 4px; padding: 4px 16px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}"
-        )
-        self._next_btn.clicked.connect(self.next_requested)
-        footer.addWidget(self._next_btn)
-
-        footer_widget = QWidget()
-        footer_widget.setLayout(footer)
-        root.addWidget(footer_widget)
 
     def refresh_bundle_count(self) -> None:
         """Load bundles from the DB and (re)build the embedded workflow widget."""
@@ -1191,17 +1278,6 @@ class ExportPanel(QWidget):
 
         root.addStretch()
 
-        root.addWidget(self._divider())
-        footer = QHBoxLayout()
-
-        back_btn = QPushButton("← Back to Bundle")
-        back_btn.setFixedHeight(30)
-        back_btn.clicked.connect(self.back_requested)
-        footer.addWidget(back_btn)
-
-        footer.addStretch()
-        root.addLayout(footer)
-
     def update_stats(self, stats: dict) -> None:
         self._stats = stats
         accepted = stats.get("accepted", 0)
@@ -1301,10 +1377,9 @@ class DocumentPipelineWindow(QMainWindow):
         root.addWidget(self.header)
 
         # Thin separator under header
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFixedHeight(1)
-        root.addWidget(sep)
+        self._header_sep = QFrame()
+        self._header_sep.setFixedHeight(2)
+        root.addWidget(self._header_sep)
 
         # ── Stage panels
         self.stack = QStackedWidget()
@@ -1314,16 +1389,12 @@ class DocumentPipelineWindow(QMainWindow):
             config_manager=self.config_manager,
             dark_mode=self.dark_mode,
         )
-        self.import_panel.next_requested.connect(lambda: self._go_to_stage(STAGE_ANALYZE))
-
         self.analyze_panel = AnalyzePanel(
             config_manager=self.config_manager,
             analysis_db=self.analysis_db,
             metadata_db=self.metadata_db,
             dark_mode=self.dark_mode,
         )
-        self.analyze_panel.back_requested.connect(lambda: self._go_to_stage(STAGE_IMPORT))
-        self.analyze_panel.next_requested.connect(lambda: self._go_to_stage(STAGE_BUNDLE))
 
         self.bundle_panel = BundlePanel(
             analysis_db=self.analysis_db,
@@ -1331,15 +1402,12 @@ class DocumentPipelineWindow(QMainWindow):
             config_manager=self.config_manager,
             dark_mode=self.dark_mode,
         )
-        self.bundle_panel.back_requested.connect(lambda: self._go_to_stage(STAGE_ANALYZE))
-        self.bundle_panel.next_requested.connect(lambda: self._go_to_stage(STAGE_EXPORT))
         self.bundle_panel.bundles_completed.connect(self._on_bundles_completed)
 
         self.export_panel = ExportPanel(
             config_manager=self.config_manager,
             dark_mode=self.dark_mode,
         )
-        self.export_panel.back_requested.connect(lambda: self._go_to_stage(STAGE_BUNDLE))
 
         self.stack.addWidget(self.import_panel)
         self.stack.addWidget(self.analyze_panel)
@@ -1348,10 +1416,44 @@ class DocumentPipelineWindow(QMainWindow):
 
         root.addWidget(self.stack, stretch=1)
 
+        # ── Shared footer (full window width, matches header style)
+        self._footer_sep = QFrame()
+        self._footer_sep.setFixedHeight(2)
+        root.addWidget(self._footer_sep)
+
+        self._footer_bar = QWidget()
+        footer_layout = QHBoxLayout(self._footer_bar)
+        footer_layout.setContentsMargins(16, 6, 16, 8)
+        footer_layout.setSpacing(8)
+
+        self._back_btn = QPushButton("← Back")
+        self._back_btn.setFixedHeight(30)
+        self._back_btn.clicked.connect(self._on_back_clicked)
+        footer_layout.addWidget(self._back_btn)
+
+        footer_layout.addStretch()
+
+        self._fwd_btn = QPushButton("Next: Analyze →")
+        self._fwd_btn.setFixedHeight(30)
+        self._fwd_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {Colors.PRIMARY}; color: white; "
+            f"border: none; border-radius: 4px; padding: 4px 16px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}"
+        )
+        self._fwd_btn.clicked.connect(self._on_next_clicked)
+        footer_layout.addWidget(self._fwd_btn)
+
+        root.addWidget(self._footer_bar)
+        self._update_footer_buttons(self._current_stage)
+
     def _apply_theme(self) -> None:
-        c = self._c()
         self.setStyleSheet(ThemeManager.get_stylesheet(self.dark_mode))
-        self.header.setStyleSheet(f"background-color: {c['bg_secondary']};")
+        header_bg = "#111C2E" if self.dark_mode else "#F0F2F5"
+        sep_color = "#0E1727" if self.dark_mode else "#F8F9FA"
+        self.header.set_bg_color(header_bg)
+        self._header_sep.setStyleSheet(f"background-color: {sep_color}; border: none;")
+        self._footer_sep.setStyleSheet(f"background-color: {sep_color}; border: none;")
+        self._footer_bar.setStyleSheet(f"background-color: {header_bg};")
 
     def _go_to_stage(self, stage: int) -> None:
         # Mark the current stage complete when moving forward
@@ -1361,6 +1463,7 @@ class DocumentPipelineWindow(QMainWindow):
         self._current_stage = stage
         self.stack.setCurrentIndex(stage)
         self.header.set_stage(stage, self._completed_stages)
+        self._update_footer_buttons(stage)
 
         # Trigger stage-specific refresh
         if stage == STAGE_IMPORT:
@@ -1369,6 +1472,32 @@ class DocumentPipelineWindow(QMainWindow):
             self.analyze_panel.refresh()
         elif stage == STAGE_BUNDLE:
             self.bundle_panel.refresh_bundle_count()
+
+    def _on_back_clicked(self) -> None:
+        self._go_to_stage(self._current_stage - 1)
+
+    def _on_next_clicked(self) -> None:
+        self._go_to_stage(self._current_stage + 1)
+
+    def _update_footer_buttons(self, stage: int) -> None:
+        back_labels = {
+            STAGE_IMPORT: None,
+            STAGE_ANALYZE: "← Back",
+            STAGE_BUNDLE: "← Back",
+            STAGE_EXPORT: "← Back to Bundle",
+        }
+        next_labels = {
+            STAGE_IMPORT: "Next: Analyze →",
+            STAGE_ANALYZE: "Next: Bundle →",
+            STAGE_BUNDLE: "Next: Export →",
+            STAGE_EXPORT: None,
+        }
+        back_label = back_labels.get(stage)
+        next_label = next_labels.get(stage)
+        self._back_btn.setText(back_label or "← Back")
+        self._back_btn.setVisible(back_label is not None)
+        self._fwd_btn.setText(next_label or "Next →")
+        self._fwd_btn.setVisible(next_label is not None)
 
     def _on_bundles_completed(self, stats: dict) -> None:
         self.export_panel.update_stats(stats)
