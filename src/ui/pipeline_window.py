@@ -6,6 +6,7 @@ Replaces the separate Discover, Analysis Status, and Bundle windows
 with a single surface that guides the operator through the full process.
 """
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -218,6 +219,7 @@ class ImportPanel(QWidget):
         self.scan_progress_bar: QProgressBar | None = None
         self.scan_btn: QPushButton | None = None
         self._splitter: QSplitter | None = None
+        self._preview_stack: QStackedWidget | None = None
         self._select_all_btn: QPushButton | None = None
         self._deselect_btn: QPushButton | None = None
 
@@ -250,6 +252,43 @@ class ImportPanel(QWidget):
         self.directory_combo = QComboBox()
         self.directory_combo.setFixedHeight(28)
         self.directory_combo.setMinimumWidth(220)
+        c = self._c()
+        self.directory_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {c['bg_secondary']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border']};
+                border-radius: 4px;
+                padding: 2px 8px;
+                min-height: 25px;
+            }}
+            QComboBox:drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid {c['text_secondary']};
+                margin-right: 6px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {c['bg_secondary']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border']};
+                selection-background-color: {c['bg_hover']};
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 25px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {c['bg_hover']};
+            }}
+        """)
+        self._populate_directory_combo()
         self.directory_combo.currentIndexChanged.connect(self._refresh)
         bar.addWidget(self.directory_combo, stretch=1)
 
@@ -321,9 +360,12 @@ class ImportPanel(QWidget):
 
         self.image_tree = QTreeWidget()
         self.image_tree.setHeaderLabels(["Image", "Status", "Date Created", "Size"])
+        self.image_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         tree_hdr = self.image_tree.header()
         assert tree_hdr is not None
-        tree_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        tree_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        tree_hdr.setStretchLastSection(False)
+        self.image_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.image_tree.setColumnWidth(1, 90)
         self.image_tree.setColumnWidth(2, 96)
         self.image_tree.setColumnWidth(3, 68)
@@ -350,7 +392,7 @@ class ImportPanel(QWidget):
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.addWidget(left)
 
-        # Right: image preview
+        # Right: placeholder or image preview, always visible
         c = self._c()
         preview_colors = {**c, "button_bg": c["bg_tertiary"], "button_hover": c["bg_hover"]}
         self.preview_widget = ImagePreviewWidget(
@@ -360,33 +402,96 @@ class ImportPanel(QWidget):
             config_manager=self.config_manager,
             analysis_db=self.analysis_db,
         )
-        self._splitter.addWidget(self.preview_widget)
-        self._splitter.setSizes([380, 580])
+        self._preview_stack = QStackedWidget()
+        self._preview_stack.addWidget(self._build_preview_placeholder())  # index 0: no selection
+        self._preview_stack.addWidget(self.preview_widget)  # index 1: image preview
+        self._preview_stack.setCurrentIndex(0)
+
+        self._splitter.addWidget(self._preview_stack)
+        self._splitter.setSizes([500, 500])
         self._splitter.setCollapsible(0, False)
-        self._splitter.setCollapsible(1, True)
-        self.preview_widget.setVisible(False)
+        self._splitter.setCollapsible(1, False)
 
         root.addWidget(self._splitter, stretch=1)
 
         # ── Footer navigation
+
+    def _build_preview_placeholder(self) -> QWidget:
+        """Empty-state widget shown in the preview pane when no item is selected."""
+        c = self._c()
+        outer = QWidget()
+        layout = QVBoxLayout(outer)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        card = QWidget()
+        card.setMaximumWidth(260)
+        card.setStyleSheet("border: 1px dashed rgba(128,128,128,0.35); border-radius: 12px;")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(28, 32, 28, 32)
+        card_layout.setSpacing(10)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon_lbl = QLabel("\U0001f5bc")  # 🖼 frame with picture
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet(
+            f"font-size: 32pt; color: {c['text_tertiary']};"
+            " border: none; background: transparent;"
+        )
+        card_layout.addWidget(icon_lbl)
+
+        title_lbl = QLabel("Select an image to preview")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setWordWrap(True)
+        title_lbl.setStyleSheet(
+            f"font-size: 10pt; font-weight: 600; color: {c['text_secondary']};"
+            " border: none; background: transparent;"
+        )
+        card_layout.addWidget(title_lbl)
+
+        hint_lbl = QLabel("Click any item in the list\nto see a full preview here.")
+        hint_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint_lbl.setStyleSheet(
+            f"font-size: 9pt; color: {c['text_tertiary']};"
+            " border: none; background: transparent;"
+        )
+        card_layout.addWidget(hint_lbl)
+
+        layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignCenter)
+        return outer
 
     def _post_init(self) -> None:
         self._populate_directory_combo()
         self._refresh()
 
     def _populate_directory_combo(self) -> None:
-        if not self.directory_combo:
+        if self.directory_combo is None:
             return
-        self.directory_combo.blockSignals(True)
+
+        # Temporarily disconnect to avoid triggering _refresh mid-population.
+        # We use disconnect/reconnect rather than blockSignals because blockSignals
+        # suppresses Qt's internal state update that sets currentIndex when the
+        # first item is added, leaving the display blank.
+        with contextlib.suppress(RuntimeError, TypeError):
+            self.directory_combo.currentIndexChanged.disconnect(self._refresh)
+
+        current_text = self.directory_combo.currentText()
+
         self.directory_combo.clear()
         self.directory_combo.addItem("All Directories")
+
         try:
             dirs = self.config_manager.get_directories()
             for d in dirs:
                 self.directory_combo.addItem(d)
         except Exception:
             pass
-        self.directory_combo.blockSignals(False)
+
+        # Restore previous selection if it still exists; otherwise keep index 0
+        idx = self.directory_combo.findText(current_text)
+        if idx > 0:
+            self.directory_combo.setCurrentIndex(idx)
+
+        self.directory_combo.currentIndexChanged.connect(self._refresh)
 
     def _refresh(self) -> None:
         from datetime import datetime
@@ -402,7 +507,8 @@ class ImportPanel(QWidget):
             self.directory_combo.currentText() if self.directory_combo else "All Directories"
         )
         if dir_filter != "All Directories":
-            all_images = [i for i in all_images if i["directory_path"] == dir_filter]
+            normalized_filter = os.path.normpath(dir_filter)
+            all_images = [i for i in all_images if i["directory_path"] == normalized_filter]
 
         show_analyzed = self.show_analyzed_cb.isChecked() if self.show_analyzed_cb else True
         if not show_analyzed:
@@ -410,50 +516,38 @@ class ImportPanel(QWidget):
 
         all_images = [i for i in all_images if not i.get("is_ignored", False)]
 
-        # Group by directory
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for img in all_images:
-            d = img["directory_path"]
-            grouped.setdefault(d, []).append(img)
-
         self.image_tree.clear()
-        total = 0
         c = self._c()
 
-        for dir_path, images in grouped.items():
-            dir_item = QTreeWidgetItem([os.path.basename(dir_path), "", "", ""])
-            dir_item.setForeground(0, QColor(c["text_secondary"]))
-            dir_item.setFont(0, QFont("Segoe UI", 9, QFont.Weight.Bold))
-            self.image_tree.addTopLevelItem(dir_item)
+        for img in all_images:
+            status = img.get("status", "registered")
+            mtime = img.get("file_mtime") or 0
+            date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d") if mtime else ""
+            size_str = self._fmt_size(img.get("file_size") or 0)
 
-            for img in images:
-                status = img.get("status", "registered")
-                mtime = img.get("file_mtime") or 0
-                date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d") if mtime else ""
-                size_str = self._fmt_size(img.get("file_size") or 0)
+            item = QTreeWidgetItem([img["filename"], status, date_str, size_str])
+            item.setData(0, Qt.ItemDataRole.UserRole, img["file_path"])
+            item.setTextAlignment(3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-                file_item = QTreeWidgetItem([img["filename"], status, date_str, size_str])
-                file_item.setData(0, Qt.ItemDataRole.UserRole, img["file_path"])
-                file_item.setTextAlignment(
-                    3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                )
+            status_color = {
+                "analyzed": "#10B981",
+                "error": "#EF4444",
+                "registered": c["text_tertiary"],
+            }.get(status, c["text_tertiary"])
+            item.setForeground(1, QColor(status_color))
+            item.setForeground(2, QColor(c["text_tertiary"]))
+            item.setForeground(3, QColor(c["text_tertiary"]))
 
-                status_color = {
-                    "analyzed": "#10B981",
-                    "error": "#EF4444",
-                    "registered": c["text_tertiary"],
-                }.get(status, c["text_tertiary"])
-                file_item.setForeground(1, QColor(status_color))
-                file_item.setForeground(2, QColor(c["text_tertiary"]))
-                file_item.setForeground(3, QColor(c["text_tertiary"]))
+            self.image_tree.addTopLevelItem(item)
 
-                dir_item.addChild(file_item)
-                total += 1
-
-            dir_item.setExpanded(True)
+        total = self.image_tree.topLevelItemCount()
 
         if self.tree_count_label:
             self.tree_count_label.setText(f"{total} image{'s' if total != 1 else ''}")
+
+        # Fit column 0 to the widest filename; the horizontal scrollbar appears
+        # automatically if the tree narrows (e.g. when the preview panel opens).
+        self.image_tree.resizeColumnToContents(0)
 
     def _selected_paths(self) -> list[str]:
         if not self.image_tree:
@@ -471,7 +565,8 @@ class ImportPanel(QWidget):
         paths = self._selected_paths()
         has_selection = len(paths) > 0
 
-        self.preview_widget.setVisible(has_selection)
+        if self._preview_stack:
+            self._preview_stack.setCurrentIndex(1 if has_selection else 0)
         if self._deselect_btn:
             self._deselect_btn.setVisible(has_selection)
 
@@ -485,7 +580,7 @@ class ImportPanel(QWidget):
             self.preview_widget.set_pixmap(pixmap, apply_fit="window", file_path=paths[0])
 
     def _on_select_all(self) -> None:
-        """Select all image items in the tree."""
+        """Select all items in the tree."""
         if self.image_tree:
             self.image_tree.selectAll()
 
