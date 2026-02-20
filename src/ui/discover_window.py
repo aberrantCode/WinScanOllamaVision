@@ -38,6 +38,7 @@ from db.repositories.image_files_repo import ImageFilesRepository
 from services.discovery_worker import DiscoveryWorker
 from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.styles import Colors
+from ui.theme_manager import ThemeManager
 
 if TYPE_CHECKING:
     from services.logging_service import get_logger
@@ -389,34 +390,14 @@ class DiscoverWindow(QDialog):
         return panel
 
     def _get_theme_colors(self) -> dict[str, str]:
-        """
-        Get theme colors based on current theme mode.
-
-        Returns:
-            Dictionary of theme colors
-        """
-        if self.dark_mode:
-            return {
-                "bg_primary": Colors.GRAY_900,
-                "bg_secondary": Colors.GRAY_800,
-                "text_primary": Colors.WHITE,
-                "text_secondary": Colors.GRAY_400,
-                "border": Colors.GRAY_700,
-                "accent": Colors.PRIMARY,
-                "button_bg": Colors.GRAY_800,
-                "button_hover": Colors.GRAY_700,
-            }
-        else:
-            return {
-                "bg_primary": Colors.WHITE,
-                "bg_secondary": Colors.GRAY_100,
-                "text_primary": Colors.GRAY_900,
-                "text_secondary": Colors.GRAY_700,
-                "border": Colors.GRAY_300,
-                "accent": Colors.PRIMARY,
-                "button_bg": Colors.GRAY_100,
-                "button_hover": Colors.PRIMARY_PALE,
-            }
+        """Get theme colors from ThemeManager for the current mode."""
+        c = ThemeManager.get_colors(self.dark_mode)
+        return {
+            **c,
+            # Aliases for callers that use button_bg / button_hover keys
+            "button_bg": c["bg_tertiary"],
+            "button_hover": c["bg_hover"],
+        }
 
     def _apply_theme(self) -> None:
         """Apply theme styling to the window."""
@@ -599,7 +580,8 @@ class DiscoverWindow(QDialog):
                     img_item.setForeground(0, QColor(Colors.SUCCESS))
                     img_item.setText(1, "✓ Analyzed")
                 else:
-                    img_item.setForeground(0, QColor(Colors.GRAY_600))
+                    theme_c = ThemeManager.get_colors(self.dark_mode)
+                    img_item.setForeground(0, QColor(theme_c["text_tertiary"]))
                     img_item.setText(1, "○ Registered")
 
     def refresh_directory_dropdown(self) -> None:

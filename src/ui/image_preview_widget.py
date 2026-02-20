@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.pannable_image_label import PannableImageLabel
-from ui.styles import Colors
+from ui.theme_manager import ThemeManager
 
 
 class ToolbarSize(Enum):
@@ -101,16 +101,18 @@ class ImagePreviewWidget(QWidget):
         self._init_ui()
 
     def _get_default_theme(self) -> dict[str, str]:
-        """Get default light theme colors."""
+        """Get theme colors from ThemeManager based on the current app theme."""
+        try:
+            from config.config_manager import ConfigManager
+
+            is_dark = ConfigManager().get_setting("Theme", "theme", "dark") == "dark"
+        except Exception:
+            is_dark = True
+        c = ThemeManager.get_colors(is_dark)
         return {
-            "bg_primary": Colors.WHITE,
-            "bg_secondary": Colors.GRAY_100,
-            "text_primary": Colors.GRAY_900,
-            "text_secondary": Colors.GRAY_700,
-            "border": Colors.GRAY_300,
-            "accent": Colors.PRIMARY,
-            "button_bg": Colors.GRAY_100,
-            "button_hover": Colors.PRIMARY_PALE,
+            **c,
+            "button_bg": c["bg_tertiary"],
+            "button_hover": c["bg_hover"],
         }
 
     def _init_ui(self):

@@ -32,44 +32,40 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
             background-color: {theme_colors["bg_tertiary"]};
             border: 1px solid {theme_colors["border"]};
             border-radius: 8px;
-            padding: 2px;
         }}
     """)
     card_layout = QVBoxLayout(card)
-    card_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
-    card_layout.setSpacing(4)  # Reduced spacing between title and value
+    card_layout.setContentsMargins(12, 12, 12, 12)
+    card_layout.setSpacing(2)
 
-    # Title label - no border, centered with word wrap
-    title_label = QLabel(title)
-    title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    title_label.setWordWrap(True)  # Enable word wrapping for long titles
-    title_label.setSizePolicy(
-        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-    )  # Prevent clipping
-    title_label.setStyleSheet(f"""
-        color: {theme_colors["text_tertiary"]};
-        font-size: 10pt;
-        font-weight: 600;
-        background-color: transparent;
-        border: none;
-    """)
-    card_layout.addWidget(title_label)
-
-    # Value label - no border, centered
+    # Value first — the answer — large and primary
     value_label = QLabel(value)
     value_label.setObjectName(f"{title.lower().replace(' ', '_')}_value")
     value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    value_label.setSizePolicy(
-        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-    )  # Prevent clipping
+    value_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
     value_label.setStyleSheet(f"""
         color: {theme_colors["text_primary"]};
-        font-size: 24pt;
-        font-weight: bold;
+        font-size: 26pt;
+        font-weight: 700;
         background-color: transparent;
         border: none;
     """)
     card_layout.addWidget(value_label)
+
+    # Title below — context — small and quiet
+    title_label = QLabel(title)
+    title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title_label.setWordWrap(True)
+    title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+    title_label.setStyleSheet(f"""
+        color: {theme_colors["text_tertiary"]};
+        font-size: 8pt;
+        font-weight: 500;
+        background-color: transparent;
+        border: none;
+        letter-spacing: 0.5px;
+    """)
+    card_layout.addWidget(title_label)
 
     return card
 
@@ -90,9 +86,9 @@ def create_funnel_widget(theme_colors) -> tuple:
     layout.setSpacing(12)
 
     # Title - no border
-    title = QLabel("Analysis Completion Funnel")
+    title = QLabel("Pipeline Progress")
     title.setStyleSheet(
-        f"font-size: 12pt; font-weight: bold; color: {theme_colors['text_primary']}; background-color: transparent; border: none;"
+        f"font-size: 11pt; font-weight: 600; color: {theme_colors['text_primary']}; background-color: transparent; border: none;"
     )
     layout.addWidget(title)
 
@@ -101,11 +97,11 @@ def create_funnel_widget(theme_colors) -> tuple:
 
     # Create 5 progress bars with funnel effect (progressively narrower)
     funnel_stages = [
-        ("files_detected", "Files Detected", 100),  # 100% width
-        ("files_analyzed", "Files Analyzed", 85),  # 85% width
-        ("high_confidence", "High Confidence Results", 70),  # 70% width
-        ("pages_bundled", "Pages Bundled", 55),  # 55% width
-        ("documents_archived", "Documents Archived", 40),  # 40% width
+        ("files_detected", "Detected", 100),  # 100% width
+        ("files_analyzed", "Analyzed", 85),  # 85% width
+        ("high_confidence", "High Confidence", 70),  # 70% width
+        ("pages_bundled", "Bundled", 55),  # 55% width
+        ("documents_archived", "Archived", 40),  # 40% width
     ]
 
     for key, stage_name, width_percent in funnel_stages:
@@ -248,7 +244,7 @@ def create_action_items_widget(theme_colors, action_callbacks) -> tuple:
     # Title
     title = QLabel("Action Items")
     title.setStyleSheet(
-        f"font-size: 12pt; font-weight: bold; color: {theme_colors['text_primary']}; background-color: transparent; border: none;"
+        f"font-size: 11pt; font-weight: 600; color: {theme_colors['text_primary']}; background-color: transparent; border: none;"
     )
     layout.addWidget(title)
 
@@ -258,18 +254,18 @@ def create_action_items_widget(theme_colors, action_callbacks) -> tuple:
     # Create action item rows
     items_data = [
         (
-            "No files detected. Click to start analysis.",
+            "No files detected in configured directories.",
             "Start Analysis",
             action_callbacks["start_analysis"],
         ),
         (
-            "0 bundles suggested. Click to review.",
+            "0 bundles suggested.",
             "Review Bundles",
             action_callbacks["review_bundles"],
         ),
-        ("0 errors detected. Click to view.", "View Errors", action_callbacks["view_errors"]),
+        ("0 errors detected.", "View Errors", action_callbacks["view_errors"]),
         (
-            "Analysis complete. Create bundles for documents.",
+            "Analysis complete.",
             "Create Bundles",
             action_callbacks["create_bundles"],
         ),
@@ -687,7 +683,7 @@ def create_analysis_progress_frame(
     # Title
     title = QLabel("Analysis in Progress")
     title.setStyleSheet(
-        f"font-size: 12pt; font-weight: bold; color: {Colors.PRIMARY if not is_dark_mode else '#90CAF9'}; background-color: transparent; border: none;"
+        f"font-size: 11pt; font-weight: 600; color: {Colors.PRIMARY}; background-color: transparent; border: none;"
     )
     layout.addWidget(title)
 

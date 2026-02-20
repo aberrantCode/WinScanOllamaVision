@@ -1,40 +1,49 @@
 """
-UI Styles and Themes (Phase 9)
-Modern color palette and QSS stylesheets for WinScanLLM
+UI Styles and Themes
+Color constants and component-level overrides for WinScanLLM.
+
+Design system: ThemeManager (theme_manager.py) is the single source of truth
+for application-wide theming. This module provides:
+  - Colors: semantic color constants (accent, success, danger — same in both themes)
+  - get_*_button_style(): accent-colored button overrides (primary, success, danger, secondary)
+  - get_*_bar_style(): progress bar overrides
+  - show_*(): themed message box helpers
 """
 
-# ===== COLOR PALETTE =====
+from ui.theme_manager import ThemeManager
+
+# ===== COLOR CONSTANTS =====
 
 
 class Colors:
-    """Modern color palette for UI components"""
+    """Semantic color constants. Accent/status colors are theme-invariant."""
 
-    # Primary colors
-    PRIMARY = "#2563EB"  # Modern Blue
-    PRIMARY_HOVER = "#1E40AF"  # Darker blue for hover
-    PRIMARY_LIGHT = "#3B82F6"  # Lighter blue for accents
-    PRIMARY_PALE = "#DBEAFE"  # Very light blue for backgrounds
+    # Accent (same in light and dark — matches ThemeManager)
+    PRIMARY = "#3B82F6"
+    PRIMARY_HOVER = "#2563EB"
+    PRIMARY_LIGHT = "#60A5FA"
+    PRIMARY_PALE = "#DBEAFE"
 
-    # Success colors
-    SUCCESS = "#059669"  # Emerald
-    SUCCESS_HOVER = "#047857"  # Darker emerald
-    SUCCESS_LIGHT = "#10B981"  # Lighter emerald
-    SUCCESS_PALE = "#D1FAE5"  # Very light emerald
+    # Status (same in light and dark — matches ThemeManager)
+    SUCCESS = "#10B981"
+    SUCCESS_HOVER = "#059669"
+    SUCCESS_LIGHT = "#34D399"
+    SUCCESS_PALE = "#D1FAE5"
 
-    # Danger colors
-    DANGER = "#DC2626"  # Red
-    DANGER_HOVER = "#B91C1C"  # Darker red
-    DANGER_LIGHT = "#EF4444"  # Lighter red
-    DANGER_PALE = "#FEE2E2"  # Very light red
+    DANGER = "#EF4444"
+    DANGER_HOVER = "#DC2626"
+    DANGER_LIGHT = "#F87171"
+    DANGER_PALE = "#FEE2E2"
 
-    # Warning colors
-    WARNING = "#F59E0B"  # Amber
-    WARNING_HOVER = "#D97706"  # Darker amber
-    WARNING_LIGHT = "#FBBF24"  # Lighter amber
-    WARNING_PALE = "#FEF3C7"  # Very light amber
+    WARNING = "#F59E0B"
+    WARNING_HOVER = "#D97706"
+    WARNING_LIGHT = "#FCD34D"
+    WARNING_PALE = "#FEF3C7"
 
-    # Neutral colors
-    GRAY_900 = "#111827"  # Very dark gray (text)
+    # Legacy neutral constants — prefer ThemeManager.get_colors() for theme-aware values
+    WHITE = "#FFFFFF"
+    BLACK = "#000000"
+    GRAY_900 = "#111827"
     GRAY_800 = "#1F2937"
     GRAY_700 = "#374151"
     GRAY_600 = "#4B5563"
@@ -45,58 +54,74 @@ class Colors:
     GRAY_100 = "#F3F4F6"
     GRAY_50 = "#F9FAFB"
 
-    # Special colors
-    WHITE = "#FFFFFF"
-    BLACK = "#000000"
-    BACKGROUND = "#F9FAFB"  # Light gray background
-    BORDER = "#E5E7EB"  # Border color
-    WARNING_LIGHT = "#FFFBEB"  # Very light amber for warning backgrounds
+
+# ===== INTERNAL HELPERS =====
+
+
+def _is_dark() -> bool:
+    """Read current theme setting. Matches main.py startup logic."""
+    try:
+        from config.config_manager import ConfigManager
+
+        config = ConfigManager()
+        theme: str = str(config.get_setting("Theme", "theme", "dark"))
+        return theme == "dark"
+    except Exception:
+        return True  # Default to dark mode
+
+
+def _get_message_box_stylesheet() -> str:
+    """Stylesheet for message boxes using ThemeManager colors."""
+    is_dark = _is_dark()
+    c = ThemeManager.get_colors(is_dark)
+
+    return f"""
+        QMessageBox {{
+            background-color: {c["bg_primary"]};
+        }}
+        QMessageBox QLabel {{
+            color: {c["text_primary"]};
+            background-color: transparent;
+        }}
+        QMessageBox QPushButton {{
+            background-color: {c["bg_tertiary"]};
+            color: {c["text_primary"]};
+            border: 1px solid {c["border"]};
+            border-radius: 4px;
+            padding: 6px 14px;
+            min-width: 70px;
+        }}
+        QMessageBox QPushButton:hover {{
+            background-color: {c["bg_hover"]};
+            border-color: {c["border_light"]};
+        }}
+        QMessageBox QPushButton:pressed {{
+            background-color: {c["border"]};
+        }}
+        QMessageBox QPushButton:default {{
+            background-color: {c["accent"]};
+            color: white;
+            border-color: {c["accent"]};
+            font-weight: 600;
+        }}
+        QMessageBox QPushButton:default:hover {{
+            background-color: {c["accent_hover"]};
+        }}
+    """
 
 
 # ===== BUTTON STYLES =====
+# These provide accent-colored variants beyond ThemeManager's neutral default.
+# Primary, success, danger use the same colors in both themes.
+# Secondary adapts neutral colors to the active theme.
 
 
-def get_button_style(color="primary"):
-    """
-    Global button style matching dialog default button (same as refresh button).
-
-    Args:
-        color: 'primary' (blue), 'success' (green), 'danger' (red), 'secondary' (gray)
-    """
-    colors = {
-        "primary": (Colors.PRIMARY, Colors.PRIMARY_HOVER),
-        "success": (Colors.SUCCESS, Colors.SUCCESS_HOVER),
-        "danger": (Colors.DANGER, Colors.DANGER_HOVER),
-        "secondary": (Colors.GRAY_200, Colors.GRAY_300),
-    }
-    bg, hover = colors.get(color, colors["primary"])
-    text = Colors.WHITE if color in ["primary", "success", "danger"] else Colors.GRAY_900
-
-    return f"""
-        QPushButton {{
-            background-color: {bg};
-            color: {text};
-            border: none;
-            border-radius: 5px;
-            padding: 8px 16px;
-            font-size: 10pt;
-            min-width: 100px;
-        }}
-        QPushButton:hover {{
-            background-color: {hover};
-        }}
-        QPushButton:disabled {{
-            background-color: #9CA3AF;
-        }}
-    """
-
-
-def get_primary_button_style():
-    """Modern primary button with hover lift effect"""
+def get_primary_button_style() -> str:
+    """Blue accent button — same appearance in both themes."""
     return f"""
         QPushButton {{
             background-color: {Colors.PRIMARY};
-            color: {Colors.WHITE};
+            color: white;
             border: none;
             border-radius: 4px;
             padding: 8px 16px;
@@ -116,12 +141,12 @@ def get_primary_button_style():
     """
 
 
-def get_success_button_style():
-    """Success button (green) with hover effect"""
+def get_success_button_style() -> str:
+    """Green accent button — same appearance in both themes."""
     return f"""
         QPushButton {{
             background-color: {Colors.SUCCESS};
-            color: {Colors.WHITE};
+            color: white;
             border: none;
             border-radius: 4px;
             padding: 8px 16px;
@@ -141,12 +166,12 @@ def get_success_button_style():
     """
 
 
-def get_danger_button_style():
-    """Danger button (red) with hover effect"""
+def get_danger_button_style() -> str:
+    """Red accent button — same appearance in both themes."""
     return f"""
         QPushButton {{
             background-color: {Colors.DANGER};
-            color: {Colors.WHITE};
+            color: white;
             border: none;
             border-radius: 4px;
             padding: 8px 16px;
@@ -166,303 +191,58 @@ def get_danger_button_style():
     """
 
 
-def get_secondary_button_style():
-    """Secondary button (gray outline) with hover effect"""
+def get_secondary_button_style() -> str:
+    """Outlined neutral button — adapts to active theme."""
+    c = ThemeManager.get_colors(_is_dark())
     return f"""
         QPushButton {{
-            background-color: {Colors.WHITE};
-            color: {Colors.GRAY_700};
-            border: 2px solid {Colors.GRAY_300};
+            background-color: {c["bg_primary"]};
+            color: {c["text_primary"]};
+            border: 1px solid {c["border"]};
             border-radius: 4px;
             padding: 8px 16px;
             font-size: 11pt;
             font-weight: 600;
         }}
         QPushButton:hover {{
-            background-color: {Colors.GRAY_50};
-            border-color: {Colors.GRAY_400};
+            background-color: {c["bg_hover"]};
+            border-color: {c["border_light"]};
         }}
         QPushButton:pressed {{
-            background-color: {Colors.GRAY_100};
-            border-color: {Colors.GRAY_500};
+            background-color: {c["border"]};
         }}
         QPushButton:disabled {{
-            background-color: {Colors.GRAY_100};
-            color: {Colors.GRAY_400};
-            border-color: {Colors.GRAY_200};
+            background-color: {c["bg_secondary"]};
+            color: {c["text_disabled"]};
+            border-color: {c["border"]};
         }}
     """
 
 
-def get_icon_button_style():
-    """Small icon button for toolbar actions"""
-    return f"""
-        QPushButton {{
-            background-color: transparent;
-            color: {Colors.GRAY_600};
-            border: none;
-            border-radius: 6px;
-            padding: 8px;
-            font-size: 14pt;
-            min-width: 40px;
-            min-height: 40px;
-        }}
-        QPushButton:hover {{
-            background-color: {Colors.GRAY_100};
-            color: {Colors.GRAY_900};
-        }}
-        QPushButton:pressed {{
-            background-color: {Colors.GRAY_200};
-        }}
-        QPushButton:disabled {{
-            color: {Colors.GRAY_300};
-        }}
+def get_button_style(color: str = "primary") -> str:
     """
+    Unified button style for common variants.
 
-
-# ===== CARD STYLES =====
-
-
-def get_card_style():
-    """Modern card with shadow and rounded corners"""
-    return f"""
-        QFrame {{
-            background-color: {Colors.WHITE};
-            border: 1px solid {Colors.BORDER};
-            border-radius: 12px;
-            padding: 16px;
-        }}
+    Args:
+        color: 'primary' (blue), 'success' (green), 'danger' (red), 'secondary' (neutral)
     """
+    if color == "primary":
+        return get_primary_button_style()
+    if color == "success":
+        return get_success_button_style()
+    if color == "danger":
+        return get_danger_button_style()
+    return get_secondary_button_style()
 
 
-def get_thumbnail_card_style():
-    """Thumbnail card with hover effect"""
-    return f"""
-        QWidget {{
-            background-color: {Colors.WHITE};
-            border: 2px solid {Colors.BORDER};
-            border-radius: 8px;
-            padding: 4px;
-        }}
-        QWidget:hover {{
-            border-color: {Colors.PRIMARY};
-            background-color: {Colors.PRIMARY_PALE};
-        }}
-    """
-
-
-# ===== INPUT STYLES =====
-
-
-def get_input_style():
-    """Modern text input with focus state"""
-    return f"""
-        QLineEdit, QPlainTextEdit, QTextEdit {{
-            background-color: {Colors.WHITE};
-            border: 2px solid {Colors.BORDER};
-            border-radius: 8px;
-            padding: 10px 12px;
-            font-size: 10pt;
-            color: {Colors.GRAY_900};
-        }}
-        QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {{
-            border-color: {Colors.PRIMARY};
-            background-color: {Colors.PRIMARY_PALE};
-        }}
-        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled {{
-            background-color: {Colors.GRAY_100};
-            color: {Colors.GRAY_500};
-            border-color: {Colors.GRAY_200};
-        }}
-    """
-
-
-def get_dropdown_style():
-    """Modern dropdown with hover state"""
-    return f"""
-        QComboBox {{
-            background-color: {Colors.WHITE};
-            border: 2px solid {Colors.BORDER};
-            border-radius: 8px;
-            padding: 10px 12px;
-            font-size: 10pt;
-            color: {Colors.GRAY_900};
-            min-height: 36px;
-        }}
-        QComboBox:hover {{
-            border-color: {Colors.GRAY_400};
-        }}
-        QComboBox:focus {{
-            border-color: {Colors.PRIMARY};
-        }}
-        QComboBox::drop-down {{
-            border: none;
-            padding-right: 8px;
-        }}
-        QComboBox::down-arrow {{
-            image: none;
-            border-left: 5px solid transparent;
-            border-right: 5px solid transparent;
-            border-top: 6px solid {Colors.GRAY_600};
-            margin-right: 6px;
-        }}
-        QComboBox QAbstractItemView {{
-            background-color: {Colors.WHITE};
-            border: 2px solid {Colors.BORDER};
-            border-radius: 8px;
-            selection-background-color: {Colors.PRIMARY_PALE};
-            selection-color: {Colors.PRIMARY};
-            padding: 4px;
-        }}
-    """
-
-
-# ===== LAYOUT STYLES =====
-
-
-def get_header_style():
-    """Modern header bar style"""
-    return f"""
-        QWidget {{
-            background-color: {Colors.WHITE};
-            border-bottom: 2px solid {Colors.BORDER};
-            padding: 16px 24px;
-        }}
-    """
-
-
-def get_status_bar_style():
-    """Status bar at bottom of window"""
-    return f"""
-        QLabel {{
-            background-color: {Colors.GRAY_50};
-            color: {Colors.GRAY_700};
-            padding: 12px 24px;
-            font-size: 10pt;
-            border-top: 1px solid {Colors.BORDER};
-        }}
-    """
-
-
-def get_panel_style():
-    """Side panel style"""
-    return f"""
-        QWidget {{
-            background-color: {Colors.GRAY_50};
-            border-right: 1px solid {Colors.BORDER};
-            padding: 16px;
-        }}
-    """
-
-
-# ===== LABEL STYLES =====
-
-
-def get_heading_style(level=1):
-    """Heading styles (h1, h2, h3)"""
-    sizes = {1: "24pt", 2: "18pt", 3: "14pt"}
-    weights = {1: "bold", 2: "bold", 3: "600"}
-    return f"""
-        QLabel {{
-            font-size: {sizes.get(level, "14pt")};
-            font-weight: {weights.get(level, "600")};
-            color: {Colors.GRAY_900};
-            padding: 8px 0;
-        }}
-    """
-
-
-def get_body_text_style():
-    """Normal body text"""
-    return f"""
-        QLabel {{
-            font-size: 10pt;
-            color: {Colors.GRAY_700};
-            line-height: 1.5;
-        }}
-    """
-
-
-def get_caption_style():
-    """Small caption text"""
-    return f"""
-        QLabel {{
-            font-size: 9pt;
-            color: {Colors.GRAY_500};
-        }}
-    """
-
-
-# ===== BADGE STYLES =====
-
-
-def get_success_badge_style():
-    """Success badge (green pill)"""
-    return f"""
-        QLabel {{
-            background-color: {Colors.SUCCESS_PALE};
-            color: {Colors.SUCCESS};
-            border-radius: 12px;
-            padding: 4px 12px;
-            font-size: 9pt;
-            font-weight: 600;
-        }}
-    """
-
-
-def get_warning_badge_style():
-    """Warning badge (amber pill)"""
-    return f"""
-        QLabel {{
-            background-color: {Colors.WARNING_PALE};
-            color: {Colors.WARNING};
-            border-radius: 12px;
-            padding: 4px 12px;
-            font-size: 9pt;
-            font-weight: 600;
-        }}
-    """
-
-
-def get_danger_badge_style():
-    """Danger badge (red pill)"""
-    return f"""
-        QLabel {{
-            background-color: {Colors.DANGER_PALE};
-            color: {Colors.DANGER};
-            border-radius: 12px;
-            padding: 4px 12px;
-            font-size: 9pt;
-            font-weight: 600;
-        }}
-    """
-
-
-# ===== ANALYSIS STATUS WINDOW STYLES =====
-
-
-def get_metric_card_style():
-    """Metric card for displaying statistics with border and padding"""
-    return f"""
-        QFrame {{
-            background-color: {Colors.WHITE};
-            border: 2px solid {Colors.BORDER};
-            border-radius: 10px;
-            padding: 16px;
-        }}
-        QFrame:hover {{
-            border-color: {Colors.PRIMARY_LIGHT};
-        }}
-    """
+# ===== PROGRESS BAR STYLES =====
 
 
 def get_progress_bar_style(percentage: float) -> str:
     """
-    Progress bar with color coding based on percentage.
-    Green for >80%, yellow for 60-80%, red for <60%.
+    Progress bar with color-coded chunk. Background adapts to active theme.
 
-    Args:
-        percentage: Value from 0-100 to determine color
+    Chunk color: green ≥80%, yellow 60-80%, red <60%.
     """
     if percentage >= 80:
         chunk_color = Colors.SUCCESS
@@ -471,81 +251,31 @@ def get_progress_bar_style(percentage: float) -> str:
     else:
         chunk_color = Colors.DANGER
 
+    c = ThemeManager.get_colors(_is_dark())
     return f"""
         QProgressBar {{
-            background-color: {Colors.GRAY_200};
-            border: none;
+            background-color: {c["bg_tertiary"]};
+            border: 1px solid {c["border"]};
             border-radius: 10px;
             height: 20px;
             text-align: center;
-            color: {Colors.GRAY_900};
+            color: {c["text_primary"]};
             font-weight: 600;
             font-size: 10pt;
         }}
         QProgressBar::chunk {{
             background-color: {chunk_color};
-            border-radius: 10px;
+            border-radius: 9px;
         }}
     """
 
 
-def get_collapsible_section_style():
-    """Header bar style for collapsible sections with expand/collapse functionality"""
-    return f"""
-        QFrame {{
-            background-color: {Colors.GRAY_100};
-            border: 1px solid {Colors.BORDER};
-            border-radius: 8px;
-            padding: 12px 16px;
-        }}
-        QFrame:hover {{
-            background-color: {Colors.GRAY_200};
-        }}
-        QLabel {{
-            background-color: transparent;
-            color: {Colors.GRAY_900};
-            font-size: 11pt;
-            font-weight: 600;
-            border: none;
-        }}
-        QPushButton {{
-            background-color: transparent;
-            border: none;
-            color: {Colors.GRAY_700};
-            font-size: 14pt;
-            padding: 0px;
-            min-width: 24px;
-            max-width: 24px;
-            min-height: 24px;
-            max-height: 24px;
-        }}
-        QPushButton:hover {{
-            color: {Colors.PRIMARY};
-        }}
-    """
-
-
-def get_action_items_panel_style():
-    """Warning panel style for action items with light yellow background"""
-    return f"""
-        QFrame {{
-            background-color: {Colors.WARNING_LIGHT};
-            border: 2px solid {Colors.WARNING};
-            border-radius: 10px;
-            padding: 16px;
-        }}
-        QLabel {{
-            background-color: transparent;
-            color: {Colors.GRAY_900};
-        }}
-    """
-
-
-def get_distribution_bar_style():
-    """Smaller progress bar style for distribution visualizations"""
+def get_distribution_bar_style() -> str:
+    """Compact progress bar for distribution visualizations. Adapts to active theme."""
+    c = ThemeManager.get_colors(_is_dark())
     return f"""
         QProgressBar {{
-            background-color: {Colors.GRAY_200};
+            background-color: {c["bg_tertiary"]};
             border: none;
             border-radius: 6px;
             height: 12px;
@@ -558,282 +288,7 @@ def get_distribution_bar_style():
     """
 
 
-def get_grid_toolbar_style():
-    """Toolbar frame style with panel background and proper spacing"""
-    return f"""
-        QFrame {{
-            background-color: {Colors.GRAY_50};
-            border: 1px solid {Colors.BORDER};
-            border-radius: 8px;
-            padding: 8px 12px;
-        }}
-        QLabel {{
-            background-color: transparent;
-            color: {Colors.GRAY_700};
-            font-size: 10pt;
-            border: none;
-        }}
-    """
-
-
-# ===== MAIN APPLICATION STYLE =====
-
-
-def get_main_app_stylesheet():
-    """
-    Comprehensive application stylesheet.
-    Apply this to QApplication for global styling.
-    """
-    return f"""
-        /* Global defaults */
-        * {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }}
-
-        /* Standardize button sizing across the app */
-        QPushButton {{
-            min-height: 40px;
-            padding: 8px 12px;
-            border-radius: 6px;
-        }}
-        }}
-
-        QMainWindow, QDialog, QWidget {{
-            background-color: {Colors.BACKGROUND};
-            color: {Colors.GRAY_900};
-        }}
-
-        /* Scrollbars */
-        QScrollBar:vertical {{
-            background-color: {Colors.GRAY_100};
-            width: 12px;
-            border-radius: 6px;
-            margin: 2px;
-        }}
-        QScrollBar::handle:vertical {{
-            background-color: {Colors.GRAY_400};
-            border-radius: 6px;
-            min-height: 30px;
-        }}
-        QScrollBar::handle:vertical:hover {{
-            background-color: {Colors.GRAY_500};
-        }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-            height: 0px;
-        }}
-
-        QScrollBar:horizontal {{
-            background-color: {Colors.GRAY_100};
-            height: 12px;
-            border-radius: 6px;
-            margin: 2px;
-        }}
-        QScrollBar::handle:horizontal {{
-            background-color: {Colors.GRAY_400};
-            border-radius: 6px;
-            min-width: 30px;
-        }}
-        QScrollBar::handle:horizontal:hover {{
-            background-color: {Colors.GRAY_500};
-        }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-            width: 0px;
-        }}
-
-        /* Tooltips */
-        QToolTip {{
-            background-color: {Colors.GRAY_900};
-            color: {Colors.WHITE};
-            border: none;
-            border-radius: 6px;
-            padding: 8px 12px;
-            font-size: 9pt;
-        }}
-
-        /* Checkbox */
-        QCheckBox {{
-            spacing: 8px;
-            color: {Colors.GRAY_700};
-        }}
-        QCheckBox::indicator {{
-            width: 20px;
-            height: 20px;
-            border: 2px solid {Colors.BORDER};
-            border-radius: 4px;
-            background-color: {Colors.WHITE};
-        }}
-        QCheckBox::indicator:hover {{
-            border-color: {Colors.PRIMARY};
-        }}
-        QCheckBox::indicator:checked {{
-            background-color: {Colors.PRIMARY};
-            border-color: {Colors.PRIMARY};
-            image: url(none);
-        }}
-
-        /* Spinbox */
-        QSpinBox {{
-            background-color: {Colors.WHITE};
-            border: 2px solid {Colors.BORDER};
-            border-radius: 8px;
-            padding: 8px 12px;
-            font-size: 10pt;
-            color: {Colors.GRAY_900};
-        }}
-        QSpinBox:focus {{
-            border-color: {Colors.PRIMARY};
-        }}
-        QSpinBox::up-button, QSpinBox::down-button {{
-            background-color: {Colors.GRAY_100};
-            border: none;
-            border-radius: 4px;
-            width: 20px;
-        }}
-        QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-            background-color: {Colors.GRAY_200};
-        }}
-
-        /* Progress Bar */
-        QProgressBar {{
-            background-color: {Colors.GRAY_200};
-            border: none;
-            border-radius: 8px;
-            height: 8px;
-            text-align: center;
-        }}
-        QProgressBar::chunk {{
-            background-color: {Colors.PRIMARY};
-            border-radius: 8px;
-        }}
-    """
-
-
-# ===== UTILITY FUNCTIONS =====
-
-
-def apply_shadow_effect(widget):
-    """Apply drop shadow effect to widget (PyQt6)"""
-    from PyQt6.QtGui import QColor
-    from PyQt6.QtWidgets import QGraphicsDropShadowEffect
-
-    shadow = QGraphicsDropShadowEffect()
-    shadow.setBlurRadius(12)
-    shadow.setOffset(0, 2)
-    shadow.setColor(QColor(0, 0, 0, 25))
-    widget.setGraphicsEffect(shadow)
-
-
-def apply_lift_animation(widget):
-    """Apply lift animation on hover (requires custom event handling)"""
-    # Note: This requires implementing enterEvent and leaveEvent in the widget
-    # Example usage in widget class:
-    # def enterEvent(self, event):
-    #     self.setStyleSheet(hover_style)
-    # def leaveEvent(self, event):
-    #     self.setStyleSheet(normal_style)
-    pass
-
-
-def get_themed_message_box_style():
-    """Get stylesheet for themed message boxes based on current theme"""
-    from config.config_manager import ConfigManager
-
-    config = ConfigManager()
-    current_theme = config.get_setting("Theme", "theme", "light")
-
-    if current_theme == "dark":
-        # Dark theme colors
-        bg_color = Colors.GRAY_800
-        text_color = Colors.WHITE
-        button_bg = Colors.PRIMARY
-        button_hover = Colors.PRIMARY_HOVER
-    else:
-        # Light theme colors (default)
-        bg_color = Colors.WHITE
-        text_color = Colors.GRAY_900
-        button_bg = Colors.PRIMARY
-        button_hover = Colors.PRIMARY_HOVER
-
-    return f"""
-        QMessageBox {{
-            background-color: {bg_color};
-        }}
-        QMessageBox QLabel {{
-            color: {text_color};
-            background-color: transparent;
-            font-size: 13px;
-        }}
-        QMessageBox QPushButton {{
-            background-color: {button_bg};
-            color: {Colors.WHITE};
-            border: none;
-            border-radius: 6px;
-            padding: 8px 20px;
-            font-weight: 600;
-            min-width: 80px;
-        }}
-        QMessageBox QPushButton:hover {{
-            background-color: {button_hover};
-        }}
-        QMessageBox QPushButton:pressed {{
-            background-color: {button_hover};
-        }}
-    """
-
-
-def _get_message_box_stylesheet():
-    """
-    Get stylesheet for message boxes using ThemeManager colors.
-
-    This ensures message boxes always use current theme colors.
-    """
-    from config.config_manager import ConfigManager
-    from ui.theme_manager import ThemeManager
-
-    # Get current theme setting (matches main.py logic)
-    try:
-        config = ConfigManager()
-        theme = config.get_setting("Theme", "theme", "dark")
-        is_dark = theme == "dark"
-    except Exception:
-        is_dark = True  # Default to dark mode
-
-    # Use ThemeManager colors for consistency
-    colors = ThemeManager.get_colors(is_dark)
-
-    return f"""
-        QMessageBox {{
-            background-color: {colors["bg_primary"]};
-        }}
-        QMessageBox QLabel {{
-            color: {colors["text_primary"]};
-            background-color: transparent;
-        }}
-        QMessageBox QPushButton {{
-            background-color: {colors["bg_tertiary"]};
-            color: {colors["text_primary"]};
-            border: 1px solid {colors["border"]};
-            border-radius: 4px;
-            padding: 6px 14px;
-            min-width: 70px;
-        }}
-        QMessageBox QPushButton:hover {{
-            background-color: {colors["bg_hover"]};
-            border-color: {colors["border_light"]};
-        }}
-        QMessageBox QPushButton:pressed {{
-            background-color: {colors["border"]};
-        }}
-        QMessageBox QPushButton:default {{
-            background-color: {colors["accent"]};
-            color: white;
-            border-color: {colors["accent"]};
-            font-weight: 600;
-        }}
-        QMessageBox QPushButton:default:hover {{
-            background-color: {colors["accent_hover"]};
-        }}
-    """
+# ===== MESSAGE BOX HELPERS =====
 
 
 def show_message(
@@ -846,83 +301,48 @@ def show_message(
     detailed_text: str | None = None,
 ):
     """
-    Show a themed message box with full customization support.
-
-    This is the universal message box function that all other helpers use.
-    Ensures consistent theming across the entire application.
+    Show a themed message box.
 
     Args:
         parent: Parent widget
         title: Window title
         text: Main message text
         icon: QMessageBox.Icon (Information, Warning, Critical, Question, NoIcon)
-        buttons: Button combination (e.g., Yes | No, Save | Discard | Cancel)
-        default_button: Which button should be default (None = first button)
-        detailed_text: Optional detailed/expandable text
+        buttons: Button combination (default: Ok)
+        default_button: Which button should be default
+        detailed_text: Optional expandable text
 
     Returns:
-        QMessageBox.StandardButton representing which button was clicked
-
-    Examples:
-        # Simple information
-        show_message(self, "Success", "Operation completed",
-                    icon=QMessageBox.Icon.Information)
-
-        # Yes/No question
-        reply = show_message(self, "Confirm", "Are you sure?",
-                           icon=QMessageBox.Icon.Question,
-                           buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                           default_button=QMessageBox.StandardButton.No)
-
-        # Save/Discard/Cancel
-        reply = show_message(self, "Unsaved Changes", "Save before closing?",
-                           buttons=QMessageBox.StandardButton.Save |
-                                   QMessageBox.StandardButton.Discard |
-                                   QMessageBox.StandardButton.Cancel,
-                           default_button=QMessageBox.StandardButton.Save)
+        QMessageBox.StandardButton for which button was clicked
     """
     from PyQt6.QtWidgets import QMessageBox
 
     msg_box = QMessageBox(parent)
 
-    # Set icon
     if icon is not None:
         msg_box.setIcon(icon)
 
-    # Set text
     msg_box.setWindowTitle(title)
     msg_box.setText(text)
 
-    # Set detailed text if provided
     if detailed_text:
         msg_box.setDetailedText(detailed_text)
 
-    # Set buttons
     if buttons is not None:
         msg_box.setStandardButtons(buttons)
     else:
         msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    # Set default button
     if default_button is not None:
         msg_box.setDefaultButton(default_button)
 
-    # Apply theme
     msg_box.setStyleSheet(_get_message_box_stylesheet())
 
     return msg_box.exec()
 
 
 def show_information(parent, title: str, text: str, detailed_text: str | None = None):
-    """
-    Show themed information message box (blue 'i' icon, OK button).
-
-    Args:
-        parent: Parent widget
-        title: Window title
-        text: Main message text
-        detailed_text: Optional detailed/expandable text
-    """
+    """Show themed information message box (Ok button)."""
     from PyQt6.QtWidgets import QMessageBox
 
     show_message(
@@ -931,30 +351,14 @@ def show_information(parent, title: str, text: str, detailed_text: str | None = 
 
 
 def show_warning(parent, title: str, text: str, detailed_text: str | None = None):
-    """
-    Show themed warning message box (yellow warning icon, OK button).
-
-    Args:
-        parent: Parent widget
-        title: Window title
-        text: Main message text
-        detailed_text: Optional detailed/expandable text
-    """
+    """Show themed warning message box (Ok button)."""
     from PyQt6.QtWidgets import QMessageBox
 
     show_message(parent, title, text, icon=QMessageBox.Icon.Warning, detailed_text=detailed_text)
 
 
 def show_critical(parent, title: str, text: str, detailed_text: str | None = None):
-    """
-    Show themed critical/error message box (red X icon, OK button).
-
-    Args:
-        parent: Parent widget
-        title: Window title
-        text: Main message text
-        detailed_text: Optional detailed/expandable text
-    """
+    """Show themed critical/error message box (Ok button)."""
     from PyQt6.QtWidgets import QMessageBox
 
     show_message(parent, title, text, icon=QMessageBox.Icon.Critical, detailed_text=detailed_text)
@@ -964,32 +368,8 @@ def show_question(parent, title: str, text: str, buttons=None, default_button=No
     """
     Show themed question message box with customizable buttons.
 
-    Args:
-        parent: Parent widget
-        title: Window title
-        text: Main message text
-        buttons: Button combination (default: Yes | No)
-        default_button: Which button should be default (default: No for safety)
-
     Returns:
-        QMessageBox.StandardButton representing which button was clicked
-
-    Examples:
-        # Simple Yes/No with No as default
-        reply = show_question(self, "Confirm Delete", "Delete this file?")
-        if reply == QMessageBox.StandardButton.Yes:
-            delete_file()
-
-        # Yes/No with Yes as default
-        reply = show_question(self, "Save Changes", "Save before closing?",
-                             default_button=QMessageBox.StandardButton.Yes)
-
-        # Save/Discard/Cancel
-        reply = show_question(self, "Unsaved Changes", "You have unsaved changes.",
-                             buttons=QMessageBox.StandardButton.Save |
-                                     QMessageBox.StandardButton.Discard |
-                                     QMessageBox.StandardButton.Cancel,
-                             default_button=QMessageBox.StandardButton.Save)
+        QMessageBox.StandardButton for which button was clicked
     """
     from PyQt6.QtWidgets import QMessageBox
 
@@ -997,7 +377,6 @@ def show_question(parent, title: str, text: str, buttons=None, default_button=No
         buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
 
     if default_button is None:
-        # Safe default: No for Yes/No questions
         default_button = QMessageBox.StandardButton.No
 
     return show_message(
@@ -1017,24 +396,12 @@ def show_confirm(
     confirm_text: str = "Yes",
     cancel_text: str = "No",
     default_cancel: bool = True,
-):
+) -> bool:
     """
-    Show a simple confirmation dialog (convenience wrapper for Yes/No questions).
-
-    Args:
-        parent: Parent widget
-        title: Window title
-        text: Main message text
-        confirm_text: Text for confirmation button (default: "Yes")
-        cancel_text: Text for cancel button (default: "No")
-        default_cancel: If True, cancel is default (safer); if False, confirm is default
+    Show a simple confirmation dialog.
 
     Returns:
-        bool: True if user confirmed, False if cancelled
-
-    Example:
-        if show_confirm(self, "Delete File", "Are you sure you want to delete this file?"):
-            delete_file()
+        True if user confirmed, False if cancelled
     """
     from PyQt6.QtWidgets import QMessageBox
 
@@ -1042,4 +409,4 @@ def show_confirm(
     default = QMessageBox.StandardButton.No if default_cancel else QMessageBox.StandardButton.Yes
 
     reply = show_question(parent, title, text, buttons=buttons, default_button=default)
-    return reply == QMessageBox.StandardButton.Yes
+    return bool(reply == QMessageBox.StandardButton.Yes)

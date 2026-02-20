@@ -397,9 +397,13 @@ class AnalysisStatusWindow(QDialog):
                 font-weight: 600;
                 padding: 6px 16px;
                 border: none;
+                border-radius: 4px;
             }
             QPushButton:hover {
                 background-color: #059669;
+            }
+            QPushButton:pressed {
+                background-color: #047857;
             }
         """)
         self.start_analysis_btn.clicked.connect(self._on_toolbar_start_analysis)
@@ -417,8 +421,12 @@ class AnalysisStatusWindow(QDialog):
                 font-weight: 600;
                 padding: 6px 16px;
                 border: none;
+                border-radius: 4px;
             }}
             QPushButton:hover {{
+                background-color: {stop_hover};
+            }}
+            QPushButton:pressed {{
                 background-color: {stop_hover};
             }}
         """)
@@ -439,8 +447,12 @@ class AnalysisStatusWindow(QDialog):
                 font-weight: 600;
                 padding: 6px 16px;
                 border: none;
+                border-radius: 4px;
             }}
             QPushButton:hover {{
+                background-color: {abort_hover};
+            }}
+            QPushButton:pressed {{
                 background-color: {abort_hover};
             }}
         """)
