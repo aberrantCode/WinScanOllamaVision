@@ -192,6 +192,20 @@ def test_migration_16_adds_is_blank_column(temp_db):
     """
     )
 
+    # Create image_files table (required by migrations that run before 16)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS image_files (
+            id INTEGER PRIMARY KEY,
+            file_path TEXT NOT NULL UNIQUE,
+            file_hash TEXT,
+            directory_path TEXT,
+            filename TEXT,
+            status TEXT DEFAULT 'registered'
+        )
+    """
+    )
+
     # Create metadata table without is_blank
     cursor.execute(
         """
@@ -239,6 +253,20 @@ def test_migration_16_skips_if_column_exists(temp_db):
             version INTEGER PRIMARY KEY,
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             description TEXT
+        )
+    """
+    )
+
+    # Create image_files table (required by migrations that run before 16)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS image_files (
+            id INTEGER PRIMARY KEY,
+            file_path TEXT NOT NULL UNIQUE,
+            file_hash TEXT,
+            directory_path TEXT,
+            filename TEXT,
+            status TEXT DEFAULT 'registered'
         )
     """
     )

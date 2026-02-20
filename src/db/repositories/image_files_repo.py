@@ -122,6 +122,7 @@ class ImageFilesRepository:
         Returns:
             List of image file dicts
         """
+        directory_path = os.path.normpath(directory_path)
         return self.conn.fetch_all_dicts(
             "SELECT * FROM image_files WHERE directory_path = ? ORDER BY filename",
             (directory_path,),
@@ -218,6 +219,7 @@ class ImageFilesRepository:
             file_path: Path to image file
             file_hash: New SHA-256 hash
         """
+        file_path = os.path.normpath(file_path)
         self.conn.execute(
             """
             UPDATE image_files
@@ -244,6 +246,7 @@ class ImageFilesRepository:
         Args:
             file_path: Path to image file
         """
+        file_path = os.path.normpath(file_path)
         self.conn.execute(
             """
             UPDATE image_files
@@ -332,6 +335,7 @@ class ImageFilesRepository:
         if not file_paths:
             return 0
 
+        file_paths = [os.path.normpath(p) for p in file_paths]
         placeholders = ",".join("?" * len(file_paths))
         # Column names from internal code, values parameterized - safe from injection
         query = f"""
@@ -460,7 +464,7 @@ class ImageFilesRepository:
 
         if directory_filter:
             query += " AND img.directory_path = ?"
-            params.append(directory_filter)
+            params.append(os.path.normpath(directory_filter))
 
         if provider_filter:
             query += " AND ar.provider_name = ?"
@@ -488,6 +492,7 @@ class ImageFilesRepository:
         if not file_paths:
             return {}
 
+        file_paths = [os.path.normpath(p) for p in file_paths]
         # Create placeholders for IN clause
         placeholders = ",".join("?" * len(file_paths))
 

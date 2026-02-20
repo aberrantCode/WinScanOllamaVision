@@ -15,6 +15,7 @@ class TestImageStatus:
             "PENDING",
             "ANALYZING",
             "ANALYZED",
+            "ERROR",
             "BUNDLED",
             "DELETED",
         }
@@ -76,11 +77,12 @@ class TestImageStatus:
     def test_status_iteration(self):
         """Test that all statuses can be iterated."""
         statuses = list(ImageStatus)
-        assert len(statuses) == 6
+        assert len(statuses) == 7
         assert ImageStatus.REGISTERED in statuses
         assert ImageStatus.PENDING in statuses
         assert ImageStatus.ANALYZING in statuses
         assert ImageStatus.ANALYZED in statuses
+        assert ImageStatus.ERROR in statuses
         assert ImageStatus.BUNDLED in statuses
         assert ImageStatus.DELETED in statuses
 

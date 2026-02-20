@@ -2,6 +2,12 @@
 Document Pipeline Window — unified Import → Analyze → Bundle → Export workflow.
 """
 
+import ctypes
+import os
+import platform
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -28,6 +34,38 @@ from ui.pipeline.stages import (
 )
 from ui.styles import Colors
 from ui.theme_manager import ThemeManager
+
+# ---------------------------------------------------------------------------
+# Windows DWM title-bar colour helpers
+# ---------------------------------------------------------------------------
+
+# Available on Windows 10 1809+ (dark/light toggle only)
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+# Available on Windows 11 22000+ (arbitrary COLORREF)
+_DWMWA_CAPTION_COLOR = 35
+_DWMWA_TEXT_COLOR = 36
+_DWMWA_BORDER_COLOR = 34
+
+
+def _hex_to_colorref(color: str) -> int:
+    """Convert a ``#RRGGBB`` hex string to a Windows COLORREF (``0x00BBGGRR``)."""
+    c = color.lstrip("#")
+    r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    return (b << 16) | (g << 8) | r
+
+
+def _dwm_set_attr(hwnd: int, attr: int, value: int) -> bool:
+    """Call DwmSetWindowAttribute and return True on success."""
+    try:
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
+            hwnd,
+            attr,
+            ctypes.byref(ctypes.c_int(value)),
+            ctypes.sizeof(ctypes.c_int),
+        )
+        return True
+    except Exception:
+        return False
 
 
 class DocumentPipelineWindow(QMainWindow):
@@ -66,7 +104,17 @@ class DocumentPipelineWindow(QMainWindow):
         return ThemeManager.get_colors(self.dark_mode)
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("Document Pipeline")
+        app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
+        self.setWindowTitle(f"{app_name} — Document Pipeline")
+
+        # Resolve assets/ relative to the project root (this file: src/ui/pipeline/)
+        _project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        )
+        icon_path = os.path.join(_project_root, "assets", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         self.resize(1200, 800)
         self.setMinimumSize(900, 640)
 
@@ -132,6 +180,14 @@ class DocumentPipelineWindow(QMainWindow):
         footer_layout.setContentsMargins(16, 6, 16, 8)
         footer_layout.setSpacing(8)
 
+        self._settings_btn = QPushButton("⚙  Settings")
+        self._settings_btn.setFixedHeight(30)
+        self._settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._settings_btn.clicked.connect(self._show_settings)
+        footer_layout.addWidget(self._settings_btn)
+
+        footer_layout.addSpacing(8)
+
         self._back_btn = QPushButton("← Back")
         self._back_btn.setFixedHeight(30)
         self._back_btn.clicked.connect(self._on_back_clicked)
@@ -160,6 +216,41 @@ class DocumentPipelineWindow(QMainWindow):
         self._header_sep.setStyleSheet(f"background-color: {sep_color}; border: none;")
         self._footer_sep.setStyleSheet(f"background-color: {sep_color}; border: none;")
         self._footer_bar.setStyleSheet(f"background-color: {header_bg};")
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Apply title-bar colour after the native window handle is guaranteed to exist.
+        self._style_title_bar()
+
+    def _style_title_bar(self) -> None:
+        """
+        Colour the OS-native title bar to match the current dark/light theme.
+
+        On Windows 11 (build 22000+) this sets an exact COLORREF via
+        ``DWMWA_CAPTION_COLOR`` plus matching text and border colours.
+        On Windows 10 it falls back to toggling the immersive-dark-mode flag.
+        On all other platforms this is a no-op.
+        """
+        if platform.system() != "Windows":
+            return
+        try:
+            hwnd = int(self.winId())
+            if self.dark_mode:
+                caption = _hex_to_colorref("#111C2E")
+                text = _hex_to_colorref("#E8EDF2")
+            else:
+                caption = _hex_to_colorref("#F0F2F5")
+                text = _hex_to_colorref("#1A1A2E")
+
+            # Windows 11: arbitrary caption colour + matching text + border
+            if _dwm_set_attr(hwnd, _DWMWA_CAPTION_COLOR, caption):
+                _dwm_set_attr(hwnd, _DWMWA_TEXT_COLOR, text)
+                _dwm_set_attr(hwnd, _DWMWA_BORDER_COLOR, caption)
+            else:
+                # Windows 10 fallback: toggle system dark/light title bar
+                _dwm_set_attr(hwnd, _DWMWA_USE_IMMERSIVE_DARK_MODE, int(self.dark_mode))
+        except Exception:
+            pass
 
     def _go_to_stage(self, stage: int) -> None:
         stage = max(STAGE_IMPORT, min(STAGE_EXPORT, stage))
@@ -209,6 +300,17 @@ class DocumentPipelineWindow(QMainWindow):
 
     def _on_bundles_completed(self, stats: dict) -> None:
         self.export_panel.update_stats(stats)
+
+    def _show_settings(self) -> None:
+        """Open the application settings dialog."""
+        from ui.settings_window_enhanced import EnhancedSettingsWindow
+
+        settings = EnhancedSettingsWindow(
+            parent=self,
+            analysis_db=self.analysis_db,
+            metadata_db=self.metadata_db,
+        )
+        settings.show()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if hasattr(self, "analyze_panel"):

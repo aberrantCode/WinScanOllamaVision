@@ -22,6 +22,7 @@ from db.repositories import (
     RotationRepository,
 )
 from db.schema import create_all_tables
+from services.metadata_normalizer import MetadataNormalizer
 
 
 class AnalysisDB:
@@ -98,11 +99,13 @@ class AnalysisDB:
             model_options=None,
         )
 
-        # Save normalized metadata to metadata table
+        # Normalize and save metadata to metadata table
+        normalizer = MetadataNormalizer()
+        normalized_metadata = normalizer.normalize(analysis_data)
         self._metadata.create_from_analysis(
             image_file_id=image_file_id,
             analysis_result_id=analysis_id,
-            normalized_metadata=analysis_data,
+            normalized_metadata=normalized_metadata,
             output_filename=analysis_data.get("output_filename"),
             document_category=analysis_data.get("document_category"),
         )
@@ -121,7 +124,7 @@ class AnalysisDB:
         """Retrieve analysis results with normalized metadata for a file."""
         # Get all data in one query using the efficient join
         results = self._image_files.get_batch_with_analysis([file_path])
-        return results.get(file_path)
+        return results.get(os.path.normpath(file_path))
 
     def update_analysis_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
         """Update metadata fields for an existing analysis."""

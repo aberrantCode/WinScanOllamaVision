@@ -370,7 +370,7 @@ class TestFullWorkflow:
         assert analysis is not None
         assert analysis["file_hash"] == file_hash
         assert metadata_result is not None
-        assert metadata_result["company"] == "TestCo"
+        assert metadata_result["company"] == "Testco"
 
     @patch("services.analysis_service.get_logger")
     @patch("services.analysis_service.ProviderFactory")

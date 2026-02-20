@@ -1339,25 +1339,24 @@ class EnhancedSettingsWindow(QDialog):
             raise
 
     def showEvent(self, event):  # noqa: N802
-        """Override showEvent to load models in background thread."""
+        """Override showEvent to populate model combos from cache on first show."""
         super().showEvent(event)
 
         # Only do this on first show
         if not hasattr(self, "_first_show_done"):
             self._first_show_done = True
-            self._get_logger().debug("showEvent: First show - starting background model loading")
+            self._get_logger().debug("showEvent: First show - populating models from cache")
 
-            # Keep tracking disabled
-            self._tracking_enabled = False
+            # Populate model combos from cache or hardcoded defaults (no network calls)
+            self._load_ollama_models(cache_only=True)
+            self._load_claude_models(cache_only=True)
+            self._load_gemini_models(cache_only=True)
 
-            # Show loading overlay
-            self._show_loading_overlay()
-
-            # Create and start model loading worker
-            self.model_loading_worker = ModelLoadingWorker(self)
-            self.model_loading_worker.finished.connect(self._on_models_loaded)
-            self.model_loading_worker.error.connect(self._on_model_loading_error)
-            self.model_loading_worker.start()
+            # Capture original values and enable change tracking
+            self._capture_original_values()
+            self._tracking_enabled = True
+            if self.save_button:
+                self._update_save_button_style(False)
 
     def _on_models_loaded(self):
         """Handle model loading completion (runs on main thread)"""
@@ -1708,11 +1707,6 @@ class EnhancedSettingsWindow(QDialog):
         )
         layout.addWidget(refresh_claude_btn, 0, 2)
 
-        # Load Claude models asynchronously
-        from PyQt6.QtCore import QTimer
-
-        QTimer.singleShot(0, self._load_claude_models)
-
         layout.addWidget(QLabel("Command Template:"), 1, 0, Qt.AlignmentFlag.AlignTop)
         self.claude_command_edit = QPlainTextEdit()
         self.claude_command_edit.setMaximumHeight(60)
@@ -1783,11 +1777,6 @@ class EnhancedSettingsWindow(QDialog):
             "Search web for latest Gemini vision models (bypasses 24-hour cache)"
         )
         layout.addWidget(refresh_gemini_btn, 0, 2)
-
-        # Load Gemini models asynchronously
-        from PyQt6.QtCore import QTimer
-
-        QTimer.singleShot(0, self._load_gemini_models)
 
         layout.addWidget(QLabel("Command Template:"), 1, 0, Qt.AlignmentFlag.AlignTop)
         self.gemini_command_edit = QPlainTextEdit()
@@ -2446,11 +2435,12 @@ If 5 pages provided and pages 3 and 5 don't belong:
         if directory:
             self.scan_folder_edit.setText(directory)
 
-    def _load_ollama_models(self, force_refresh: bool = False):
+    def _load_ollama_models(self, force_refresh: bool = False, cache_only: bool = False):
         """Load available Ollama vision models with download status and caching
 
         Args:
             force_refresh: If True, bypass cache and check download status fresh
+            cache_only: If True, skip network calls — use cached or default list only
         """
         import json
         from datetime import datetime
@@ -2507,25 +2497,31 @@ If 5 pages provided and pages 3 and 5 don't belong:
 
         # Refresh download status if not loaded from cache
         if not downloaded_model_names or force_refresh:
-            try:
-                local_models = self.ollama_service.list_models()
-                downloaded_model_names = {
-                    (m.get("name") or m.get("model")).split(":")[0] for m in local_models
-                }
+            if cache_only:
+                # Skip network call — populate without download status markers
+                pass
+            else:
+                try:
+                    local_models = self.ollama_service.list_models()
+                    downloaded_model_names = {
+                        (m.get("name") or m.get("model")).split(":")[0] for m in local_models
+                    }
 
-                # Cache the download status
-                timestamp = datetime.now().isoformat()
-                self.config_manager.set_setting(
-                    "ModelCache",
-                    "ollama_downloaded_cache",
-                    json.dumps(list(downloaded_model_names)),
-                )
-                self.config_manager.set_setting("ModelCache", "ollama_models_timestamp", timestamp)
-                self._get_logger().debug(f"Checked Ollama download status at {timestamp}")
+                    # Cache the download status
+                    timestamp = datetime.now().isoformat()
+                    self.config_manager.set_setting(
+                        "ModelCache",
+                        "ollama_downloaded_cache",
+                        json.dumps(list(downloaded_model_names)),
+                    )
+                    self.config_manager.set_setting(
+                        "ModelCache", "ollama_models_timestamp", timestamp
+                    )
+                    self._get_logger().debug(f"Checked Ollama download status at {timestamp}")
 
-            except Exception as e:
-                show_warning(self, "Error", f"Failed to load Ollama models: {e}")
-                return
+                except Exception as e:
+                    show_warning(self, "Error", f"Failed to load Ollama models: {e}")
+                    return
 
         # Add models with download status
         for model in available_vision_models:
@@ -2571,11 +2567,12 @@ If 5 pages provided and pages 3 and 5 don't belong:
                 self.ollama_model_combo.addItem(display_text, current_model)
                 self.ollama_model_combo.setCurrentIndex(self.ollama_model_combo.count() - 1)
 
-    def _load_claude_models(self, force_refresh: bool = False):
+    def _load_claude_models(self, force_refresh: bool = False, cache_only: bool = False):
         """Load available Claude vision models with caching
 
         Args:
             force_refresh: If True, bypass cache and fetch fresh from web
+            cache_only: If True, skip network calls — use cached or hardcoded defaults only
         """
         self.claude_model_combo.clear()
 
@@ -2584,6 +2581,15 @@ If 5 pages provided and pages 3 and 5 don't belong:
             cached_models = self._get_cached_models("claude")
             if cached_models:
                 claude_vision_models = cached_models
+            elif cache_only:
+                # No cache, no network call — use hardcoded curated defaults
+                claude_vision_models = [
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-5-haiku-20241022",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229",
+                    "claude-3-haiku-20240307",
+                ]
             else:
                 # Cache miss or expired - fetch from web
                 claude_vision_models = self._fetch_claude_models_from_web()
@@ -2822,11 +2828,12 @@ Return ONLY the JSON array, no other text."""
             "claude-3-haiku-20240307",
         ]
 
-    def _load_gemini_models(self, force_refresh: bool = False):
+    def _load_gemini_models(self, force_refresh: bool = False, cache_only: bool = False):
         """Load available Gemini vision models with caching
 
         Args:
             force_refresh: If True, bypass cache and fetch fresh from web
+            cache_only: If True, skip network calls — use cached or hardcoded defaults only
         """
         self.gemini_model_combo.clear()
 
@@ -2835,6 +2842,16 @@ Return ONLY the JSON array, no other text."""
             cached_models = self._get_cached_models("gemini")
             if cached_models:
                 gemini_vision_models = cached_models
+            elif cache_only:
+                # No cache, no network call — use hardcoded curated defaults
+                gemini_vision_models = [
+                    "gemini-2.0-flash-exp",
+                    "gemini-1.5-pro",
+                    "gemini-1.5-pro-002",
+                    "gemini-1.5-flash",
+                    "gemini-1.5-flash-002",
+                    "gemini-1.5-flash-8b",
+                ]
             else:
                 # Cache miss or expired - fetch from web
                 gemini_vision_models = self._fetch_gemini_models_from_web()
