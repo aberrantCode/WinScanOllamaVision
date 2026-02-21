@@ -646,7 +646,6 @@ class AnalysisStatusWindow(QDialog):
         # Left: Action Items (collapsed by default)
         action_callbacks = {
             "start_analysis": self._on_start_analysis,
-            "review_bundles": self._on_review_bundles,
             "view_errors": self._on_view_errors,
             "create_bundles": self._on_create_bundles,
         }
@@ -1356,11 +1355,6 @@ class AnalysisStatusWindow(QDialog):
                 True,  # Always show Start Analysis
             ),
             (
-                stats["pending_bundles"],
-                f"⚠️ {stats['pending_bundles']} bundles suggested for review",
-                stats["pending_bundles"] > 0,  # Only show if bundles exist
-            ),
-            (
                 stats["failed_files"],
                 f"❌ {stats['failed_files']} files with analysis errors",
                 stats["failed_files"] > 0,  # Only show if errors exist
@@ -1475,35 +1469,6 @@ class AnalysisStatusWindow(QDialog):
 
         # Start analysis in background thread
         self._start_analysis_internal()
-
-    def _on_review_bundles(self):
-        """Open bundle review window with suggested bundles"""
-        from PyQt6.QtWidgets import QMessageBox
-
-        # Get suggested bundles
-        bundles = self.analysis_db.get_bundle_suggestions(status_filter="suggested")
-
-        if not bundles:
-            QMessageBox.information(
-                self,
-                "No Bundles",
-                "No bundle suggestions found.\n\n"
-                "Click 'Create Bundles' to generate suggestions first.",
-            )
-            return
-
-        # Import and open ConvertImagesWindow
-        try:
-            from ui.gui import ConvertImagesWindow
-
-            bundle_window = ConvertImagesWindow(
-                parent=self,
-                config_manager=self.config_manager,
-                analysis_db=self.analysis_db,
-            )
-            bundle_window.show()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to open bundle window: {str(e)}")
 
     def _on_view_errors(self):
         """Switch to File Grid tab and filter to errors"""

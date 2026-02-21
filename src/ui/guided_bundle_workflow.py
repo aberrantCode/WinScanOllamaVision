@@ -2387,6 +2387,12 @@ class GuidedBundleWorkflow(QDialog):
                 )
                 return os.path.join(source_dir, subdirectory)
 
+        elif strategy == "beside_source":
+            # Use source file directory directly (no subfolder)
+            if bundle.get("file_paths"):
+                first_file = bundle["file_paths"][0]
+                return cast(str, os.path.dirname(first_file))
+
         # Default fallback: Documents/WinScanLLM/PDFs
         default_output = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         return default_output

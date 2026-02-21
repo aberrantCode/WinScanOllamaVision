@@ -75,7 +75,20 @@ class ExportPanel(QWidget):
 
         output_dir = ""
         with contextlib.suppress(Exception):
-            output_dir = str(self.config_manager.get_setting("OutputDirectory", "path", ""))
+            strategy = self.config_manager.get_setting(
+                "OutputDirectory", "strategy", "same_as_source"
+            )
+            if strategy == "global_custom":
+                output_dir = str(
+                    self.config_manager.get_setting("OutputDirectory", "global_custom_path", "")
+                )
+            elif strategy == "same_as_source":
+                name = self.config_manager.get_setting(
+                    "OutputDirectory", "subdirectory_name", "PDFs"
+                )
+                output_dir = f"<source dir>/{name}"
+            elif strategy == "beside_source":
+                output_dir = "Beside source files"
 
         lines = [
             f"PDFs accepted: {accepted}",
@@ -89,10 +102,26 @@ class ExportPanel(QWidget):
 
     def _open_output_dir(self) -> None:
         try:
-            output_dir = str(self.config_manager.get_setting("OutputDirectory", "path", ""))
-            if output_dir and os.path.isdir(output_dir):
-                os.startfile(output_dir)
+            strategy = self.config_manager.get_setting(
+                "OutputDirectory", "strategy", "same_as_source"
+            )
+            if strategy == "global_custom":
+                output_dir = str(
+                    self.config_manager.get_setting("OutputDirectory", "global_custom_path", "")
+                )
+                if output_dir and os.path.isdir(output_dir):
+                    os.startfile(output_dir)
+                else:
+                    show_warning(
+                        self,
+                        "Directory Not Found",
+                        "Output directory is not configured or does not exist.",
+                    )
             else:
-                show_warning(self, "Directory Not Found", "Output directory is not configured.")
+                show_warning(
+                    self,
+                    "Output Location Varies",
+                    "Output location depends on each bundle's source directory.",
+                )
         except Exception as e:
             show_warning(self, "Error", f"Could not open directory:\n{e}")

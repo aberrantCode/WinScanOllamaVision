@@ -165,30 +165,9 @@ class TestScanAllDirectories:
             # Assert
             assert result["total_files"] == 0
 
-    @patch("os.path.exists")
-    def test_scan_falls_back_to_scan_folder_when_no_active_dirs(
-        self, mock_exists, service, mock_config, mock_analysis_db
-    ):
+    def test_scan_returns_no_directories_when_none_configured(self, service, mock_analysis_db):
         # Arrange
-        mock_exists.return_value = True
         mock_analysis_db.get_active_directories.return_value = []
-        mock_config.get_setting.return_value = "C:\\test\\scan"
-
-        with patch("glob.glob", return_value=[]):
-            # Act
-            service.scan_all_directories()
-
-            # Assert
-            mock_config.get_setting.assert_called_with("DocumentProcessing", "scan_folder")
-
-    @patch("os.path.exists")
-    def test_scan_returns_no_directories_when_none_configured(
-        self, mock_exists, service, mock_config, mock_analysis_db
-    ):
-        # Arrange
-        mock_exists.return_value = False
-        mock_analysis_db.get_active_directories.return_value = []
-        mock_config.get_setting.return_value = None
 
         # Act
         result = service.scan_all_directories()

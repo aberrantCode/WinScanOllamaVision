@@ -7,7 +7,7 @@ Tests file operations, image conversion, PDF creation, and file management.
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,10 +21,6 @@ class TestFileServiceInitialization:
     def mock_config_manager(self):
         """Create mock ConfigManager"""
         config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
         return config
 
     def test_init_stores_config_manager(self, mock_config_manager):
@@ -34,68 +30,20 @@ class TestFileServiceInitialization:
         # Assert
         assert service.config_manager is mock_config_manager
 
-    def test_init_sets_scan_folder(self, mock_config_manager):
-        # Act
-        service = FileService(mock_config_manager)
-
-        # Assert
-        assert service.scan_folder == "C:\\test\\scan"
-
-    def test_init_sets_organized_folder(self, mock_config_manager):
-        # Act
-        service = FileService(mock_config_manager)
-
-        # Assert
-        expected_path = os.path.join("C:\\test\\scan", "organized")
-        assert service.organized_folder == expected_path
-
-    @patch("os.makedirs")
-    def test_init_creates_scan_folder_if_missing(self, mock_makedirs, mock_config_manager):
-        # Act
-        FileService(mock_config_manager)
-
-        # Assert
-        mock_makedirs.assert_any_call("C:\\test\\scan", exist_ok=True)
-
-    @patch("os.makedirs")
-    def test_init_creates_organized_folder_if_missing(self, mock_makedirs, mock_config_manager):
-        # Act
-        FileService(mock_config_manager)
-
-        # Assert
-        expected_path = os.path.join("C:\\test\\scan", "organized")
-        mock_makedirs.assert_any_call(expected_path, exist_ok=True)
-
-    @patch("os.makedirs")
-    def test_init_always_calls_makedirs_with_exist_ok(self, mock_makedirs, mock_config_manager):
-        # Act
-        FileService(mock_config_manager)
-
-        # Assert - both folders should be created with exist_ok=True
-        assert mock_makedirs.call_count == 2
-        calls = [
-            call("C:\\test\\scan", exist_ok=True),
-            call(os.path.join("C:\\test\\scan", "organized"), exist_ok=True),
-        ]
-        mock_makedirs.assert_has_calls(calls, any_order=False)
-
 
 class TestGetImageFiles:
     """Tests for _get_image_files method"""
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
-            return FileService(mock_config_manager)
+        s = FileService(mock_config_manager)
+        s.scan_folder = "C:\\test\\scan"
+        s.organized_folder = os.path.join("C:\\test\\scan", "organized")
+        return s
 
     @patch("os.listdir")
     @patch("os.path.isfile")
@@ -185,17 +133,11 @@ class TestConvertTiffToPng:
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
-            return FileService(mock_config_manager)
+        return FileService(mock_config_manager)
 
     @patch("os.remove")
     @patch("PIL.Image.open")
@@ -266,16 +208,11 @@ class TestGroupFilesByTimestamp:
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
+        with patch("os.path.exists", return_value=True):
             return FileService(mock_config_manager)
 
     @pytest.fixture
@@ -375,17 +312,14 @@ class TestCreateSearchablePdf:
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
-            return FileService(mock_config_manager)
+        s = FileService(mock_config_manager)
+        s.scan_folder = "C:\\test\\scan"
+        s.organized_folder = os.path.join("C:\\test\\scan", "organized")
+        return s
 
     @patch("fitz.open")
     @patch("PIL.Image.open")
@@ -712,17 +646,11 @@ class TestDeleteFiles:
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
-            return FileService(mock_config_manager)
+        return FileService(mock_config_manager)
 
     @patch("os.remove")
     def test_delete_files_removes_all_files(self, mock_remove, service):
@@ -776,17 +704,14 @@ class TestMovePdfToOrganized:
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
-            return FileService(mock_config_manager)
+        s = FileService(mock_config_manager)
+        s.scan_folder = "C:\\test\\scan"
+        s.organized_folder = os.path.join("C:\\test\\scan", "organized")
+        return s
 
     @patch("shutil.move")
     def test_move_pdf_to_organized_moves_file(self, mock_move, service):
@@ -845,17 +770,14 @@ class TestEdgeCasesAndErrorHandling:
 
     @pytest.fixture
     def mock_config_manager(self):
-        config = MagicMock()
-        config.get_setting.side_effect = lambda section, key: {
-            ("DocumentProcessing", "scan_folder"): "C:\\test\\scan",
-            ("DocumentProcessing", "organized_subfolder"): "organized",
-        }.get((section, key), "default_value")
-        return config
+        return MagicMock()
 
     @pytest.fixture
     def service(self, mock_config_manager):
-        with patch("os.path.exists", return_value=True), patch("os.makedirs"):
-            return FileService(mock_config_manager)
+        s = FileService(mock_config_manager)
+        s.scan_folder = "C:\\test\\scan"
+        s.organized_folder = os.path.join("C:\\test\\scan", "organized")
+        return s
 
     @patch("os.remove")
     @patch("PIL.Image.open")

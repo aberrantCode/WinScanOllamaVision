@@ -116,7 +116,6 @@ class ConfigManager:
         # Default Document Processing settings
         if "DocumentProcessing" not in self.config:
             self.config["DocumentProcessing"] = {
-                "scan_folder": os.path.join(os.path.expanduser("~"), "Pictures", "Scans"),
                 "organized_subfolder": "ORGANIZED",
                 "title_keywords": "Invoice, Statement, Bill, Receipt, Report, Contract, Agreement",
                 "auto_approval": "false",
@@ -124,9 +123,8 @@ class ConfigManager:
 
         # Source directories configuration
         if "SourceDirectories" not in self.config:
-            default_scan_folder = os.path.join(os.path.expanduser("~"), "Pictures", "Scans")
             self.config["SourceDirectories"] = {
-                "directories": json.dumps([default_scan_folder]),
+                "directories": json.dumps([]),
                 "scan_on_startup": "true",
             }
 

@@ -258,11 +258,6 @@ def create_action_items_widget(theme_colors, action_callbacks) -> tuple:
             "Start Analysis",
             action_callbacks["start_analysis"],
         ),
-        (
-            "0 bundles suggested.",
-            "Review Bundles",
-            action_callbacks["review_bundles"],
-        ),
         ("0 errors detected.", "View Errors", action_callbacks["view_errors"]),
         (
             "Analysis complete.",

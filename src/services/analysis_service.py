@@ -133,23 +133,16 @@ class AnalysisService:
 
         directories = self.analysis_db.get_active_directories()
         if not directories:
-            # Fall back to scan folder from DocumentProcessing
-            scan_folder = self.config.get_setting("DocumentProcessing", "scan_folder")
-            self._log(f"[SCAN] No active directories, using scan_folder: {scan_folder}")
-            if scan_folder and os.path.exists(scan_folder):
-                directories = [scan_folder]
-            else:
-                self._log("[SCAN] No directories found to scan")
-                return {
-                    "total_files": 0,
-                    "analyzed": 0,
-                    "cached": 0,
-                    "errors": 0,
-                    "skipped": 0,
-                    "message": "No source directories configured",
-                }
-        else:
-            self._log(f"[SCAN] Active directories: {directories}")
+            self._log("[SCAN] No source directories configured")
+            return {
+                "total_files": 0,
+                "analyzed": 0,
+                "cached": 0,
+                "errors": 0,
+                "skipped": 0,
+                "message": "No source directories configured",
+            }
+        self._log(f"[SCAN] Active directories: {directories}")
 
         stats = {
             "total_files": 0,

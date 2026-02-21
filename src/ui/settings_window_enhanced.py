@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QSizePolicy,
     QSpinBox,
     QStyle,
@@ -1428,38 +1430,6 @@ class EnhancedSettingsWindow(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Scan Folder Group
-        scan_group = QGroupBox("Scan Folder")
-        scan_layout = QGridLayout(scan_group)
-
-        scan_layout.addWidget(QLabel("Default Scan Folder:"), 0, 0)
-        folder_layout = QHBoxLayout()
-        self.scan_folder_edit = QLineEdit(
-            self.config_manager.get_setting("DocumentProcessing", "scan_folder")
-        )
-        self.scan_folder_edit.setToolTip(
-            "Default folder location for scanning documents.\n"
-            "This is where the application will look for image files to analyze.\n"
-            "Note: Multiple source directories can be configured in the Directories tab."
-        )
-        folder_layout.addWidget(self.scan_folder_edit)
-
-        browse_button = QPushButton()
-        style = self.style()
-        if style is not None:
-            browse_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon))
-        browse_button.setToolTip("Browse for folder")
-        browse_button.clicked.connect(self._browse_scan_folder)
-        # Make the icon-only browse button compact
-        browse_button.setFixedSize(36, 36)
-        browse_button.setIconSize(QSize(18, 18))
-        browse_button.setFlat(True)
-        browse_button.setObjectName("iconButton")
-        folder_layout.addWidget(browse_button)
-
-        scan_layout.addLayout(folder_layout, 0, 1)
-        layout.addWidget(scan_group)
-
         # Audit Trail Group
         audit_group = QGroupBox("Audit Trail")
         audit_layout = QVBoxLayout(audit_group)
@@ -2118,8 +2088,118 @@ If 5 pages provided and pages 3 and 5 don't belong:
         last_run_layout.addStretch()
         layout.addLayout(last_run_layout)
 
+        # Add spacing between sections
+        layout.addSpacing(15)
+
+        # Section 3: Export Directory
+        export_section_label = QLabel("📤 Export Directory")
+        export_section_label.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 5px 0px;")
+        layout.addWidget(export_section_label)
+
+        export_info_label = QLabel("Where to save generated PDF files.")
+        export_info_label.setWordWrap(True)
+        layout.addWidget(export_info_label)
+
+        # Radio buttons in a group
+        self._export_radio_group = QButtonGroup(self)
+
+        # --- Static location radio ---
+        self.export_static_radio = QRadioButton("Static location – all PDFs go to one fixed folder")
+        self._export_radio_group.addButton(self.export_static_radio)
+        layout.addWidget(self.export_static_radio)
+
+        static_path_layout = QHBoxLayout()
+        static_path_layout.setContentsMargins(20, 0, 0, 0)
+        self.export_static_path_edit = QLineEdit()
+        self.export_static_path_edit.setPlaceholderText("path/to/output/folder")
+        self.export_static_path_edit.setToolTip("Fixed output folder for all generated PDFs.")
+        static_path_layout.addWidget(self.export_static_path_edit)
+
+        self.export_static_browse_btn = QPushButton()
+        style = self.style()
+        if style is not None:
+            self.export_static_browse_btn.setIcon(
+                style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+            )
+        self.export_static_browse_btn.setToolTip("Browse for folder")
+        self.export_static_browse_btn.setFixedSize(36, 36)
+        self.export_static_browse_btn.setIconSize(QSize(18, 18))
+        self.export_static_browse_btn.setFlat(True)
+        self.export_static_browse_btn.setObjectName("iconButton")
+        self.export_static_browse_btn.clicked.connect(self._browse_export_static_folder)
+        static_path_layout.addWidget(self.export_static_browse_btn)
+        layout.addLayout(static_path_layout)
+
+        # --- Subfolder within source radio ---
+        self.export_subfolder_radio = QRadioButton("Subfolder within each source directory")
+        self._export_radio_group.addButton(self.export_subfolder_radio)
+        layout.addWidget(self.export_subfolder_radio)
+
+        subfolder_name_layout = QHBoxLayout()
+        subfolder_name_layout.setContentsMargins(20, 0, 0, 0)
+        subfolder_name_layout.addWidget(QLabel("Subfolder name:"))
+        self.export_subfolder_name_edit = QLineEdit()
+        self.export_subfolder_name_edit.setPlaceholderText("PDFs")
+        self.export_subfolder_name_edit.setToolTip(
+            "Name of the subfolder created inside each source directory."
+        )
+        self.export_subfolder_name_edit.setFixedWidth(160)
+        subfolder_name_layout.addWidget(self.export_subfolder_name_edit)
+        subfolder_name_layout.addStretch()
+        layout.addLayout(subfolder_name_layout)
+
+        # --- Beside source files radio ---
+        self.export_beside_radio = QRadioButton("Beside source files (no subfolder)")
+        self._export_radio_group.addButton(self.export_beside_radio)
+        layout.addWidget(self.export_beside_radio)
+
+        # Load from config
+        export_strategy = self.config_manager.get_setting(
+            "OutputDirectory", "strategy", "same_as_source"
+        )
+        self.export_static_radio.setChecked(export_strategy == "global_custom")
+        self.export_subfolder_radio.setChecked(export_strategy == "same_as_source")
+        self.export_beside_radio.setChecked(export_strategy == "beside_source")
+        self.export_static_path_edit.setText(
+            self.config_manager.get_setting("OutputDirectory", "global_custom_path", "")
+        )
+        self.export_subfolder_name_edit.setText(
+            self.config_manager.get_setting("OutputDirectory", "subdirectory_name", "PDFs")
+        )
+
+        # Connect radios to enable/disable sub-widgets
+        self.export_static_radio.toggled.connect(self._update_export_strategy_ui)
+        self.export_subfolder_radio.toggled.connect(self._update_export_strategy_ui)
+        self.export_beside_radio.toggled.connect(self._update_export_strategy_ui)
+        self._update_export_strategy_ui()
+
         layout.addStretch()
         return widget
+
+    def _update_export_strategy_ui(self) -> None:
+        """Enable/disable export sub-widgets based on the selected radio button."""
+        is_static = self.export_static_radio.isChecked()
+        is_subfolder = self.export_subfolder_radio.isChecked()
+        self.export_static_path_edit.setEnabled(is_static)
+        self.export_static_browse_btn.setEnabled(is_static)
+        self.export_subfolder_name_edit.setEnabled(is_subfolder)
+
+    def _browse_export_static_folder(self) -> None:
+        """Browse for the static export output folder."""
+        current_path = self.export_static_path_edit.text()
+        if not os.path.isdir(current_path):
+            current_path = os.path.expanduser("~")
+        directory = QFileDialog.getExistingDirectory(self, "Select Export Folder", current_path)
+        if directory:
+            self.export_static_path_edit.setText(directory)
+
+    def _current_export_strategy(self) -> str:
+        """Return the currently selected export strategy key."""
+        if self.export_static_radio.isChecked():
+            return "global_custom"
+        if self.export_beside_radio.isChecked():
+            return "beside_source"
+        return "same_as_source"
 
     def _create_database_tab(self) -> QWidget:
         """Tab 4: Database Management"""
@@ -2425,15 +2505,6 @@ If 5 pages provided and pages 3 and 5 don't belong:
             # Reload Gemini models when switching to Gemini
             if hasattr(self, "gemini_model_combo"):
                 self._load_gemini_models()
-
-    def _browse_scan_folder(self):
-        """Browse for scan folder"""
-        current_path = self.scan_folder_edit.text()
-        if not os.path.isdir(current_path):
-            current_path = os.path.expanduser("~")
-        directory = QFileDialog.getExistingDirectory(self, "Select Scan Folder", current_path)
-        if directory:
-            self.scan_folder_edit.setText(directory)
 
     def _load_ollama_models(self, force_refresh: bool = False, cache_only: bool = False):
         """Load available Ollama vision models with download status and caching
@@ -3180,9 +3251,6 @@ Return ONLY the JSON array, no other text."""
         try:
             # General Tab
             self.config_manager.set_setting(
-                "DocumentProcessing", "scan_folder", self.scan_folder_edit.text()
-            )
-            self.config_manager.set_setting(
                 "AuditTrail",
                 "enabled",
                 "true" if self.audit_trail_checkbox.isChecked() else "false",
@@ -3264,6 +3332,17 @@ Return ONLY the JSON array, no other text."""
                 "true" if self.scan_on_startup_checkbox.isChecked() else "false",
             )
 
+            # Export Directory
+            self.config_manager.set_setting(
+                "OutputDirectory", "strategy", self._current_export_strategy()
+            )
+            self.config_manager.set_setting(
+                "OutputDirectory", "global_custom_path", self.export_static_path_edit.text()
+            )
+            self.config_manager.set_setting(
+                "OutputDirectory", "subdirectory_name", self.export_subfolder_name_edit.text()
+            )
+
             # Discovery & Scheduler Tab
             self.config_manager.set_setting(
                 "Discovery",
@@ -3323,7 +3402,6 @@ Return ONLY the JSON array, no other text."""
         """Capture the original values of all input widgets for change tracking."""
         try:
             # General tab
-            self._original_values["scan_folder"] = self.scan_folder_edit.text()
             self._original_values["audit_trail"] = self.audit_trail_checkbox.isChecked()
             self._original_values["auto_start_analysis"] = (
                 self.auto_start_analysis_checkbox.isChecked()
@@ -3358,6 +3436,9 @@ Return ONLY the JSON array, no other text."""
                     directories.append(item.text())
             self._original_values["directories"] = directories
             self._original_values["scan_on_startup"] = self.scan_on_startup_checkbox.isChecked()
+            self._original_values["export_strategy"] = self._current_export_strategy()
+            self._original_values["export_static_path"] = self.export_static_path_edit.text()
+            self._original_values["export_subfolder_name"] = self.export_subfolder_name_edit.text()
 
             # Appearance tab
             self._original_values["theme"] = self.theme_combo.currentData()
@@ -3375,7 +3456,6 @@ Return ONLY the JSON array, no other text."""
     def _connect_change_signals(self):
         """Connect all input widgets to the change detection method."""
         # General tab
-        self.scan_folder_edit.textChanged.connect(self._check_for_changes)
         self.audit_trail_checkbox.stateChanged.connect(self._check_for_changes)
         self.auto_start_analysis_checkbox.stateChanged.connect(self._check_for_changes)
         self.confirm_exit_checkbox.stateChanged.connect(self._check_for_changes)
@@ -3404,6 +3484,11 @@ Return ONLY the JSON array, no other text."""
         self.directories_list.model().rowsInserted.connect(self._check_for_changes)
         self.directories_list.model().rowsRemoved.connect(self._check_for_changes)
         self.scan_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.export_static_radio.toggled.connect(self._check_for_changes)
+        self.export_subfolder_radio.toggled.connect(self._check_for_changes)
+        self.export_beside_radio.toggled.connect(self._check_for_changes)
+        self.export_static_path_edit.textChanged.connect(self._check_for_changes)
+        self.export_subfolder_name_edit.textChanged.connect(self._check_for_changes)
 
         # Discovery & Scheduler tab
         self.discovery_enabled_checkbox.stateChanged.connect(self._check_for_changes)
@@ -3519,11 +3604,6 @@ Return ONLY the JSON array, no other text."""
             changed_fields = []
 
             # General tab
-            if self.scan_folder_edit.text() != self._original_values.get("scan_folder", ""):
-                has_changes = True
-                changed_fields.append(
-                    f"scan_folder: '{self.scan_folder_edit.text()}' != '{self._original_values.get('scan_folder', '')}'"
-                )
             if self.audit_trail_checkbox.isChecked() != self._original_values.get(
                 "audit_trail", False
             ):
@@ -3608,6 +3688,18 @@ Return ONLY the JSON array, no other text."""
                 )
             if self.scan_on_startup_checkbox.isChecked() != self._original_values.get(
                 "scan_on_startup", False
+            ):
+                has_changes = True
+            if self._current_export_strategy() != self._original_values.get(
+                "export_strategy", "same_as_source"
+            ):
+                has_changes = True
+            if self.export_static_path_edit.text() != self._original_values.get(
+                "export_static_path", ""
+            ):
+                has_changes = True
+            if self.export_subfolder_name_edit.text() != self._original_values.get(
+                "export_subfolder_name", "PDFs"
             ):
                 has_changes = True
 

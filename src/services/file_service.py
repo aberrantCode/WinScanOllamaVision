@@ -9,14 +9,8 @@ from PIL import Image
 class FileService:
     def __init__(self, config_manager):
         self.config_manager = config_manager
-        self.scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
-        self.organized_folder = os.path.join(
-            self.scan_folder,
-            self.config_manager.get_setting("DocumentProcessing", "organized_subfolder"),
-        )
-
-        os.makedirs(self.scan_folder, exist_ok=True)
-        os.makedirs(self.organized_folder, exist_ok=True)
+        self.scan_folder: str = ""
+        self.organized_folder: str = ""
 
     def _get_image_files(self) -> list[str]:
         """Scans the scan_folder for PNG and TIFF files."""
