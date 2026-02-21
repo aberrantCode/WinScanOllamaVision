@@ -9,6 +9,9 @@ from PIL import Image
 class FileService:
     def __init__(self, config_manager):
         self.config_manager = config_manager
+        # Callers are responsible for setting these before using any file-operation methods.
+        # FileService is not instantiated by active application code; these attributes exist
+        # only to satisfy type checking for the legacy method bodies below.
         self.scan_folder: str = ""
         self.organized_folder: str = ""
 

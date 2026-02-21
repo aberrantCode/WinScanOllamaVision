@@ -3484,9 +3484,9 @@ Return ONLY the JSON array, no other text."""
         self.directories_list.model().rowsInserted.connect(self._check_for_changes)
         self.directories_list.model().rowsRemoved.connect(self._check_for_changes)
         self.scan_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
-        self.export_static_radio.toggled.connect(self._check_for_changes)
-        self.export_subfolder_radio.toggled.connect(self._check_for_changes)
-        self.export_beside_radio.toggled.connect(self._check_for_changes)
+        self.export_static_radio.clicked.connect(self._check_for_changes)
+        self.export_subfolder_radio.clicked.connect(self._check_for_changes)
+        self.export_beside_radio.clicked.connect(self._check_for_changes)
         self.export_static_path_edit.textChanged.connect(self._check_for_changes)
         self.export_subfolder_name_edit.textChanged.connect(self._check_for_changes)
 

@@ -2386,12 +2386,24 @@ class GuidedBundleWorkflow(QDialog):
                     ),
                 )
                 return os.path.join(source_dir, subdirectory)
+            from services.logging_service import get_logger
+
+            get_logger().warning(
+                "OutputDirectory strategy='same_as_source' but bundle has no file_paths; "
+                "falling back to default output directory."
+            )
 
         elif strategy == "beside_source":
             # Use source file directory directly (no subfolder)
             if bundle.get("file_paths"):
                 first_file = bundle["file_paths"][0]
                 return cast(str, os.path.dirname(first_file))
+            from services.logging_service import get_logger
+
+            get_logger().warning(
+                "OutputDirectory strategy='beside_source' but bundle has no file_paths; "
+                "falling back to default output directory."
+            )
 
         # Default fallback: Documents/WinScanLLM/PDFs
         default_output = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
