@@ -319,25 +319,13 @@ class TestFullWorkflow:
         assert stats2["analyzed"] == 0
         assert stats2["cached"] == 3
 
-    @patch("os.makedirs")
-    @patch("os.path.exists")
-    def test_file_service_initialization_creates_directories(
-        self, mock_exists, mock_makedirs, config_manager, temp_dir
-    ):
-        """Test that FileService creates required directories"""
-        # Arrange
-        mock_exists.return_value = False
+    def test_file_service_initialization(self, config_manager):
+        """Test that FileService initializes with default attribute values."""
+        svc = FileService(config_manager)
 
-        # Act
-        FileService(config_manager)
-
-        # Assert
-        assert mock_makedirs.call_count == 2
-        calls = [call[0][0] for call in mock_makedirs.call_args_list]
-        # Check that both the scan folder (temp_dir) and organized folder were created
-        assert temp_dir in calls
-        expected_organized = os.path.join(temp_dir, "organized")
-        assert expected_organized in calls
+        assert svc.config_manager is config_manager
+        assert svc.scan_folder == ""
+        assert svc.organized_folder == ""
 
     def test_database_integration(self, analysis_db, metadata_db, test_images):
         """Test AnalysisDB and MetadataDB working together"""
