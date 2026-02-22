@@ -17,7 +17,6 @@ from PyQt6.QtGui import (
     QColor,
     QPainter,
     QPixmap,
-    QTransform,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -41,6 +40,7 @@ from PyQt6.QtWidgets import (
 from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_colors import hex_to_rgb as _hex_to_rgb_fn
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
+from ui.bundle.bundle_preview_panel import BundlePreviewPanel
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
 from ui.styles import (
@@ -98,12 +98,9 @@ class GuidedBundleWorkflow(QDialog):
         self.skipped_bundles = []
 
         # Current bundle state
-        self.zoom_level = 100
-        self.rotation_angle = 0
         self.pan_offset = QPoint(0, 0)
         self.is_panning = False
         self.pan_start_pos = QPoint(0, 0)
-        self.original_pixmap = None  # Store original pixmap for fit calculations
 
         # Read default zoom settings from config
         if self.config_manager:
@@ -196,8 +193,8 @@ class GuidedBundleWorkflow(QDialog):
         content_layout.addWidget(self.thumbnail_panel)
 
         # Center panel - Large preview (takes remaining space)
-        preview_panel = self._create_preview_panel()
-        content_layout.addWidget(preview_panel, stretch=1)
+        self.preview_panel = BundlePreviewPanel(dark_mode=self.dark_mode, parent=self)
+        content_layout.addWidget(self.preview_panel, stretch=1)
 
         # Right panel - Metadata (fixed width)
         self.metadata_panel = self._create_metadata_panel()
@@ -304,173 +301,6 @@ class GuidedBundleWorkflow(QDialog):
         layout.addLayout(bottom_row)
 
         return header
-
-    def _create_preview_panel(self) -> QWidget:
-        """Create center panel with large image preview."""
-        theme = self._get_theme_colors()
-
-        panel = QWidget()
-        panel.setStyleSheet(f"background: {theme['preview_bg']};")
-        self.preview_container = panel  # Store reference for theme updates
-
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(0)
-
-        # Preview area
-        preview_area = QWidget()
-        preview_area.setMinimumSize(600, 500)
-        preview_area.setStyleSheet(f"background: {theme['preview_bg']};")
-        preview_layout = QVBoxLayout(preview_area)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(8)
-
-        # Page label - centered above image
-        page_label = QLabel(f"Page {self.current_page_index + 1}")
-        page_label.setStyleSheet(
-            f"color: {theme['text_secondary']}; font-size: 13px; font-weight: 500;"
-        )
-        page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_layout.addWidget(page_label)
-        self.page_label = page_label
-
-        self.large_preview = QLabel()
-        self.large_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.large_preview.setStyleSheet(f"background: {theme['preview_bg']};")
-        preview_layout.addWidget(self.large_preview)
-
-        layout.addWidget(preview_area)
-
-        return panel
-
-    def _create_overlay_controls(self) -> QWidget:
-        """Create zoom/rotate overlay controls."""
-        theme = self._get_theme_colors()
-
-        controls = QWidget()
-        # Semi-transparent background using theme colors
-        bg_r, bg_g, bg_b = self._hex_to_rgb(theme["bg_secondary"])
-        controls.setStyleSheet(f"""
-            QWidget {{
-                background: rgba({bg_r}, {bg_g}, {bg_b}, 0.95);
-                border: 1px solid {theme["border"]};
-                border-radius: 6px;
-                padding: 4px;
-            }}
-        """)
-
-        layout = QHBoxLayout(controls)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
-        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetFixedSize)
-
-        btn_style = f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 600;
-                min-width: 36px;
-                max-width: 36px;
-                min-height: 28px;
-                max-height: 28px;
-            }}
-            QPushButton:hover {{
-                background: {theme["button_hover"]};
-                border-color: {theme["border"]};
-                color: {theme["text_primary"]};
-            }}
-            QPushButton:pressed {{
-                background: {theme["selected"]};
-            }}
-        """
-
-        # Zoom controls
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setStyleSheet(btn_style)
-        zoom_out_btn.setToolTip("Zoom Out")
-        zoom_out_btn.clicked.connect(self._on_zoom_out)
-        layout.addWidget(zoom_out_btn)
-
-        self.zoom_spinner = QSpinBox()
-        self.zoom_spinner.setRange(25, 400)
-        self.zoom_spinner.setValue(100)
-        self.zoom_spinner.setSuffix("%")
-        self.zoom_spinner.setFixedWidth(65)
-        self.zoom_spinner.setFixedHeight(28)
-        self.zoom_spinner.setStyleSheet(f"""
-            QSpinBox {{
-                background: {theme["button_bg"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                background: {theme["button_hover"]};
-                border: none;
-                width: 14px;
-            }}
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-                background: {theme["selected"]};
-            }}
-        """)
-        self.zoom_spinner.valueChanged.connect(self._on_zoom_changed)
-        layout.addWidget(self.zoom_spinner)
-
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setStyleSheet(btn_style)
-        zoom_in_btn.setToolTip("Zoom In")
-        zoom_in_btn.clicked.connect(self._on_zoom_in)
-        layout.addWidget(zoom_in_btn)
-
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"background: {theme['border']};")
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(28)
-        layout.addWidget(sep)
-
-        # Fit buttons
-        fit_width_btn = QPushButton("⬌")
-        fit_width_btn.setStyleSheet(btn_style)
-        fit_width_btn.setToolTip("Fit to Width")
-        fit_width_btn.clicked.connect(self._on_fit_width)
-        layout.addWidget(fit_width_btn)
-
-        fit_height_btn = QPushButton("⬍")
-        fit_height_btn.setStyleSheet(btn_style)
-        fit_height_btn.setToolTip("Fit to Height")
-        fit_height_btn.clicked.connect(self._on_fit_height)
-        layout.addWidget(fit_height_btn)
-
-        # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep2.setStyleSheet(f"background: {theme['border']};")
-        sep2.setFixedWidth(1)
-        sep2.setFixedHeight(28)
-        layout.addWidget(sep2)
-
-        # Rotation controls
-        rotate_ccw_btn = QPushButton("↺")
-        rotate_ccw_btn.setStyleSheet(btn_style)
-        rotate_ccw_btn.setToolTip("Rotate Counter-Clockwise")
-        rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
-        layout.addWidget(rotate_ccw_btn)
-
-        rotate_cw_btn = QPushButton("↻")
-        rotate_cw_btn.setStyleSheet(btn_style)
-        rotate_cw_btn.setToolTip("Rotate Clockwise")
-        rotate_cw_btn.clicked.connect(self._on_rotate_cw)
-        layout.addWidget(rotate_cw_btn)
-
-        return controls
 
     def _create_metadata_panel(self) -> QWidget:
         """Create right panel with editable metadata in accordion sections."""
@@ -1477,13 +1307,13 @@ class GuidedBundleWorkflow(QDialog):
         bundle = self.bundles[self.current_bundle_index]
         self.page_order = list(range(len(bundle.get("file_paths", []))))
         self.current_page_index = 0
-        self.rotation_angle = 0
+        self.preview_panel.reset_rotation()
 
         # Apply default zoom from config instead of hardcoded 100
         if self.default_zoom_mode == "custom_%":
-            self.zoom_level = self.default_zoom_percent
+            self.preview_panel.set_zoom(self.default_zoom_percent)
         else:
-            self.zoom_level = 100  # Will be recalculated by fit methods
+            self.preview_panel.set_zoom(100)  # Will be recalculated by fit methods
 
         self._update_header()
         self._populate_thumbnails()
@@ -1588,7 +1418,7 @@ class GuidedBundleWorkflow(QDialog):
                 widget.textChanged.connect(self._enter_edit_mode)
 
     def _display_current_page(self):
-        """Display the current page in large preview."""
+        """Create a pixmap for the current page and hand it to preview_panel."""
         bundle = self.bundles[self.current_bundle_index]
         file_paths = bundle.get("file_paths", [])
 
@@ -1599,218 +1429,79 @@ class GuidedBundleWorkflow(QDialog):
         file_path = file_paths[actual_index]
 
         if self.prototype_mode:
-            # Mock preview
-            base_pixmap = QPixmap(600, 800)
-            color_idx = actual_index
-            base_color = QColor(220 + (color_idx * 10) % 30, 230, 245)
-            base_pixmap.fill(base_color)
-
-            painter = QPainter(base_pixmap)
+            pixmap = QPixmap(600, 800)
+            base_color = QColor(220 + (actual_index * 10) % 30, 230, 245)
+            pixmap.fill(base_color)
+            painter = QPainter(pixmap)
             painter.drawText(
-                base_pixmap.rect(),
+                pixmap.rect(),
                 Qt.AlignmentFlag.AlignCenter,
                 f"Page {actual_index + 1}\n\n(Mock Preview)",
             )
             painter.end()
         else:
-            # Real mode - load actual image
-            base_pixmap = QPixmap(file_path)
-            if base_pixmap.isNull():
-                # Fallback to placeholder if image fails to load
-                base_pixmap = QPixmap(600, 800)
-                base_pixmap.fill(QColor(240, 240, 240))
-                painter = QPainter(base_pixmap)
+            pixmap = QPixmap(file_path)
+            if pixmap.isNull():
+                pixmap = QPixmap(600, 800)
+                pixmap.fill(QColor(240, 240, 240))
+                painter = QPainter(pixmap)
                 painter.drawText(
-                    base_pixmap.rect(),
+                    pixmap.rect(),
                     Qt.AlignmentFlag.AlignCenter,
                     f"Page {actual_index + 1}\n\nFailed to load image:\n{file_path}",
                 )
                 painter.end()
 
-        # Store original pixmap for fit calculations
-        self.original_pixmap = base_pixmap
-
-        # Apply transforms
-        transformed = self._apply_transform(base_pixmap)
-        self.large_preview.setPixmap(transformed)
-
-        # Update page label
-        self.page_label.setText(f"Page {self.current_page_index + 1} of {len(self.page_order)}")
-
-    def _apply_transform(self, pixmap: QPixmap) -> QPixmap:
-        """Apply rotation and zoom to pixmap."""
-        # Rotation
-        if self.rotation_angle != 0:
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-        # Zoom
-        if self.zoom_level != 100:
-            zoom_factor = self.zoom_level / 100.0
-            new_width = int(pixmap.width() * zoom_factor)
-            new_height = int(pixmap.height() * zoom_factor)
-            pixmap = pixmap.scaled(
-                new_width,
-                new_height,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-        return pixmap
-
-    # Event handlers
-
-    def _on_thumbnail_clicked(self, visual_index: int):
-        """Handle thumbnail click."""
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
-        logger.info(
-            f"[THUMBNAIL CLICK] Clicked thumbnail {visual_index}, current_page_index was {self.current_page_index}"
-        )
-        try:
-            self.current_page_index = visual_index
-            logger.info(
-                f"[THUMBNAIL CLICK] Updated current_page_index to {self.current_page_index}"
-            )
-
-            self._populate_thumbnails()
-            logger.info("[THUMBNAIL CLICK] Thumbnails populated")
-
-            self._display_current_page()
-            logger.info("[THUMBNAIL CLICK] Current page displayed")
-
-            logger.info("[THUMBNAIL CLICK] Calling _refresh_accordion_content()")
-            self._refresh_accordion_content()  # Update metadata for new page
-            logger.info("[THUMBNAIL CLICK] Finished _refresh_accordion_content()")
-        except Exception as e:
-            logger.error(f"[THUMBNAIL CLICK] Error handling thumbnail click: {e}", exc_info=True)
-
-    def _move_page_up(self, visual_index: int):
-        """Move page up in order."""
-        if visual_index > 0:
-            self.page_order[visual_index], self.page_order[visual_index - 1] = (
-                self.page_order[visual_index - 1],
-                self.page_order[visual_index],
-            )
-            self.current_page_index = visual_index - 1
-            self._populate_thumbnails()
-            self._display_current_page()
-            self._refresh_accordion_content()
-
-    def _move_page_down(self, visual_index: int):
-        """Move page down in order."""
-        if visual_index < len(self.page_order) - 1:
-            self.page_order[visual_index], self.page_order[visual_index + 1] = (
-                self.page_order[visual_index + 1],
-                self.page_order[visual_index],
-            )
-            self.current_page_index = visual_index + 1
-            self._populate_thumbnails()
-            self._display_current_page()
-            self._refresh_accordion_content()
-
-    def _on_drop_requested(self, from_index: int, to_index: int):
-        """Handle drop - reorder pages."""
-        if from_index == to_index:
-            return
-
-        # Reorder
-        page = self.page_order.pop(from_index)
-        self.page_order.insert(to_index, page)
-
-        self.current_page_index = to_index
-        self._populate_thumbnails()
-        self._display_current_page()
-        self._refresh_accordion_content()
+        self.preview_panel.display_page(pixmap, self.current_page_index + 1, len(self.page_order))
 
     def _on_zoom_in(self):
         """Zoom in."""
-        new_zoom = min(400, self.zoom_level + 25)
+        new_zoom = min(400, self.preview_panel.zoom_level + 25)
         self.zoom_spinner.setValue(new_zoom)
 
     def _on_zoom_out(self):
         """Zoom out."""
-        new_zoom = max(25, self.zoom_level - 25)
+        new_zoom = max(25, self.preview_panel.zoom_level - 25)
         self.zoom_spinner.setValue(new_zoom)
 
     def _on_zoom_changed(self, value: int):
-        """Handle zoom change."""
-        self.zoom_level = value
-        self._display_current_page()
+        """Propagate zoom change to the preview panel."""
+        self.preview_panel.set_zoom(value)
 
     def _on_fit_width(self):
         """Fit image to preview panel width."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
+        size = self.preview_panel.get_original_pixel_size(rotation_adjusted=True)
+        if size is None:
             return
-
-        # Get preview container width (subtract some padding for margins)
-        container_width = self.preview_container.width() - 40
-
-        # Get original image width (accounting for rotation)
-        if self.rotation_angle in (90, 270):
-            # Width and height are swapped when rotated 90 or 270 degrees
-            image_width = self.original_pixmap.height()
-        else:
-            image_width = self.original_pixmap.width()
-
+        image_width = size[0]
+        container_width = self.preview_panel.get_container_size()[0] - 40
         if image_width > 0:
-            # Calculate zoom percentage to fit width
-            zoom = int((container_width / image_width) * 100)
-            # Clamp to valid range
-            zoom = max(25, min(400, zoom))
+            zoom = max(25, min(400, int(container_width / image_width * 100)))
             self.zoom_spinner.setValue(zoom)
 
     def _on_fit_height(self):
         """Fit image to preview panel height."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
+        size = self.preview_panel.get_original_pixel_size(rotation_adjusted=True)
+        if size is None:
             return
-
-        # Get preview container height (subtract some padding for margins and controls)
-        container_height = self.preview_container.height() - 100
-
-        # Get original image height (accounting for rotation)
-        if self.rotation_angle in (90, 270):
-            # Width and height are swapped when rotated 90 or 270 degrees
-            image_height = self.original_pixmap.width()
-        else:
-            image_height = self.original_pixmap.height()
-
+        image_height = size[1]
+        container_height = self.preview_panel.get_container_size()[1] - 100
         if image_height > 0:
-            # Calculate zoom percentage to fit height
-            zoom = int((container_height / image_height) * 100)
-            # Clamp to valid range
-            zoom = max(25, min(400, zoom))
+            zoom = max(25, min(400, int(container_height / image_height * 100)))
             self.zoom_spinner.setValue(zoom)
 
     def _on_fit_window(self):
         """Fit image to preview panel (both width and height)."""
-        if not hasattr(self, "original_pixmap") or self.original_pixmap is None:
+        size = self.preview_panel.get_original_pixel_size(rotation_adjusted=True)
+        if size is None:
             return
-
-        # Get preview container dimensions (subtract padding)
-        container_width = self.preview_container.width() - 40
-        container_height = self.preview_container.height() - 100
-
-        # Get original image dimensions (accounting for rotation)
-        if self.rotation_angle in (90, 270):
-            # Width and height are swapped when rotated 90 or 270 degrees
-            image_width = self.original_pixmap.height()
-            image_height = self.original_pixmap.width()
-        else:
-            image_width = self.original_pixmap.width()
-            image_height = self.original_pixmap.height()
-
+        image_width, image_height = size
+        container_width = self.preview_panel.get_container_size()[0] - 40
+        container_height = self.preview_panel.get_container_size()[1] - 100
         if image_width > 0 and image_height > 0:
-            # Calculate zoom to fit both dimensions (use the smaller zoom)
-            zoom_width = int((container_width / image_width) * 100)
-            zoom_height = int((container_height / image_height) * 100)
-            zoom = min(zoom_width, zoom_height)
-
-            # Clamp to valid range
-            zoom = max(25, min(400, zoom))
+            zoom_w = int(container_width / image_width * 100)
+            zoom_h = int(container_height / image_height * 100)
+            zoom = max(25, min(400, min(zoom_w, zoom_h)))
             self.zoom_spinner.setValue(zoom)
 
     def _apply_default_zoom(self):
@@ -1822,18 +1513,15 @@ class GuidedBundleWorkflow(QDialog):
         elif self.default_zoom_mode == "fit_to_window":
             self._on_fit_window()
         elif self.default_zoom_mode == "custom_%":
-            # Zoom level already set in _load_current_bundle
-            self._display_current_page()
+            self.preview_panel.set_zoom(self.default_zoom_percent)
 
     def _on_rotate_ccw(self):
         """Rotate counter-clockwise."""
-        self.rotation_angle = (self.rotation_angle - 90) % 360
-        self._display_current_page()
+        self.preview_panel.rotate_ccw()
 
     def _on_rotate_cw(self):
         """Rotate clockwise."""
-        self.rotation_angle = (self.rotation_angle + 90) % 360
-        self._display_current_page()
+        self.preview_panel.rotate_cw()
 
     def _on_output_filename_manual_edit(self):
         """Mark output filename as manually edited."""
@@ -2089,7 +1777,7 @@ class GuidedBundleWorkflow(QDialog):
             ordered_paths = [bundle["file_paths"][i] for i in self.page_order]
             output_dir = self._pdf_converter.determine_output_directory(bundle)
             pdf_path = self._pdf_converter.convert(
-                bundle, metadata, ordered_paths, self.rotation_angle
+                bundle, metadata, ordered_paths, self.preview_panel.rotation_angle
             )
 
             success_dialog = QMessageBox(self)
@@ -2505,19 +2193,8 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
         if hasattr(self, "thumbnail_panel"):
             self.thumbnail_panel.apply_theme(self.dark_mode)
         # Update preview panel
-        if hasattr(self, "preview_container"):
-            self.preview_container.setStyleSheet(
-                f"background: {theme['preview_bg']}; border: none;"
-            )
-
-        if hasattr(self, "large_preview"):
-            self.large_preview.setStyleSheet(f"background: {theme['preview_bg']};")
-
-        if hasattr(self, "page_label"):
-            self.page_label.setStyleSheet(
-                f"color: {theme['text_secondary']}; font-weight: 500; font-size: 12px;"
-            )
-
+        if hasattr(self, "preview_panel"):
+            self.preview_panel.apply_theme(self.dark_mode)
         # Update metadata panel
         if hasattr(self, "metadata_scroll"):
             self.metadata_scroll.setStyleSheet(f"background: {theme['metadata_bg']};")

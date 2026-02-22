@@ -158,11 +158,12 @@ class BundleThumbnailPanel(QWidget):
         widgets_to_delete = []
         while self._thumbnail_layout.count():
             item = self._thumbnail_layout.takeAt(0)
-            if item.widget():
+            if item is not None:
                 widget = item.widget()
-                widget.hide()
-                widget.setParent(None)
-                widgets_to_delete.append(widget)
+                if widget is not None:
+                    widget.hide()
+                    widget.setParent(None)
+                    widgets_to_delete.append(widget)
         for widget in widgets_to_delete:
             widget.deleteLater()
 
