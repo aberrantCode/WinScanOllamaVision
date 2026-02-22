@@ -68,7 +68,7 @@ def test_load_embedded_workflow_returns_early_when_content_stack_none(
 
     bundles = [{"name": "Bundle 1", "analyses": []}]
 
-    with patch("ui.guided_bundle_workflow.GuidedBundleWorkflow"):
+    with patch("ui.bundle.bundle_review_widget.BundleReviewWidget"):
         # Must not raise AssertionError, AttributeError, or any other exception
         panel._load_embedded_workflow(bundles)
 
@@ -83,7 +83,7 @@ def test_load_embedded_workflow_sets_embedded_workflow_even_when_stack_none(
     bundles = [{"name": "Bundle 1", "analyses": []}]
 
     mock_wf = MagicMock()
-    with patch("ui.guided_bundle_workflow.GuidedBundleWorkflow", return_value=mock_wf):
+    with patch("ui.bundle.bundle_review_widget.BundleReviewWidget", return_value=mock_wf):
         panel._load_embedded_workflow(bundles)
 
     assert panel._embedded_workflow is mock_wf
@@ -102,7 +102,7 @@ def test_load_embedded_workflow_adds_to_stack_when_stack_present(
     bundles = [{"name": "Bundle 1", "analyses": []}]
 
     mock_wf = MagicMock()
-    with patch("ui.guided_bundle_workflow.GuidedBundleWorkflow", return_value=mock_wf):
+    with patch("ui.bundle.bundle_review_widget.BundleReviewWidget", return_value=mock_wf):
         panel._load_embedded_workflow(bundles)
 
     mock_wf.workflow_completed.connect.assert_called_once()

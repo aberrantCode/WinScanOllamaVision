@@ -10,7 +10,7 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
-    from ui.guided_bundle_workflow import GuidedBundleWorkflow
+    from ui.bundle.bundle_review_widget import BundleReviewWidget
 
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
@@ -24,7 +24,7 @@ class BundlePanel(QWidget):
     """
     Stage 3: Bundle — review AI bundle suggestions and approve PDFs.
 
-    Embeds GuidedBundleWorkflow directly as a child widget so the operator
+    Embeds BundleReviewWidget directly as a child widget so the operator
     never leaves the pipeline window.  A QStackedWidget switches between an
     empty-state placeholder and the live review UI.
     """
@@ -48,7 +48,7 @@ class BundlePanel(QWidget):
         self.dark_mode = dark_mode
         self._bundling_service = BundlingService(self.analysis_db)
         self._workflow_stats: dict = {}
-        self._embedded_workflow: GuidedBundleWorkflow | None = None
+        self._embedded_workflow: BundleReviewWidget | None = None
 
         self._content_stack: QStackedWidget | None = None
         self._placeholder_page: QWidget | None = None
@@ -217,8 +217,8 @@ class BundlePanel(QWidget):
         }
 
     def _load_embedded_workflow(self, bundles: list[dict]) -> None:
-        """Create (or recreate) the embedded GuidedBundleWorkflow widget."""
-        from ui.guided_bundle_workflow import GuidedBundleWorkflow
+        """Create (or recreate) the embedded BundleReviewWidget."""
+        from ui.bundle.bundle_review_widget import BundleReviewWidget
 
         # Remove previous workflow widget if present
         if self._embedded_workflow is not None and self._content_stack is not None:
@@ -230,7 +230,7 @@ class BundlePanel(QWidget):
 
         workflow_bundles = self._prepare_bundles(bundles)
 
-        workflow = GuidedBundleWorkflow(
+        workflow = BundleReviewWidget(
             bundles=workflow_bundles,
             start_index=0,
             prototype_mode=False,
