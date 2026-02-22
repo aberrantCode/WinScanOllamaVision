@@ -11,7 +11,6 @@ Features:
 """
 
 from pathlib import Path
-from typing import cast
 
 from PyQt6.QtCore import QMimeData, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
@@ -40,6 +39,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.bundle.bundle_colors import get_bundle_colors
+from ui.bundle.bundle_colors import hex_to_rgb as _hex_to_rgb_fn
+from ui.bundle.bundle_pdf_converter import BundlePdfConverter
+from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.clickable_label import ClickableLabel
 from ui.styles import (
     Colors,
@@ -133,6 +136,7 @@ class GuidedBundleWorkflow(QDialog):
         self.analysis_db = analysis_db
         self.metadata_db = metadata_db
         self.config_manager = config_manager
+        self._pdf_converter: BundlePdfConverter = BundlePdfConverter(config_manager, analysis_db)
 
         # Embedded mode: run as child widget inside another layout (no dialog chrome/close)
         self.embedded_mode = embedded_mode
@@ -1331,12 +1335,7 @@ class GuidedBundleWorkflow(QDialog):
 
     def _format_file_size(self, size_bytes: int | float) -> str:
         """Format file size in human-readable format."""
-        size: float = float(size_bytes)
-        for unit in ["B", "KB", "MB", "GB"]:
-            if size < 1024.0:
-                return f"{size:.1f} {unit}"
-            size /= 1024.0
-        return f"{size:.1f} TB"
+        return BundlePdfConverter.format_file_size(size_bytes)
 
     def _create_action_bar(self) -> QWidget:
         """Create bottom action bar."""
@@ -2349,65 +2348,8 @@ class GuidedBundleWorkflow(QDialog):
         self._show_pdf_conversion(bundle, metadata)
 
     def _determine_output_directory(self, bundle: dict) -> str:
-        """
-        Determine output directory based on configuration strategy.
-
-        Args:
-            bundle: Bundle data containing file_paths
-
-        Returns:
-            Path to output directory
-        """
-        import os
-
-        # Get strategy from config
-        strategy = self.config_manager.get_setting(
-            "OutputDirectory", "strategy", default="same_as_source"
-        )
-
-        if strategy == "global_custom":
-            # Use global custom path
-            custom_path = self.config_manager.get_setting(
-                "OutputDirectory", "global_custom_path", default=""
-            )
-            if custom_path and os.path.isdir(custom_path):
-                return cast(str, custom_path)
-            # Fall through to default if custom path not set or invalid
-
-        elif strategy == "same_as_source":
-            # Use source file directory with subdirectory
-            if bundle.get("file_paths"):
-                first_file = bundle["file_paths"][0]
-                source_dir = os.path.dirname(first_file)
-                subdirectory = cast(
-                    str,
-                    self.config_manager.get_setting(
-                        "OutputDirectory", "subdirectory_name", default="ORGANIZED"
-                    ),
-                )
-                return os.path.join(source_dir, subdirectory)
-            from services.logging_service import get_logger
-
-            get_logger().warning(
-                "OutputDirectory strategy='same_as_source' but bundle has no file_paths; "
-                "falling back to default output directory."
-            )
-
-        elif strategy == "beside_source":
-            # Use source file directory directly (no subfolder)
-            if bundle.get("file_paths"):
-                first_file = bundle["file_paths"][0]
-                return cast(str, os.path.dirname(first_file))
-            from services.logging_service import get_logger
-
-            get_logger().warning(
-                "OutputDirectory strategy='beside_source' but bundle has no file_paths; "
-                "falling back to default output directory."
-            )
-
-        # Default fallback: Documents/WinScanLLM/PDFs
-        default_output = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
-        return default_output
+        """Determine output directory based on configuration strategy."""
+        return self._pdf_converter.determine_output_directory(bundle)
 
     def _show_pdf_conversion(self, bundle, metadata):
         """Show PDF conversion progress dialog."""
@@ -2495,36 +2437,12 @@ class GuidedBundleWorkflow(QDialog):
 
         # Real conversion
         try:
-            from services.bundling_service import BundlingService
-
-            bundling_service = BundlingService(self.analysis_db)
-
-            # Apply page reordering
             ordered_paths = [bundle["file_paths"][i] for i in self.page_order]
-
-            # Get output directory from config based on strategy
-            output_dir = self._determine_output_directory(bundle)
-            output_path = Path(output_dir) / metadata["output_filename"]
-
-            # Ensure output directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Convert to PDF
-            pdf_path = bundling_service.convert_bundle_to_pdf(
-                file_paths=ordered_paths,
-                output_path=str(output_path),
-                metadata=metadata,
-                rotation_angle=self.rotation_angle,
+            output_dir = self._pdf_converter.determine_output_directory(bundle)
+            pdf_path = self._pdf_converter.convert(
+                bundle, metadata, ordered_paths, self.rotation_angle
             )
 
-            # Update bundle metadata in database
-            bundle_id = bundle.get("id")
-            if bundle_id:
-                bundling_service.update_bundle_metadata(bundle_id, metadata)
-                # Mark bundle as completed and save PDF path
-                bundling_service.mark_bundle_completed(bundle_id, pdf_path)
-
-            # Success!
             success_dialog = QMessageBox(self)
             success_dialog.setWindowTitle("PDF Created")
             success_dialog.setIcon(QMessageBox.Icon.Information)
@@ -2539,19 +2457,8 @@ class GuidedBundleWorkflow(QDialog):
             result = success_dialog.exec()
 
             if result == QMessageBox.StandardButton.Open:
-                import os
-                import platform
-                import subprocess
+                self._pdf_converter.open_pdf(pdf_path)
 
-                # Open PDF with default application
-                if platform.system() == "Windows":
-                    os.startfile(pdf_path)
-                elif platform.system() == "Darwin":  # macOS
-                    subprocess.call(["open", pdf_path])
-                else:  # Linux
-                    subprocess.call(["xdg-open", pdf_path])
-
-            # Track acceptance
             bundle_with_metadata = {
                 **bundle,
                 **metadata,
@@ -2561,7 +2468,6 @@ class GuidedBundleWorkflow(QDialog):
             self.accepted_bundles.append(bundle_with_metadata)
             self.bundle_accepted.emit(bundle_with_metadata)
 
-            # Move to next or complete
             if self.current_bundle_index < len(self.bundles) - 1:
                 self._on_next_bundle()
             else:
@@ -2884,447 +2790,19 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
 
     def _get_theme_colors(self):
         """Get current theme colors."""
-        if self.dark_mode:
-            return {
-                # Backgrounds
-                "bg_primary": "#1e293b",  # Main background
-                "bg_secondary": "#0f172a",  # Header/footer
-                "bg_tertiary": "#334155",  # Cards/panels
-                "bg_input": "#1e293b",  # Input fields (same as bg_primary for less contrast)
-                "bg_hover": "#334155",  # Hover state
-                # Text colors
-                "text_primary": "#f1f5f9",  # Main text
-                "text_secondary": "#cbd5e1",  # Secondary text
-                "text_tertiary": "#94a3b8",  # Muted text
-                "text_disabled": "#64748b",  # Disabled text
-                # Borders
-                "border": "#475569",  # Primary border
-                "border_light": "#334155",  # Light border
-                "border_focus": "#3b82f6",  # Focus border
-                # States
-                "hover": "#334155",
-                "selected": "#3b82f6",
-                "active": "#2563eb",
-                # Semantic colors
-                "danger": "#ef4444",
-                "danger_hover": "#dc2626",
-                "success": "#10b981",
-                "success_hover": "#059669",
-                "warning": "#f59e0b",
-                "warning_hover": "#d97706",
-                "info": "#3b82f6",
-                "info_hover": "#2563eb",
-                # Specific components
-                "thumbnail_border": "#475569",
-                "thumbnail_selected": "#3b82f6",
-                "preview_bg": "#0f172a",
-                "metadata_bg": "#1e293b",
-                "button_bg": "#334155",
-                "button_text": "#f1f5f9",
-                "button_hover": "#475569",
-            }
-        else:
-            return {
-                # Backgrounds
-                "bg_primary": "#ffffff",  # Main background
-                "bg_secondary": "#f9fafb",  # Header/footer
-                "bg_tertiary": "#f3f4f6",  # Cards/panels
-                "bg_input": "#ffffff",  # Input fields
-                "bg_hover": "#f3f4f6",  # Hover state
-                # Text colors
-                "text_primary": "#111827",  # Main text
-                "text_secondary": "#374151",  # Secondary text
-                "text_tertiary": "#6b7280",  # Muted text
-                "text_disabled": "#9ca3af",  # Disabled text
-                # Borders
-                "border": "#e5e7eb",  # Primary border
-                "border_light": "#f3f4f6",  # Light border
-                "border_focus": "#3b82f6",  # Focus border
-                # States
-                "hover": "#f3f4f6",
-                "selected": "#1e88e5",
-                "active": "#1976d2",
-                # Semantic colors
-                "danger": "#ef4444",
-                "danger_hover": "#dc2626",
-                "success": "#10b981",
-                "success_hover": "#059669",
-                "warning": "#f59e0b",
-                "warning_hover": "#d97706",
-                "info": "#3b82f6",
-                "info_hover": "#2563eb",
-                # Specific components
-                "thumbnail_border": "#d1d5db",
-                "thumbnail_selected": "#3b82f6",
-                "preview_bg": "#ffffff",
-                "metadata_bg": "#f9fafb",
-                "button_bg": "#f3f4f6",
-                "button_text": "#111827",
-                "button_hover": "#e5e7eb",
-            }
+        return get_bundle_colors(self.dark_mode)
 
     def _hex_to_rgb(self, hex_color: str) -> tuple[int, int, int]:
-        """Convert hex color to RGB tuple.
-
-        Args:
-            hex_color: Hex color string (e.g., "#1e293b")
-
-        Returns:
-            Tuple of (r, g, b) values
-        """
-        hex_color = hex_color.lstrip("#")
-        r = int(hex_color[0:2], 16)
-        g = int(hex_color[2:4], 16)
-        b = int(hex_color[4:6], 16)
-        return (r, g, b)
+        """Convert hex color to RGB tuple."""
+        return _hex_to_rgb_fn(hex_color)
 
     def _apply_dark_theme(self):
         """Apply dark theme colors."""
-        theme = self._get_theme_colors()
-
-        # Set comprehensive dark theme stylesheet for all widget types
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {theme["bg_primary"]};
-                color: {theme["text_primary"]};
-            }}
-            QWidget {{
-                background-color: {theme["bg_primary"]};
-                color: {theme["text_primary"]};
-            }}
-            QLabel {{
-                color: {theme["text_primary"]};
-                background-color: transparent;
-                border: none;
-            }}
-            QLineEdit {{
-                background-color: {theme["bg_input"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 6px 8px;
-            }}
-            QLineEdit:focus {{
-                border-color: {theme["border_focus"]};
-            }}
-            QLineEdit:disabled {{
-                background-color: {theme["bg_secondary"]};
-                color: {theme["text_disabled"]};
-            }}
-            QComboBox {{
-                background-color: {theme["bg_input"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 6px 8px;
-            }}
-            QComboBox:focus {{
-                border-color: {theme["border_focus"]};
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                padding-right: 8px;
-                background: {theme["bg_input"]};
-            }}
-            QComboBox::down-arrow {{
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid {theme["text_primary"]};
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_primary"]};
-                selection-background-color: {theme["selected"]};
-                selection-color: white;
-                border: 1px solid {theme["border"]};
-                outline: none;
-            }}
-            QComboBox QAbstractItemView::item {{
-                padding: 6px 8px;
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_primary"]};
-            }}
-            QComboBox QAbstractItemView::item:hover {{
-                background-color: {theme["bg_hover"]};
-                color: {theme["text_primary"]};
-            }}
-            QComboBox QAbstractItemView::item:selected {{
-                background-color: {theme["selected"]};
-                color: white;
-            }}
-            QCheckBox {{
-                color: {theme["text_primary"]};
-            }}
-            QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 1px solid {theme["border"]};
-                border-radius: 3px;
-                background-color: {theme["bg_input"]};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {theme["selected"]};
-                border-color: {theme["selected"]};
-            }}
-            QPushButton {{
-                background-color: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {theme["bg_hover"]};
-                border-color: {theme["border_focus"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {theme["bg_secondary"]};
-            }}
-            QPushButton:disabled {{
-                background-color: {theme["bg_secondary"]};
-                color: {theme["text_disabled"]};
-                border-color: {theme["border_light"]};
-            }}
-            QScrollBar:vertical {{
-                background-color: {theme["bg_secondary"]};
-                width: 12px;
-                border: none;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {theme["border"]};
-                border-radius: 6px;
-                min-height: 20px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {theme["text_tertiary"]};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                border: none;
-                background: none;
-                height: 0px;
-            }}
-            QScrollBar:horizontal {{
-                background-color: {theme["bg_secondary"]};
-                height: 12px;
-                border: none;
-            }}
-            QScrollBar::handle:horizontal {{
-                background-color: {theme["border"]};
-                border-radius: 6px;
-                min-width: 20px;
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background-color: {theme["text_tertiary"]};
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                border: none;
-                background: none;
-                width: 0px;
-            }}
-            QScrollArea {{
-                background-color: {theme["bg_primary"]};
-                border: none;
-            }}
-            QFrame {{
-                background-color: transparent;
-                border: none;
-            }}
-            QToolTip {{
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                padding: 6px 8px;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QSpinBox {{
-                background-color: {theme["bg_input"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 4px 8px;
-            }}
-            QSpinBox:focus {{
-                border-color: {theme["border_focus"]};
-            }}
-        """)
+        self.setStyleSheet(build_bundle_stylesheet(True))
 
     def _apply_light_theme(self):
         """Apply light theme colors."""
-        theme = self._get_theme_colors()
-
-        # Set comprehensive light theme stylesheet for all widget types
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {theme["bg_primary"]};
-                color: {theme["text_primary"]};
-            }}
-            QWidget {{
-                background-color: {theme["bg_primary"]};
-                color: {theme["text_primary"]};
-            }}
-            QLabel {{
-                color: {theme["text_primary"]};
-                background-color: transparent;
-                border: none;
-            }}
-            QLineEdit {{
-                background-color: {theme["bg_input"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 6px 8px;
-            }}
-            QLineEdit:focus {{
-                border-color: {theme["border_focus"]};
-            }}
-            QLineEdit:disabled {{
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_disabled"]};
-            }}
-            QComboBox {{
-                background-color: {theme["bg_input"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 6px 8px;
-            }}
-            QComboBox:focus {{
-                border-color: {theme["border_focus"]};
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                padding-right: 8px;
-                background: {theme["bg_input"]};
-            }}
-            QComboBox::down-arrow {{
-                width: 0;
-                height: 0;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid {theme["text_primary"]};
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_primary"]};
-                selection-background-color: {theme["selected"]};
-                selection-color: white;
-                border: 1px solid {theme["border"]};
-                outline: none;
-            }}
-            QComboBox QAbstractItemView::item {{
-                padding: 6px 8px;
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_primary"]};
-            }}
-            QComboBox QAbstractItemView::item:hover {{
-                background-color: {theme["bg_hover"]};
-                color: {theme["text_primary"]};
-            }}
-            QComboBox QAbstractItemView::item:selected {{
-                background-color: {theme["selected"]};
-                color: white;
-            }}
-            QCheckBox {{
-                color: {theme["text_primary"]};
-            }}
-            QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 1px solid {theme["border"]};
-                border-radius: 3px;
-                background-color: {theme["bg_input"]};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {theme["selected"]};
-                border-color: {theme["selected"]};
-            }}
-            QPushButton {{
-                background-color: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {theme["bg_hover"]};
-                border-color: {theme["border_focus"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {theme["bg_tertiary"]};
-            }}
-            QPushButton:disabled {{
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_disabled"]};
-                border-color: {theme["border_light"]};
-            }}
-            QScrollBar:vertical {{
-                background-color: {theme["bg_secondary"]};
-                width: 12px;
-                border: none;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {theme["border"]};
-                border-radius: 6px;
-                min-height: 20px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {theme["text_tertiary"]};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                border: none;
-                background: none;
-                height: 0px;
-            }}
-            QScrollBar:horizontal {{
-                background-color: {theme["bg_secondary"]};
-                height: 12px;
-                border: none;
-            }}
-            QScrollBar::handle:horizontal {{
-                background-color: {theme["border"]};
-                border-radius: 6px;
-                min-width: 20px;
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background-color: {theme["text_tertiary"]};
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                border: none;
-                background: none;
-                width: 0px;
-            }}
-            QScrollArea {{
-                background-color: {theme["bg_primary"]};
-                border: none;
-            }}
-            QFrame {{
-                background-color: transparent;
-                border: none;
-            }}
-            QToolTip {{
-                background-color: {theme["bg_tertiary"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                padding: 6px 8px;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QSpinBox {{
-                background-color: {theme["bg_input"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 4px 8px;
-            }}
-            QSpinBox:focus {{
-                border-color: {theme["border_focus"]};
-            }}
-        """)
+        self.setStyleSheet(build_bundle_stylesheet(False))
 
     def _update_all_component_styles(self):
         """Update all component styles based on current theme."""
