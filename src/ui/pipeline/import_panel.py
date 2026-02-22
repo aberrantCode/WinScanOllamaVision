@@ -71,6 +71,7 @@ class ImportPanel(QWidget):
         self._preview_stack: QStackedWidget | None = None
         self._select_all_btn: QPushButton | None = None
         self._deselect_btn: QPushButton | None = None
+        self._summary_bar: QLabel | None = None
 
         self._build_ui()
         QTimer.singleShot(0, self._post_init)
@@ -173,6 +174,16 @@ class ImportPanel(QWidget):
         self.scan_progress_bar.setFixedHeight(18)
         self.scan_progress_bar.setVisible(False)
         root.addWidget(self.scan_progress_bar)
+
+        # ── Summary bar: compact status counts
+        self._summary_bar = QLabel("—")
+        self._summary_bar.setFixedHeight(28)
+        self._summary_bar.setStyleSheet(
+            f"font-size: 9pt; color: {self._c()['text_tertiary']};"
+            f" background-color: {self._c()['bg_secondary']};"
+            " padding: 4px 8px; border-radius: 4px;"
+        )
+        root.addWidget(self._summary_bar)
 
         # ── Tree / Preview splitter
         # Left: file tree
@@ -395,9 +406,29 @@ class ImportPanel(QWidget):
         if self.tree_count_label:
             self.tree_count_label.setText(f"{total} image{'s' if total != 1 else ''}")
 
+        self._update_summary_bar(all_images)
+
         # Fit column 0 to the widest filename; the horizontal scrollbar appears
         # automatically if the tree narrows (e.g. when the preview panel opens).
         self.image_tree.resizeColumnToContents(0)
+
+    def _update_summary_bar(self, images: list[dict[str, Any]]) -> None:
+        """Update the compact status summary bar above the tree."""
+        if not self._summary_bar:
+            return
+        total = len(images)
+        if total == 0:
+            self._summary_bar.setText("No images found")
+            return
+        analyzed = sum(1 for i in images if i.get("status") == "analyzed")
+        pending = sum(1 for i in images if i.get("status") in ("registered", "pending"))
+        errors = sum(1 for i in images if i.get("status") == "error")
+        parts = [f"\U0001f4c1 {total} found", f"\u2705 {analyzed} analyzed"]
+        if pending:
+            parts.append(f"\u23f3 {pending} pending")
+        if errors:
+            parts.append(f"\u274c {errors} errors")
+        self._summary_bar.setText("  \u00b7  ".join(parts))
 
     def refresh(self) -> None:
         """Public entry point — parent calls this instead of the private _refresh."""

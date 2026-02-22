@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
     from ui.guided_bundle_workflow import GuidedBundleWorkflow
@@ -52,6 +52,12 @@ class BundlePanel(QWidget):
 
         self._content_stack: QStackedWidget | None = None
         self._placeholder_page: QWidget | None = None
+        self._bundle_stats_widget: QWidget | None = None
+        # Stat labels updated by update_bundle_stats()
+        self._stat_bundles_lbl: QLabel | None = None
+        self._stat_avg_pages_lbl: QLabel | None = None
+        self._stat_doc_types_lbl: QLabel | None = None
+        self._stat_completeness_lbl: QLabel | None = None
 
         self._build_ui()
 
@@ -92,11 +98,70 @@ class BundlePanel(QWidget):
         )
         ph_layout.addWidget(self._placeholder_status)
 
+        # ── Stats grid (shown while bundles load / before workflow launches)
+        self._bundle_stats_widget = self._build_stats_grid(c)
+        ph_layout.addWidget(self._bundle_stats_widget)
+
         ph_layout.addStretch()
         self._placeholder_page = placeholder
         self._content_stack.addWidget(placeholder)  # index 0
 
         root.addWidget(self._content_stack, stretch=1)
+
+    def _build_stats_grid(self, c: dict) -> QWidget:
+        """Build a 2-column stats grid for the placeholder page."""
+        from ui.collection_status_helpers import create_metric_card
+
+        grid = QWidget()
+        grid.setStyleSheet("background-color: transparent;")
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+
+        # Row 1: bundles ready, avg pages
+        bundles_card = create_metric_card(c, "Bundles Ready", "—")
+        avg_pages_card = create_metric_card(c, "Avg Pages / Doc", "—")
+        self._stat_bundles_lbl = bundles_card.findChild(QLabel, "bundles_ready_value")
+        self._stat_avg_pages_lbl = avg_pages_card.findChild(QLabel, "avg_pages_/_doc_value")
+        row1.addWidget(bundles_card)
+        row1.addWidget(avg_pages_card)
+
+        # Row 2: doc types summary, metadata completeness
+        doc_types_card = create_metric_card(c, "Document Types", "—")
+        completeness_card = create_metric_card(c, "Metadata Complete", "—")
+        self._stat_doc_types_lbl = doc_types_card.findChild(QLabel, "document_types_value")
+        self._stat_completeness_lbl = completeness_card.findChild(QLabel, "metadata_complete_value")
+        row2.addWidget(doc_types_card)
+        row2.addWidget(completeness_card)
+
+        outer = QVBoxLayout(grid)
+        outer.setContentsMargins(0, 8, 0, 0)
+        outer.setSpacing(8)
+        outer.addLayout(row1)
+        outer.addLayout(row2)
+        return grid
+
+    def update_bundle_stats(self, stats: dict) -> None:
+        """Populate the stats grid from bundle data. Called when BundlePanel activates."""
+        n_bundles = stats.get("total", 0)
+        avg_pages = stats.get("avg_pages", 0.0)
+        doc_types = stats.get("doc_types", {})
+        completeness_pct = stats.get("completeness_pct", 0)
+
+        if self._stat_bundles_lbl:
+            self._stat_bundles_lbl.setText(str(n_bundles))
+        if self._stat_avg_pages_lbl:
+            self._stat_avg_pages_lbl.setText(f"{avg_pages:.1f}" if avg_pages else "—")
+        if self._stat_doc_types_lbl:
+            if doc_types:
+                top = sorted(doc_types.items(), key=lambda x: -x[1])[:3]
+                summary = ", ".join(f"{t} ({n})" for t, n in top)
+                self._stat_doc_types_lbl.setText(summary)
+            else:
+                self._stat_doc_types_lbl.setText("—")
+        if self._stat_completeness_lbl:
+            self._stat_completeness_lbl.setText(f"{completeness_pct}%" if completeness_pct else "—")
 
     def refresh_bundle_count(self) -> None:
         """Load bundles from the DB and (re)build the embedded workflow widget."""
@@ -119,7 +184,37 @@ class BundlePanel(QWidget):
 
         n = len(bundles)
         self._placeholder_status.setText(f"{n} bundle{'s' if n != 1 else ''} ready to review.")
+
+        # Compute and display pre-load stats
+        stats = self._compute_bundle_stats(bundles)
+        self.update_bundle_stats(stats)
+
         self._load_embedded_workflow(bundles)
+
+    def _compute_bundle_stats(self, bundles: list[dict]) -> dict:
+        """Derive summary stats from bundle recommendations for the stats grid."""
+        total = len(bundles)
+        page_counts = [len(b.get("file_paths", [])) for b in bundles]
+        avg_pages = sum(page_counts) / total if total else 0.0
+
+        doc_types: dict[str, int] = {}
+        fields_filled = 0
+        fields_total = 0
+        for b in bundles:
+            dt = b.get("document_type") or "Unknown"
+            doc_types[dt] = doc_types.get(dt, 0) + 1
+            for field in ("company", "document_type", "document_date"):
+                fields_total += 1
+                if b.get(field):
+                    fields_filled += 1
+
+        completeness_pct = int(fields_filled / fields_total * 100) if fields_total else 0
+        return {
+            "total": total,
+            "avg_pages": avg_pages,
+            "doc_types": doc_types,
+            "completeness_pct": completeness_pct,
+        }
 
     def _load_embedded_workflow(self, bundles: list[dict]) -> None:
         """Create (or recreate) the embedded GuidedBundleWorkflow widget."""

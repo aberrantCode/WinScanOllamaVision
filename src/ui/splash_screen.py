@@ -165,9 +165,12 @@ class SplashScreen(QWidget):
         └──────────────────────────────────────┘
     """
 
-    def __init__(self, app_name: str, parent: "QWidget | None" = None) -> None:
+    def __init__(
+        self, app_name: str, is_dark_mode: bool = True, parent: "QWidget | None" = None
+    ) -> None:
         super().__init__(parent)
         self._app_name = app_name
+        self._is_dark_mode = is_dark_mode
         self._movie: QMovie | None = None
         self._setup_window()
         self._setup_ui()
@@ -209,6 +212,15 @@ class SplashScreen(QWidget):
         self.setFixedSize(480, 430)
 
     def _setup_ui(self) -> None:
+        if self._is_dark_mode:
+            bg_color = "#0B1120"
+            name_color = "#E0E0E0"
+            status_color = "rgba(148, 200, 255, 0.90)"
+        else:
+            bg_color = "#FFFFFF"
+            name_color = "#111827"
+            status_color = "#3B82F6"
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 32, 40, 28)
         layout.setSpacing(16)
@@ -221,7 +233,7 @@ class SplashScreen(QWidget):
         font.setPointSize(22)
         font.setBold(True)
         name_label.setFont(font)
-        name_label.setStyleSheet("color: white; letter-spacing: 1px;")
+        name_label.setStyleSheet(f"color: {name_color}; letter-spacing: 1px;")
         layout.addWidget(name_label)
 
         # ── Scanner GIF ───────────────────────────────────────────────────
@@ -234,12 +246,11 @@ class SplashScreen(QWidget):
         self._status_label = QLabel("Initializing...")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet("color: rgba(148, 200, 255, 0.90); font-size: 10pt;")
+        self._status_label.setStyleSheet(f"color: {status_color}; font-size: 10pt;")
         self._status_label.setFixedHeight(44)
         layout.addWidget(self._status_label)
 
-        # Dark blue background to match the main window
-        self.setStyleSheet("background-color: #0B1120;")
+        self.setStyleSheet(f"background-color: {bg_color};")
 
     def _load_animation(self) -> None:
         """

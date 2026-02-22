@@ -235,3 +235,109 @@ def test_image_tree_header_is_configured_after_init(qapp, mock_analysis_db, mock
     assert tree_hdr.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive
     # Last section must not stretch
     assert tree_hdr.stretchLastSection() is False
+
+
+# ---------------------------------------------------------------------------
+# Summary bar — Phase 2 additions
+# ---------------------------------------------------------------------------
+
+
+def test_summary_bar_exists_after_init(qapp, mock_analysis_db, mock_config_manager):
+    """ImportPanel must create a _summary_bar QLabel during _build_ui."""
+    from PyQt6.QtWidgets import QLabel
+
+    panel = _make_panel(qapp, mock_analysis_db, mock_config_manager)
+    assert panel._summary_bar is not None
+    assert isinstance(panel._summary_bar, QLabel)
+
+
+def test_summary_bar_shows_no_images_when_empty(qapp, mock_analysis_db, mock_config_manager):
+    """When _update_summary_bar is called with [], it should indicate none found."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_config_manager)
+    assert panel._summary_bar is not None
+    # Call directly — _post_init fires asynchronously via QTimer so we trigger manually
+    panel._update_summary_bar([])
+    assert "No images" in panel._summary_bar.text() or "found" in panel._summary_bar.text().lower()
+
+
+def test_update_summary_bar_counts_analyzed(qapp, mock_analysis_db, mock_config_manager):
+    """_update_summary_bar must count analyzed images correctly."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_config_manager)
+    images = [
+        {"status": "analyzed"},
+        {"status": "analyzed"},
+        {"status": "registered"},
+        {"status": "error"},
+    ]
+    panel._update_summary_bar(images)
+    text = panel._summary_bar.text()
+    assert "4" in text  # total
+    assert "2" in text  # analyzed count
+
+
+def test_update_summary_bar_counts_errors(qapp, mock_analysis_db, mock_config_manager):
+    """_update_summary_bar must include error count when errors exist."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_config_manager)
+    images = [
+        {"status": "analyzed"},
+        {"status": "error"},
+        {"status": "error"},
+    ]
+    panel._update_summary_bar(images)
+    text = panel._summary_bar.text()
+    # Should mention 2 errors
+    assert "2" in text
+
+
+def test_update_summary_bar_no_errors_omits_error_segment(
+    qapp, mock_analysis_db, mock_config_manager
+):
+    """When there are no errors, _update_summary_bar should not include an error indicator."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_config_manager)
+    images = [{"status": "analyzed"}, {"status": "registered"}]
+    panel._update_summary_bar(images)
+    text = panel._summary_bar.text()
+    assert "\u274c" not in text  # ❌ emoji only appears for errors
+
+
+def test_summary_bar_updated_after_refresh(qapp, mock_analysis_db, mock_config_manager):
+    """Calling _refresh() must update the summary bar with correct image counts."""
+    from unittest.mock import patch
+
+    images = [
+        {
+            "filename": "a.png",
+            "file_path": "/a.png",
+            "status": "analyzed",
+            "file_mtime": 0,
+            "file_size": 0,
+            "directory_path": "/",
+            "is_ignored": False,
+        },
+        {
+            "filename": "b.png",
+            "file_path": "/b.png",
+            "status": "registered",
+            "file_mtime": 0,
+            "file_size": 0,
+            "directory_path": "/",
+            "is_ignored": False,
+        },
+    ]
+
+    with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
+        mock_repo.return_value.get_all.return_value = images
+        from ui.pipeline_window import ImportPanel
+
+        panel = ImportPanel(
+            analysis_db=mock_analysis_db,
+            config_manager=mock_config_manager,
+            dark_mode=False,
+        )
+
+    assert panel._summary_bar is not None
+    # Manually trigger _refresh() because _post_init is deferred via QTimer.singleShot
+    panel._refresh()
+    text = panel._summary_bar.text()
+    # 2 total images should appear somewhere in the bar
+    assert "2" in text

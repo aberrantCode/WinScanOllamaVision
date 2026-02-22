@@ -360,3 +360,113 @@ def test_transform_data_for_grid_none_mtime_gives_none_modified_time(
 
     assert len(transformed) == 1
     assert transformed[0]["modified_time"] is None
+
+
+# ---------------------------------------------------------------------------
+# Analytics section — Phase 3 additions
+# ---------------------------------------------------------------------------
+
+
+def test_analytics_section_created_in_build_ui(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """AnalyzePanel must create _analytics_section during _build_ui."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    assert panel._analytics_section is not None
+
+
+def test_refresh_analytics_section_does_not_raise_when_db_returns_empty(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_refresh_analytics_section must handle empty DB result without raising."""
+    mock_analysis_db.get_analyzed_pages.return_value = []
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    # Should not raise
+    panel._refresh_analytics_section()
+
+
+def test_refresh_analytics_section_does_not_raise_when_db_fails(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_refresh_analytics_section must swallow DB errors gracefully."""
+    mock_analysis_db.get_analyzed_pages.side_effect = RuntimeError("DB unavailable")
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    # Should not raise
+    panel._refresh_analytics_section()
+
+
+def test_refresh_analytics_section_updates_confidence_label(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_refresh_analytics_section updates the confidence label when data is available."""
+    mock_analysis_db.get_analyzed_pages.return_value = [
+        {
+            "analysis_id": 1,
+            "confidence_score": 0.80,
+            "status": "analyzed",
+            "document_type": "Invoice",
+            "company": "ACME",
+            "document_date": "2024-01-01",
+            "page_number": 1,
+        },
+        {
+            "analysis_id": 2,
+            "confidence_score": 0.60,
+            "status": "analyzed",
+            "document_type": "Statement",
+            "company": "Globex",
+            "document_date": "2024-02-01",
+            "page_number": 1,
+        },
+    ]
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel._refresh_analytics_section()
+
+    if panel._avg_conf_label:
+        text = panel._avg_conf_label.text()
+        assert "70.0%" in text
+
+
+def test_refresh_analytics_updates_error_rate(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_refresh_analytics_section computes error rate from status field."""
+    mock_analysis_db.get_analyzed_pages.return_value = [
+        {
+            "analysis_id": 1,
+            "confidence_score": 0.9,
+            "status": "analyzed",
+            "document_type": "Invoice",
+            "company": "ACME",
+            "document_date": "",
+            "page_number": 1,
+        },
+        {
+            "analysis_id": None,
+            "confidence_score": None,
+            "status": "error",
+            "document_type": None,
+            "company": None,
+            "document_date": None,
+            "page_number": None,
+        },
+    ]
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel._refresh_analytics_section()
+
+    if panel._error_rate_label:
+        text = panel._error_rate_label.text()
+        assert "50.0%" in text
+
+
+def test_job_finished_calls_refresh_analytics(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_on_job_finished must trigger _refresh_analytics_section."""
+    mock_analysis_db.get_analyzed_pages.return_value = []
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+
+    with patch.object(panel, "_refresh_analytics_section") as mock_refresh:
+        panel._on_job_finished("job-1", {"analyzed": 1, "cached": 0, "errors": 0, "total_files": 1})
+
+    mock_refresh.assert_called_once()

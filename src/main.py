@@ -147,7 +147,7 @@ if __name__ == "__main__":
 
         # ── Splash screen ──────────────────────────────────────────────────────
         logger.info("Showing splash screen...")
-        splash = SplashScreen(app_name)
+        splash = SplashScreen(app_name, is_dark_mode=is_dark_mode)
         splash.center_on_screen()
         splash.show()
         app.processEvents()  # Ensure the splash is painted before the worker starts

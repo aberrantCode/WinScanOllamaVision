@@ -108,3 +108,102 @@ def test_load_embedded_workflow_adds_to_stack_when_stack_present(
     mock_wf.workflow_completed.connect.assert_called_once()
     mock_stack.addWidget.assert_called_once_with(mock_wf)
     mock_stack.setCurrentWidget.assert_called_once_with(mock_wf)
+
+
+# ---------------------------------------------------------------------------
+# Stats grid — Phase 4 additions
+# ---------------------------------------------------------------------------
+
+
+def test_bundle_stats_widget_created_in_build_ui(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """BundlePanel must create _bundle_stats_widget during _build_ui."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    assert panel._bundle_stats_widget is not None
+
+
+def test_update_bundle_stats_sets_bundle_count(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """update_bundle_stats() must update the bundles-ready label."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel.update_bundle_stats(
+        {"total": 7, "avg_pages": 3.5, "doc_types": {}, "completeness_pct": 80}
+    )
+    if panel._stat_bundles_lbl:
+        assert "7" in panel._stat_bundles_lbl.text()
+
+
+def test_update_bundle_stats_sets_avg_pages(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """update_bundle_stats() must update the avg-pages label."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel.update_bundle_stats(
+        {"total": 4, "avg_pages": 5.5, "doc_types": {}, "completeness_pct": 0}
+    )
+    if panel._stat_avg_pages_lbl:
+        assert "5.5" in panel._stat_avg_pages_lbl.text()
+
+
+def test_update_bundle_stats_zero_avg_pages_shows_dash(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """When avg_pages is 0, the label should display '—'."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel.update_bundle_stats({"total": 0, "avg_pages": 0, "doc_types": {}, "completeness_pct": 0})
+    if panel._stat_avg_pages_lbl:
+        assert panel._stat_avg_pages_lbl.text() == "—"
+
+
+def test_update_bundle_stats_shows_top_doc_types(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """update_bundle_stats() populates doc types from the provided dict."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel.update_bundle_stats(
+        {
+            "total": 3,
+            "avg_pages": 2.0,
+            "doc_types": {"Invoice": 2, "Statement": 1},
+            "completeness_pct": 75,
+        }
+    )
+    if panel._stat_doc_types_lbl:
+        text = panel._stat_doc_types_lbl.text()
+        assert "Invoice" in text
+
+
+def test_update_bundle_stats_empty_doc_types_shows_dash(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """When doc_types is empty, the label should display '—'."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel.update_bundle_stats({"total": 0, "avg_pages": 0, "doc_types": {}, "completeness_pct": 0})
+    if panel._stat_doc_types_lbl:
+        assert panel._stat_doc_types_lbl.text() == "—"
+
+
+def test_compute_bundle_stats_basic(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager):
+    """_compute_bundle_stats derives correct totals from bundle list."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    bundles = [
+        {
+            "file_paths": ["a.png", "b.png"],
+            "document_type": "Invoice",
+            "company": "ACME",
+            "document_date": "2024-01-01",
+        },
+        {
+            "file_paths": ["c.png"],
+            "document_type": "Statement",
+            "company": "Globex",
+            "document_date": "",
+        },
+    ]
+    stats = panel._compute_bundle_stats(bundles)
+    assert stats["total"] == 2
+    assert stats["avg_pages"] == 1.5
+    assert "Invoice" in stats["doc_types"]
+    assert stats["doc_types"]["Invoice"] == 1

@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -21,8 +22,8 @@ from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from services.analysis_queue import AnalysisJob, AnalysisQueue, JobPriority, JobType
+from services.analysis_worker import AnalysisWorker
 from services.logging_service import get_logger
-from ui.analysis_status_window import AnalysisWorker
 from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.pipeline.stages import _LINK_STYLE
 from ui.theme_manager import ThemeManager
@@ -84,6 +85,18 @@ class AnalyzePanel(QWidget):
         self._content_splitter: QSplitter | None = None
         self._select_all_btn: QPushButton | None = None
         self._deselect_btn: QPushButton | None = None
+
+        # Analytics section widgets (populated in _build_analytics_section)
+        self._analytics_section: QWidget | None = None
+        self._avg_conf_label: QLabel | None = None
+        self._error_rate_label: QLabel | None = None
+        self._completeness_bars: dict = {}
+        self._docs_created_label: QLabel | None = None
+        self._pages_archived_label: QLabel | None = None
+        self._avg_pages_label: QLabel | None = None
+        self._bundle_acceptance_label: QLabel | None = None
+        self._type_dist_container: QWidget | None = None
+        self._company_dist_container: QWidget | None = None
 
         self._build_ui()
         self._connect_worker()
@@ -193,6 +206,10 @@ class AnalyzePanel(QWidget):
 
         root.addLayout(stats_row)
 
+        # ── Analytics section (collapsible, collapsed by default)
+        self._analytics_section = self._build_analytics_section()
+        root.addWidget(self._analytics_section)
+
         # ── Content area: file grid (left) + image preview (right)
         from ui.file_details_grid import FileDetailsGrid
 
@@ -224,6 +241,174 @@ class AnalyzePanel(QWidget):
 
         # ── Footer navigation
 
+    def _build_analytics_section(self) -> QWidget:
+        """Build a collapsible analytics section with quality and document insights."""
+        from ui.collection_status_helpers import (
+            create_collapsible_section,
+            create_company_insights_widget,
+            create_document_insights_widget_split,
+            create_quality_metrics_widget,
+        )
+
+        # create_collapsible_section uses 'tab_hover_bg' which is not in ThemeManager;
+        # map it to bg_hover so the helper receives a complete palette.
+        c = {**self._c(), "tab_hover_bg": self._c().get("bg_hover", "#E5E7EB")}
+
+        # Quality metrics panel
+        quality_widget, avg_conf_lbl, error_rate_lbl, completeness_bars = (
+            create_quality_metrics_widget(c)
+        )
+        self._avg_conf_label = avg_conf_lbl
+        self._error_rate_label = error_rate_lbl
+        self._completeness_bars = completeness_bars
+
+        # Document insights panel (without company distribution)
+        (
+            doc_widget,
+            docs_created_lbl,
+            pages_archived_lbl,
+            avg_pages_lbl,
+            bundle_acceptance_lbl,
+            type_dist_container,
+        ) = create_document_insights_widget_split(c)
+        self._docs_created_label = docs_created_lbl
+        self._pages_archived_label = pages_archived_lbl
+        self._avg_pages_label = avg_pages_lbl
+        self._bundle_acceptance_label = bundle_acceptance_lbl
+        self._type_dist_container = type_dist_container
+
+        # Company insights panel
+        company_widget, company_dist_container = create_company_insights_widget(c)
+        self._company_dist_container = company_dist_container
+
+        # Combine into a horizontal row inside a scroll area
+        analytics_row = QWidget()
+        analytics_row.setStyleSheet("background-color: transparent;")
+        row_layout = QHBoxLayout(analytics_row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+        row_layout.addWidget(quality_widget, stretch=1)
+        row_layout.addWidget(doc_widget, stretch=1)
+        row_layout.addWidget(company_widget, stretch=1)
+
+        scroll = QScrollArea()
+        scroll.setWidget(analytics_row)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedHeight(220)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(scroll.Shape.NoFrame)
+
+        section = create_collapsible_section(c, "Analytics", scroll, initially_expanded=False)
+        return section
+
+    def _refresh_analytics_section(self) -> None:
+        """Recompute analytics from the DB and update labels in the analytics section."""
+        if not self._avg_conf_label:
+            return
+        try:
+            raw_data = self.analysis_db.get_analyzed_pages()
+        except Exception as e:
+            get_logger().warning(f"[AnalyzePanel] analytics refresh failed: {e}")
+            return
+
+        analyzed = [r for r in raw_data if r.get("analysis_id") is not None]
+        total = len(raw_data)
+        n_analyzed = len(analyzed)
+        n_errors = sum(1 for r in raw_data if r.get("status") == "error")
+
+        # Quality metrics
+        confidences = [
+            r["confidence_score"] for r in analyzed if r.get("confidence_score") is not None
+        ]
+        avg_conf = (sum(confidences) / len(confidences) * 100) if confidences else None
+        if self._avg_conf_label:
+            self._avg_conf_label.setText(
+                f"Average Confidence: {avg_conf:.1f}%"
+                if avg_conf is not None
+                else "Average Confidence: —"
+            )
+
+        error_rate = (n_errors / total * 100) if total > 0 else 0.0
+        if self._error_rate_label:
+            self._error_rate_label.setText(f"Error Rate: {error_rate:.1f}%")
+
+        # Metadata completeness bars
+        fields = ["company", "document_type", "document_date", "page_number"]
+        for field in fields:
+            filled = sum(1 for r in analyzed if r.get(field))
+            pct = int(filled / n_analyzed * 100) if n_analyzed > 0 else 0
+            bar_widget = self._completeness_bars.get(field)
+            if bar_widget:
+                bar_widget.label.setText(f"{field.replace('_', ' ').title()}: {pct}%")
+                bar_widget.bar.setValue(pct)
+
+        # Document insights
+        if self._docs_created_label:
+            self._docs_created_label.setText(f"Documents Created: {n_analyzed}")
+        if self._pages_archived_label:
+            self._pages_archived_label.setText(f"Pages Archived: {n_analyzed}")
+
+        if self._avg_pages_label:
+            companies: dict[str, int] = {}
+            for r in analyzed:
+                comp = r.get("company") or "Unknown"
+                companies[comp] = companies.get(comp, 0) + 1
+            unique_docs = len(companies)
+            avg_pgs = (n_analyzed / unique_docs) if unique_docs > 0 else 0
+            self._avg_pages_label.setText(
+                f"Avg Pages per Document: {avg_pgs:.1f}"
+                if unique_docs > 0
+                else "Avg Pages per Document: —"
+            )
+
+        if self._bundle_acceptance_label:
+            self._bundle_acceptance_label.setText("Bundle Acceptance Rate: —")
+
+        # Type distribution
+        # Note: `.layout` is monkey-patched in create_document_insights_widget_split
+        # to hold the QVBoxLayout instance directly (not the layout() method).
+        if self._type_dist_container:
+            from PyQt6.QtWidgets import QVBoxLayout
+
+            from ui.collection_status_helpers import create_distribution_bar
+
+            type_layout: QVBoxLayout = self._type_dist_container.layout  # type: ignore[assignment]
+            while type_layout.count():
+                item = type_layout.takeAt(0)
+                if item:
+                    w = item.widget()
+                    if w:
+                        w.deleteLater()
+            type_counts: dict[str, int] = {}
+            for r in analyzed:
+                dt = r.get("document_type") or "Unknown"
+                type_counts[dt] = type_counts.get(dt, 0) + 1
+            for doc_type, count in sorted(type_counts.items(), key=lambda x: -x[1])[:5]:
+                bar = create_distribution_bar(self._c(), doc_type, count, n_analyzed)
+                type_layout.addWidget(bar)
+
+        # Company distribution
+        if self._company_dist_container:
+            from PyQt6.QtWidgets import QVBoxLayout
+
+            from ui.collection_status_helpers import create_distribution_bar
+
+            comp_layout: QVBoxLayout = self._company_dist_container.layout  # type: ignore[assignment]
+            while comp_layout.count():
+                item = comp_layout.takeAt(0)
+                if item:
+                    w = item.widget()
+                    if w:
+                        w.deleteLater()
+            comp_counts: dict[str, int] = {}
+            for r in analyzed:
+                comp = r.get("company") or "Unknown"
+                comp_counts[comp] = comp_counts.get(comp, 0) + 1
+            for company, count in sorted(comp_counts.items(), key=lambda x: -x[1])[:5]:
+                bar = create_distribution_bar(self._c(), company, count, n_analyzed)
+                comp_layout.addWidget(bar)
+
     def refresh(self) -> None:
         """Load (or reload) current file statuses from the database into the grid."""
         if not self.file_grid:
@@ -243,6 +428,8 @@ class AnalyzePanel(QWidget):
             self.stats_lbl.setText(
                 f"Total: {total}  ·  Analyzed: {analyzed}  ·  Pending: {total - analyzed}"
             )
+
+        self._refresh_analytics_section()
 
     def _transform_data_for_grid(self, db_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Transform raw DB rows to the format expected by FileDetailsGrid."""
@@ -463,6 +650,8 @@ class AnalyzePanel(QWidget):
                 self.progress_bar.setRange(0, total)
                 self.progress_bar.setValue(total)
                 self.progress_bar.setFormat("100% — Complete")
+
+        self._refresh_analytics_section()
 
     def _on_worker_error(self, job_id: str, error_msg: str) -> None:
         if self.status_lbl:
