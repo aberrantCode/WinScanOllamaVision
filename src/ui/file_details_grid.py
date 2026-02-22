@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
+from ui.styles import show_confirm, show_critical, show_information, show_question, show_warning
 
 
 class FileDetailsTableModel(QAbstractTableModel):
@@ -779,20 +780,20 @@ class FileDetailsDialog(QDialog):
         # Button styling matching guided bundle workflow
         button_style = f"""
             QPushButton {{
-                background: {self.theme_colors['bg_primary']};
-                color: {self.theme_colors['text_primary']};
-                border: 1px solid {self.theme_colors['border']};
+                background: {self.theme_colors["bg_primary"]};
+                color: {self.theme_colors["text_primary"]};
+                border: 1px solid {self.theme_colors["border"]};
                 border-radius: 6px;
                 padding: 10px 20px;
                 font-weight: 600;
                 min-height: 36px;
             }}
             QPushButton:hover {{
-                background: {self.theme_colors['bg_secondary']};
-                border-color: {self.theme_colors['accent']};
+                background: {self.theme_colors["bg_secondary"]};
+                border-color: {self.theme_colors["accent"]};
             }}
             QPushButton:pressed {{
-                background: {self.theme_colors['accent']};
+                background: {self.theme_colors["accent"]};
                 color: white;
             }}
         """
@@ -1673,7 +1674,7 @@ class FileDetailsDialog(QDialog):
         """Copy JSON data to clipboard."""
         json_str = json.dumps(self.file_data, indent=2, default=str)
         QApplication.clipboard().setText(json_str)
-        QMessageBox.information(self, "Copied", "JSON data copied to clipboard")
+        show_information(self, "Copied", "JSON data copied to clipboard")
 
     def _view_document(self):
         """Open the document with the default system viewer."""
@@ -1681,7 +1682,7 @@ class FileDetailsDialog(QDialog):
         filename = self.file_data.get("filename")
 
         if not filename:
-            QMessageBox.warning(
+            show_warning(
                 self, "File Name Not Found", "Could not find the file name for this record."
             )
             return
@@ -1690,7 +1691,7 @@ class FileDetailsDialog(QDialog):
         file_path = self._find_actual_file_path(stored_path, filename)
 
         if not file_path:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "File Not Found",
                 f"Could not find the file:\n\n{filename}\n\nSearched in configured source directories.",
@@ -1701,7 +1702,7 @@ class FileDetailsDialog(QDialog):
             # Open file with default system viewer
             os.startfile(file_path)
         except Exception as e:
-            QMessageBox.critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
+            show_critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
 
     def _save_metadata(self):
         """Save edited metadata back to the database."""
@@ -1840,13 +1841,13 @@ class FileDetailsDialog(QDialog):
                     # Emit signal so parent can refresh its data
                     self.metadata_saved.emit(file_path)
 
-                    QMessageBox.information(self, "Success", "Metadata saved successfully!")
+                    show_information(self, "Success", "Metadata saved successfully!")
 
                     # Update original values to current values (reset change tracking)
                     self._store_original_metadata_values()
                     self._update_save_button_state()
                 else:
-                    QMessageBox.warning(
+                    show_warning(
                         self, "Missing File Path", "Cannot save metadata: file path not found."
                     )
             else:
@@ -1857,14 +1858,14 @@ class FileDetailsDialog(QDialog):
                 if not metadata_db:
                     missing_dbs.append("metadata_db")
 
-                QMessageBox.warning(
+                show_warning(
                     self,
                     "Database Not Available",
                     f"Cannot save metadata: {', '.join(missing_dbs)} not available.",
                 )
 
         except Exception as e:
-            QMessageBox.critical(self, "Save Failed", f"Failed to save metadata:\n\n{str(e)}")
+            show_critical(self, "Save Failed", f"Failed to save metadata:\n\n{str(e)}")
 
     def _find_actual_file_path(self, stored_path, filename):
         """Find the actual file path, searching source directories if needed."""
@@ -1906,7 +1907,7 @@ class FileDetailsDialog(QDialog):
         """Queue this file for re-analysis and close dialog."""
         file_path = self.file_data.get("full_path") or self.file_data.get("filename")
         if not file_path:
-            QMessageBox.warning(self, "No File Path", "Cannot re-analyze: file path not found.")
+            show_warning(self, "No File Path", "Cannot re-analyze: file path not found.")
             return
 
         # Emit signal to parent (AnalysisStatusWindow will queue the job)
@@ -1919,7 +1920,7 @@ class FileDetailsDialog(QDialog):
         """Delete this record from the database (same as context menu delete)."""
         file_path = self.file_data.get("full_path") or self.file_data.get("filename")
         if not file_path:
-            QMessageBox.warning(self, "No File Path", "Cannot delete: file path not found.")
+            show_warning(self, "No File Path", "Cannot delete: file path not found.")
             return
 
         # Create custom dialog with checkbox for file deletion
@@ -1994,7 +1995,7 @@ class FileDetailsDialog(QDialog):
 
         # Check if we have database access
         if not self.analysis_db:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Database Not Available",
                 "Cannot delete record: database connection not available.",
@@ -2019,7 +2020,7 @@ class FileDetailsDialog(QDialog):
                     logger.info(f"Deleted physical file: {file_path}")
                 except Exception as file_error:
                     # Show warning but don't fail the whole operation
-                    QMessageBox.warning(
+                    show_warning(
                         self,
                         "File Deletion Failed",
                         f"Database record deleted, but failed to delete the physical file:\n\n{str(file_error)}",
@@ -2036,7 +2037,7 @@ class FileDetailsDialog(QDialog):
 
             logger = get_logger()
             logger.error(f"Error deleting record: {e}", exc_info=True)
-            QMessageBox.critical(self, "Delete Failed", f"Failed to delete record:\n\n{str(e)}")
+            show_critical(self, "Delete Failed", f"Failed to delete record:\n\n{str(e)}")
 
     # Note: Analysis progress/completion handlers removed - now handled by queue system in AnalysisStatusWindow
 
@@ -2171,7 +2172,7 @@ class FileDetailsDialog(QDialog):
                 # Enabled state - use blue accent color to draw attention
                 self.save_metadata_btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: {self.theme_colors['accent']};
+                        background: {self.theme_colors["accent"]};
                         color: white;
                         border: none;
                         border-radius: 6px;
@@ -2180,7 +2181,7 @@ class FileDetailsDialog(QDialog):
                         min-height: 36px;
                     }}
                     QPushButton:hover {{
-                        background: {self.theme_colors['text_primary']};
+                        background: {self.theme_colors["text_primary"]};
                         color: white;
                     }}
                 """)
@@ -2189,9 +2190,9 @@ class FileDetailsDialog(QDialog):
                 disabled_text_color = "#808080" if self.is_dark_mode else "#A0A0A0"
                 self.save_metadata_btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: {self.theme_colors['bg_secondary']};
+                        background: {self.theme_colors["bg_secondary"]};
                         color: {disabled_text_color};
-                        border: 1px solid {self.theme_colors['border']};
+                        border: 1px solid {self.theme_colors["border"]};
                         border-radius: 6px;
                         padding: 10px 20px;
                         font-weight: 600;
@@ -2207,16 +2208,14 @@ class FileDetailsDialog(QDialog):
     def _check_unsaved_changes_before_close(self):
         """Check for unsaved changes and prompt user. Returns True if OK to close, False otherwise."""
         if self._has_unsaved_changes():
-            from PyQt6.QtWidgets import QMessageBox
-
-            reply = QMessageBox.question(
+            reply = show_question(
                 self,
                 "Unsaved Changes",
                 "You have unsaved changes. Do you want to save them before closing?",
-                QMessageBox.StandardButton.Save
+                buttons=QMessageBox.StandardButton.Save
                 | QMessageBox.StandardButton.Discard
                 | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Save,
+                default_button=QMessageBox.StandardButton.Save,
             )
 
             if reply == QMessageBox.StandardButton.Save:
@@ -3122,7 +3121,7 @@ class FileDetailsGrid(QWidget):
         filename = row_data.get("filename")
 
         if not filename:
-            QMessageBox.warning(
+            show_warning(
                 self, "File Name Not Found", "Could not find the file name for this record."
             )
             return
@@ -3131,7 +3130,7 @@ class FileDetailsGrid(QWidget):
         file_path = self._find_actual_file_path(stored_path, filename)
 
         if not file_path:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "File Not Found",
                 f"Could not find the file:\n\n{filename}\n\nSearched in configured source directories.",
@@ -3142,7 +3141,7 @@ class FileDetailsGrid(QWidget):
             # Open file with default system viewer
             os.startfile(file_path)
         except Exception as e:
-            QMessageBox.critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
+            show_critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
 
     def _show_details_dialog(self, index: QModelIndex):
         """Show details dialog for double-clicked row."""
@@ -3247,15 +3246,15 @@ class FileDetailsGrid(QWidget):
         if not files_to_clear:
             return
 
-        reply = QMessageBox.question(
-            self,
-            "Clear Errors",
-            f"Reset {len(files_to_clear)} file(s) to pending status?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-
-        if reply == QMessageBox.StandardButton.Yes and self.analysis_db:
+        if (
+            show_confirm(
+                self,
+                "Clear Errors",
+                f"Reset {len(files_to_clear)} file(s) to pending status?",
+                default_cancel=False,
+            )
+            and self.analysis_db
+        ):
             for file_path, row_idx in files_to_clear:
                 try:
                     # Reset status to pending in database
@@ -3272,7 +3271,7 @@ class FileDetailsGrid(QWidget):
                             self.model.index(row_idx, self.model.columnCount() - 1),
                         )
                 except Exception as e:
-                    QMessageBox.warning(
+                    show_warning(
                         self,
                         "Clear Error Failed",
                         f"Failed to clear error for {file_path}:\n\n{str(e)}",
@@ -3291,16 +3290,12 @@ class FileDetailsGrid(QWidget):
                 if file_path:
                     file_paths.append(file_path)
 
-        if file_paths:
-            reply = QMessageBox.question(
-                self,
-                "Re-analyze Files",
-                f"Re-analyze {len(file_paths)} selected file(s)?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                self.re_analyze_requested.emit(file_paths)
+        if file_paths and show_confirm(
+            self,
+            "Re-analyze Files",
+            f"Re-analyze {len(file_paths)} selected file(s)?",
+        ):
+            self.re_analyze_requested.emit(file_paths)
 
     def _export_csv(self, selected_only: bool = False):
         """Export data to CSV file."""
@@ -3344,10 +3339,10 @@ class FileDetailsGrid(QWidget):
                             row.append(str(value) if value is not None else "")
                         writer.writerow(row)
 
-            QMessageBox.information(self, "Export Complete", f"Data exported to {file_path}")
+            show_information(self, "Export Complete", f"Data exported to {file_path}")
 
         except Exception as e:
-            QMessageBox.critical(self, "Export Failed", f"Failed to export data: {str(e)}")
+            show_critical(self, "Export Failed", f"Failed to export data: {str(e)}")
 
     def _copy_to_clipboard(self):
         """Copy selected rows to clipboard as TSV."""
@@ -3381,7 +3376,7 @@ class FileDetailsGrid(QWidget):
         tsv_string = "\n".join(lines)
         QApplication.clipboard().setText(tsv_string)
 
-        QMessageBox.information(self, "Copied", f"{len(selection)} rows copied to clipboard")
+        show_information(self, "Copied", f"{len(selection)} rows copied to clipboard")
 
     def _copy_filename_to_clipboard(self):
         """Copy selected filenames to clipboard."""
@@ -3440,7 +3435,7 @@ class FileDetailsGrid(QWidget):
             parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
 
         if not analysis_db:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Database Not Available",
                 "Cannot update status: database connection not available.",
@@ -3456,7 +3451,7 @@ class FileDetailsGrid(QWidget):
                 file_paths.append(row_data["full_path"])
 
         if not file_paths:
-            QMessageBox.warning(self, "No Records", "No valid records found to update.")
+            show_warning(self, "No Records", "No valid records found to update.")
             return
 
         # Update status in database
@@ -3482,9 +3477,9 @@ class FileDetailsGrid(QWidget):
                 message += f"\n\nErrors ({len(errors)}):\n" + "\n".join(errors[:5])
                 if len(errors) > 5:
                     message += f"\n... and {len(errors) - 5} more errors"
-            QMessageBox.information(self, "Status Update Complete", message)
+            show_information(self, "Status Update Complete", message)
         elif errors:
-            QMessageBox.warning(
+            show_warning(
                 self, "Update Failed", "No records were updated.\n\n" + "\n".join(errors[:10])
             )
 
@@ -3494,15 +3489,12 @@ class FileDetailsGrid(QWidget):
         if not selection:
             return
 
-        reply = QMessageBox.warning(
+        if show_confirm(
             self,
             "Delete Records",
             f"Delete {len(selection)} record(s) from the database?\n\nThis will NOT delete the actual files.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+            default_cancel=True,
+        ):
             # Get database instances from parent chain
             parent_widget = self.parent()
             analysis_db = None
@@ -3514,7 +3506,7 @@ class FileDetailsGrid(QWidget):
                 parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
 
             if not analysis_db:
-                QMessageBox.warning(
+                show_warning(
                     self,
                     "Database Not Available",
                     "Cannot delete records: database connection not available.",
@@ -3532,7 +3524,7 @@ class FileDetailsGrid(QWidget):
                         file_paths.append(file_path)
 
             if not file_paths:
-                QMessageBox.warning(self, "No Records", "No valid records found to delete.")
+                show_warning(self, "No Records", "No valid records found to delete.")
                 return
 
             # Delete from all databases
@@ -3569,8 +3561,8 @@ class FileDetailsGrid(QWidget):
                     message += f"\n\nErrors ({len(errors)}):\n" + "\n".join(errors[:5])
                     if len(errors) > 5:
                         message += f"\n... and {len(errors) - 5} more errors"
-                QMessageBox.information(self, "Deletion Complete", message)
+                show_information(self, "Deletion Complete", message)
             else:
-                QMessageBox.warning(
+                show_warning(
                     self, "Deletion Failed", "No records were deleted.\n\n" + "\n".join(errors[:10])
                 )

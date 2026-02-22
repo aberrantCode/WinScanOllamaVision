@@ -15,7 +15,6 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
-    QMessageBox,
     QProgressBar,
     QVBoxLayout,
     QWidget,
@@ -33,6 +32,7 @@ from ui.bundle.bundle_review_helpers import (
 )
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
+from ui.styles import show_confirm, show_critical, show_information, show_warning
 
 
 def _create_mock_bundles() -> list:
@@ -440,14 +440,11 @@ class BundleReviewWidget(QWidget):
         """Reject the current bundle."""
         bundle = self.bundles[self.current_bundle_index]
 
-        reply = QMessageBox.question(
+        if show_confirm(
             self,
             "Reject Bundle",
             f"Reject this bundle?\n\n{bundle.get('document_type')} - {bundle.get('company')}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+        ):
             self.rejected_bundles.append(bundle)
             self.bundle_rejected.emit(bundle)
 
@@ -514,7 +511,7 @@ class BundleReviewWidget(QWidget):
     def _on_reanalyze_page(self):
         """Re-analyze the current page using LLM provider."""
         if self.prototype_mode:
-            QMessageBox.information(
+            show_information(
                 self,
                 "Re-analyze Page",
                 "Re-analysis feature is not available in prototype mode.\n\n"
@@ -566,23 +563,23 @@ class BundleReviewWidget(QWidget):
                     self.metadata_panel.load_bundle(
                         bundle, self.page_order, self.current_page_index, self.prototype_mode
                     )
-                    QMessageBox.information(self, "Success", "Page re-analyzed successfully!")
+                    show_information(self, "Success", "Page re-analyzed successfully!")
                 else:
-                    QMessageBox.warning(self, "Error", "Re-analysis completed but no data returned")
+                    show_warning(self, "Error", "Re-analysis completed but no data returned")
             else:
-                QMessageBox.warning(
+                show_warning(
                     self, "Error", f"Re-analysis failed:\n{result.get('error', 'Unknown error')}"
                 )
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Re-analysis error:\n{str(e)}")
+            show_critical(self, "Error", f"Re-analysis error:\n{str(e)}")
         finally:
             progress.close()
 
     def _on_add_page(self):
         """Add a page from other bundles or loose pages."""
         if self.prototype_mode:
-            QMessageBox.information(
+            show_information(
                 self,
                 "Add Page",
                 "Add page feature is not available in prototype mode.\n\n"
@@ -594,7 +591,7 @@ class BundleReviewWidget(QWidget):
             )
             return
 
-        QMessageBox.information(
+        show_information(
             self,
             "Add Page",
             "This feature allows you to:\n\n"
@@ -609,7 +606,7 @@ class BundleReviewWidget(QWidget):
         bundle = self.bundles[self.current_bundle_index]
 
         if len(bundle["file_paths"]) <= 1:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Cannot Remove",
                 "Cannot remove the last page from a bundle.\n\n"
@@ -621,15 +618,12 @@ class BundleReviewWidget(QWidget):
         file_path = bundle["file_paths"][actual_index]
         filename = Path(file_path).name
 
-        reply = QMessageBox.question(
+        if show_confirm(
             self,
             "Remove Page",
             f"Remove this page from the bundle?\n\n{filename}\n\n"
             "The page will be marked as a loose page.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+        ):
             bundle["file_paths"].pop(actual_index)
             if "analyses" in bundle and actual_index < len(bundle["analyses"]):
                 bundle["analyses"].pop(actual_index)
@@ -683,7 +677,7 @@ class BundleReviewWidget(QWidget):
         """Re-enable panels after metadata save."""
         self.thumbnail_panel.setEnabled(True)
         self._action_bar.setEnabled(True)
-        QMessageBox.information(
+        show_information(
             self,
             "Changes Saved",
             "Metadata changes saved for this page.\n\n"

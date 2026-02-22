@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
-from ui.styles import Colors
+from ui.styles import Colors, show_critical, show_information, show_question
 
 
 def show_pdf_conversion(
@@ -89,18 +89,16 @@ def complete_pdf_conversion(
     progress_dialog.close()
 
     if prototype_mode:
-        success_dialog = QMessageBox(parent)
-        success_dialog.setWindowTitle("PDF Created")
-        success_dialog.setIcon(QMessageBox.Icon.Information)
-        success_dialog.setText(f"✓ PDF created successfully!\n\n{metadata['output_filename']}")
-        success_dialog.setStandardButtons(
-            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok
+        result = show_question(
+            parent,
+            "PDF Created",
+            f"✓ PDF created successfully!\n\n{metadata['output_filename']}",
+            buttons=QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
         )
-        success_dialog.setDefaultButton(QMessageBox.StandardButton.Ok)
-        result = success_dialog.exec()
 
         if result == QMessageBox.StandardButton.Open:
-            QMessageBox.information(
+            show_information(
                 parent,
                 "Open PDF",
                 f"Would open: {metadata['output_filename']}\n\n(Mock implementation)",
@@ -117,18 +115,14 @@ def complete_pdf_conversion(
         output_dir = pdf_converter.determine_output_directory(bundle)
         pdf_path = pdf_converter.convert(bundle, metadata, ordered_paths, rotation_angle)
 
-        success_dialog = QMessageBox(parent)
-        success_dialog.setWindowTitle("PDF Created")
-        success_dialog.setIcon(QMessageBox.Icon.Information)
-        success_dialog.setText(
+        result = show_question(
+            parent,
+            "PDF Created",
             f"✓ PDF created successfully!\n\n{metadata['output_filename']}\n\n"
-            f"Location: {output_dir}"
+            f"Location: {output_dir}",
+            buttons=QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok,
+            default_button=QMessageBox.StandardButton.Ok,
         )
-        success_dialog.setStandardButtons(
-            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok
-        )
-        success_dialog.setDefaultButton(QMessageBox.StandardButton.Ok)
-        result = success_dialog.exec()
 
         if result == QMessageBox.StandardButton.Open:
             pdf_converter.open_pdf(pdf_path)
@@ -143,7 +137,7 @@ def complete_pdf_conversion(
         on_next_or_complete()
 
     except Exception as e:
-        QMessageBox.critical(
+        show_critical(
             parent, "PDF Conversion Failed", f"Failed to convert bundle to PDF:\n\n{str(e)}"
         )
 
@@ -157,10 +151,6 @@ def show_completion_summary(
     on_completed: Callable[[dict], None],
 ) -> None:
     """Show the workflow-complete summary dialog and call ``on_completed``."""
-    summary = QMessageBox(parent)
-    summary.setWindowTitle("Workflow Complete")
-    summary.setIcon(QMessageBox.Icon.Information)
-
     summary_text = f"""
 Bundle Review Complete!
 
@@ -171,9 +161,7 @@ Bundle Review Complete!
 Total Reviewed: {accepted + rejected} / {total}
     """.strip()
 
-    summary.setText(summary_text)
-    summary.setStandardButtons(QMessageBox.StandardButton.Ok)
-    summary.exec()
+    show_information(parent, "Workflow Complete", summary_text)
 
     on_completed(
         {
