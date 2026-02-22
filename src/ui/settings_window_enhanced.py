@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -28,6 +29,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStyle,
@@ -305,7 +307,7 @@ class EnhancedSettingsWindow(QDialog):
                 self.setWindowIcon(QIcon(icon_path))
 
             self.setMinimumWidth(750)
-            self.setMinimumHeight(600)
+            self.setMinimumHeight(400)
 
             self._get_logger().debug("Starting _init_ui()...")
             self._init_ui()
@@ -330,6 +332,44 @@ class EnhancedSettingsWindow(QDialog):
 
             logger = _get_logger()
         return logger
+
+    @staticmethod
+    def _in_scroll(widget: QWidget) -> QScrollArea:
+        """Wrap *widget* in a frameless, vertically-scrollable QScrollArea.
+
+        The scroll area is transparent and suppresses horizontal scrolling so
+        the tab content fills the available width and only scrolls vertically
+        when the dialog is shorter than its natural content height.
+        """
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(widget)
+        return scroll
+
+    def _constrain_to_screen(self) -> None:
+        """Cap the dialog height to the active monitor's available geometry.
+
+        Called at the start of showEvent so it accounts for the screen the
+        window is actually on, including when the user moves it to a different
+        monitor before re-opening settings.
+        """
+        from PyQt6.QtWidgets import QApplication
+
+        screen = self.screen()
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+
+        avail_h = screen.availableGeometry().height()
+        # Keep a small margin so the window doesn't butt right against the taskbar.
+        max_h = max(self.minimumHeight(), avail_h - 40)
+        self.setMaximumHeight(max_h)
+        if self.height() > max_h:
+            self.resize(self.width(), max_h)
 
     def closeEvent(self, event):  # noqa: N802
         """Clean up resources when window closes."""
@@ -1288,13 +1328,14 @@ class EnhancedSettingsWindow(QDialog):
         # Apply theme-based stylesheet
         self._apply_theme_stylesheet()
 
-        # Create tabs
-        self.tabs.addTab(self._create_general_tab(), "General")
-        self.tabs.addTab(self._create_llm_provider_tab(), "LLM Provider")
-        self.tabs.addTab(self._create_prompts_tab(), "Prompts")
-        self.tabs.addTab(self._create_directories_tab(), "Directories & Discovery")
-        self.tabs.addTab(self._create_database_tab(), "Database")
-        self.tabs.addTab(self._create_appearance_tab(), "Appearance")
+        # Create tabs — each tab body is wrapped in a QScrollArea so the dialog
+        # can be shorter than its natural content height without clipping.
+        self.tabs.addTab(self._in_scroll(self._create_general_tab()), "General")
+        self.tabs.addTab(self._in_scroll(self._create_llm_provider_tab()), "LLM Provider")
+        self.tabs.addTab(self._in_scroll(self._create_prompts_tab()), "Prompts")
+        self.tabs.addTab(self._in_scroll(self._create_directories_tab()), "Directories & Discovery")
+        self.tabs.addTab(self._in_scroll(self._create_database_tab()), "Database")
+        self.tabs.addTab(self._in_scroll(self._create_appearance_tab()), "Appearance")
 
         layout.addWidget(self.tabs)
 
@@ -1343,6 +1384,9 @@ class EnhancedSettingsWindow(QDialog):
     def showEvent(self, event):  # noqa: N802
         """Override showEvent to populate model combos from cache on first show."""
         super().showEvent(event)
+
+        # Clamp dialog height to active monitor on every show (handles monitor switches).
+        self._constrain_to_screen()
 
         # Only do this on first show
         if not hasattr(self, "_first_show_done"):
