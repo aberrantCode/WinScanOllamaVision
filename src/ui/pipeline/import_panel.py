@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMenu,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -34,7 +33,7 @@ from services.discovery_worker import DiscoveryWorker
 from services.logging_service import get_logger
 from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.pipeline.stages import _LINK_STYLE
-from ui.styles import Colors, show_information, show_warning
+from ui.styles import Colors, show_confirm, show_information, show_warning
 from ui.theme_manager import ThemeManager
 
 
@@ -569,13 +568,14 @@ class ImportPanel(QWidget):
         if not paths:
             return
         n = len(paths)
-        answer = QMessageBox.question(
+        if not show_confirm(
             self,
             "Delete from Disk",
             f"Permanently delete {n} file{'s' if n > 1 else ''} from disk?\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            confirm_text="Delete",
+            cancel_text="Cancel",
+            default_cancel=True,
+        ):
             return
 
         errors: list[str] = []
