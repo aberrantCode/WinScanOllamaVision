@@ -1,6 +1,8 @@
 import argparse
 import logging
+import os
 import sys
+from pathlib import Path
 
 # Import only LoggingService first, before any modules that use it
 from services.logging_service import LoggingService, get_logger
@@ -77,6 +79,28 @@ def _start_periodic_scheduler(window, config_manager) -> None:
     window._discovery_scheduler = discovery_scheduler  # type: ignore[attr-defined]
 
 
+def _seed_default_source_directory(config_manager) -> None:  # type: ignore[no-untyped-def]
+    """
+    If no source directories are configured, add ~/Pictures/Scans as the default.
+
+    Creates the directory on disk if it does not already exist so the discovery
+    scanner can immediately traverse it on first run.
+    """
+    if config_manager.get_directories():
+        return  # already configured — nothing to do
+
+    default_dir = Path.home() / "Pictures" / "Scans"
+    default_path = os.path.normpath(str(default_dir))
+
+    try:
+        default_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        get_logger().warning("Could not create default scan directory %s: %s", default_path, e)
+
+    config_manager.add_directory(default_path)
+    get_logger().info("No source directories configured — added default: %s", default_path)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -133,6 +157,7 @@ if __name__ == "__main__":
         # Initialize config to get theme preference and app name
         logger.info("Loading configuration...")
         config_manager = ConfigManager()
+        _seed_default_source_directory(config_manager)
         theme = config_manager.get_setting("Theme", "theme", "dark")
         is_dark_mode = theme == "dark"
         app_name = config_manager.get_setting("GUI", "app_name", "WinScanLLM")
