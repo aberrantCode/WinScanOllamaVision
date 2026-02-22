@@ -14,28 +14,77 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QProgressBar,
-    QPushButton,
-    QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from ui.bundle.bundle_colors import get_bundle_colors
-from ui.bundle.bundle_colors import hex_to_rgb as _hex_to_rgb_fn
+from ui.bundle.bundle_action_bar import BundleActionBar
+from ui.bundle.bundle_header import BundleHeaderWidget
 from ui.bundle.bundle_metadata_panel import BundleMetadataPanel
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
 from ui.bundle.bundle_preview_panel import BundlePreviewPanel
+from ui.bundle.bundle_review_helpers import (
+    complete_pdf_conversion,
+    show_completion_summary,
+    show_pdf_conversion,
+)
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
-from ui.styles import (
-    Colors,
-)
+
+
+def _create_mock_bundles() -> list:
+    """Create mock bundle data with complete metadata."""
+    bundles = []
+    companies = [
+        "Acme Corporation",
+        "TechCorp Industries",
+        "Global Shipping LLC",
+        "ABC Manufacturing",
+    ]
+    doc_types = ["Invoice", "Receipt", "Statement", "Contract"]
+
+    for i in range(1, 8):
+        # Make first bundle have 12 pages for demo
+        num_pages = 12 if i == 1 else (i % 5) + 2
+
+        company = companies[i % 4]
+        doc_type = doc_types[i % 4]
+
+        # Create analyses for each page
+        analyses = []
+        for p in range(num_pages):
+            analyses.append(
+                {
+                    "document_type": doc_type,
+                    "company": company,
+                    "page_number": str(p + 1),
+                    "total_pages": str(num_pages),
+                    "rotation_needed": "none",
+                    "confidence_score": 0.85 + (p * 0.01),
+                    "tax_related": i % 3 == 0,
+                    "analysis_id": f"analysis_{i:03d}_{p:03d}",
+                    "provider": "Ollama",
+                    "model": "qwen2.5-vl",
+                    "processing_time": f"{1200 + (p * 100)}ms",
+                    "analysis_date": f"2024-03-{15 + i:02d} 10:{30 + p:02d}:00",
+                }
+            )
+
+        bundles.append(
+            {
+                "bundle_id": f"bundle_{i:03d}",
+                "company": company,
+                "document_type": doc_type,
+                "document_date": f"2024-0{(i % 9) + 1}-15",
+                "confidence_score": 0.95 - (i * 0.05),
+                "file_paths": [f"mock_bundle_{i}_page_{p}.png" for p in range(1, num_pages + 1)],
+                "analyses": analyses,
+            }
+        )
+    return bundles
 
 
 class BundleReviewWidget(QWidget):
@@ -73,7 +122,7 @@ class BundleReviewWidget(QWidget):
 
         # State
         self.prototype_mode = prototype_mode
-        self.bundles = bundles or self._create_mock_bundles()
+        self.bundles = bundles or _create_mock_bundles()
         self.current_bundle_index = start_index
         self.current_page_index = 0
 
@@ -118,12 +167,6 @@ class BundleReviewWidget(QWidget):
 
         self._load_current_bundle()
 
-        # Apply initial theme based on dark_mode setting (after UI is fully built)
-        if self.dark_mode:
-            self._apply_dark_theme()
-        else:
-            self._apply_light_theme()
-
         # Force update of all component styles to ensure theme is fully applied
         self._update_all_component_styles()
 
@@ -143,8 +186,18 @@ class BundleReviewWidget(QWidget):
         main_layout.setSpacing(0)
 
         # Header with progress
-        header = self._create_header()
-        main_layout.addWidget(header)
+        bundle = self.bundles[self.current_bundle_index]
+        self._header_widget = BundleHeaderWidget(
+            self.dark_mode,
+            bundle,
+            self.current_bundle_index,
+            len(self.bundles),
+            len(self.accepted_bundles),
+            len(self.rejected_bundles),
+            len(self.skipped_bundles),
+            parent=self,
+        )
+        main_layout.addWidget(self._header_widget)
 
         # Three-panel layout (static widths, no splitter)
         content_container = QWidget()
@@ -179,397 +232,29 @@ class BundleReviewWidget(QWidget):
         main_layout.addWidget(content_container)
 
         # Bottom action bar
-        self.action_bar = self._create_action_bar()
-        main_layout.addWidget(self.action_bar)
-
-    def _create_header(self) -> QWidget:
-        """Create header with progress and navigation."""
-        theme = self._get_theme_colors()
-
-        self.header_widget = QWidget()
-        self.header_widget.setStyleSheet(f"background: {theme['bg_secondary']};")
-        self.header_widget.setFixedHeight(70)  # Reduced from 80
-        header = self.header_widget
-
-        layout = QVBoxLayout(header)
-        layout.setContentsMargins(20, 8, 20, 8)  # Reduced top/bottom from 12 to 8
-        layout.setSpacing(6)  # Reduced from 8 to 6
-
-        # Top row - Title and stats
-        top_row = QHBoxLayout()
-
-        self.title_label = QLabel("📋 Verify Documents")
-        self.title_label.setStyleSheet(
-            f"font-size: 18px; font-weight: bold; color: {theme['text_primary']}; "
-            f"text-decoration: none; background: transparent;"
+        _callbacks = {
+            "on_previous": self._on_previous_bundle,
+            "on_next": self._on_next_bundle,
+            "on_skip": self._on_skip_bundle,
+            "on_reject": self._on_reject_bundle,
+            "on_accept": self._on_accept_bundle,
+            "on_zoom_in": self._on_zoom_in,
+            "on_zoom_out": self._on_zoom_out,
+            "on_zoom_changed": self._on_zoom_changed,
+            "on_fit_width": self._on_fit_width,
+            "on_fit_height": self._on_fit_height,
+            "on_fit_window": self._on_fit_window,
+            "on_rotate_ccw": self._on_rotate_ccw,
+            "on_rotate_cw": self._on_rotate_cw,
+        }
+        self._action_bar = BundleActionBar(
+            self.dark_mode,
+            _callbacks,
+            self.current_bundle_index,
+            len(self.bundles),
+            parent=self,
         )
-        top_row.addWidget(self.title_label)
-
-        top_row.addStretch()
-
-        # Stats
-        stats_text = f"✓ {len(self.accepted_bundles)} Accepted  •  ✗ {len(self.rejected_bundles)} Rejected  •  ⏭ {len(self.skipped_bundles)} Skipped"
-        self.stats_label = QLabel(stats_text)
-        self.stats_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 13px;")
-        top_row.addWidget(self.stats_label)
-
-        layout.addLayout(top_row)
-
-        # Bottom row - Progress and current bundle info
-        bottom_row = QHBoxLayout()
-
-        # Progress bar
-        progress_container = QWidget()
-        progress_container.setStyleSheet("background: transparent; border: none;")
-        progress_layout = QHBoxLayout(progress_container)
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.setSpacing(12)
-
-        self.progress_label = QLabel(
-            f"Bundle {self.current_bundle_index + 1} of {len(self.bundles)}"
-        )
-        self.progress_label.setStyleSheet(
-            f"color: {theme['text_primary']}; font-weight: 600; font-size: 13px; "
-            f"text-decoration: none; background: transparent; border: none;"
-        )
-        progress_layout.addWidget(self.progress_label)
-        bottom_row.addWidget(progress_container)
-        bottom_row.addStretch()
-
-        # Current bundle info
-        bundle = self.bundles[self.current_bundle_index]
-        doc_type = bundle.get("document_type", "Unknown").title()  # Title case
-        company = bundle.get("company", "Unknown").title()  # Title case
-        pages = len(bundle.get("file_paths", []))
-
-        info_text = f"<b>{doc_type}</b> - {company} ({pages} pages)"
-        self.bundle_info_label = QLabel(info_text)
-        self.bundle_info_label.setStyleSheet(
-            f"color: {theme['text_primary']}; font-size: 13px; background: transparent;"
-        )
-        bottom_row.addWidget(self.bundle_info_label)
-
-        # Confidence badge
-        confidence = bundle.get("confidence_score", 0.0)
-        confidence_pct = int(confidence * 100)
-
-        if confidence >= 0.8:
-            badge_color = theme["success"]
-        elif confidence >= 0.5:
-            badge_color = theme["warning"]
-        else:
-            badge_color = theme["danger"]
-
-        self.confidence_badge = QLabel(f"{confidence_pct}%")
-        self.confidence_badge.setStyleSheet(
-            f"""
-            background: {badge_color};
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-weight: 600;
-            font-size: 12px;
-        """
-        )
-        bottom_row.addWidget(self.confidence_badge)
-
-        layout.addLayout(bottom_row)
-
-        return header
-
-    def _create_action_bar(self) -> QWidget:
-        """Create bottom action bar."""
-        theme = self._get_theme_colors()
-
-        bar = QWidget()
-        bar.setStyleSheet(f"background: {theme['bg_secondary']};")
-
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(20, 15, 20, 15)
-        layout.setSpacing(12)
-
-        # Left side - Navigation
-        prev_btn = QPushButton("← Previous Bundle")
-        prev_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {theme["bg_hover"]};
-                border-color: {theme["border_focus"]};
-            }}
-            QPushButton:disabled {{
-                background: {theme["bg_secondary"]};
-                color: {theme["text_disabled"]};
-            }}
-        """
-        )
-        prev_btn.clicked.connect(self._on_previous_bundle)
-        prev_btn.setEnabled(self.current_bundle_index > 0)
-        layout.addWidget(prev_btn)
-        self.prev_btn = prev_btn
-
-        next_btn = QPushButton("Next Bundle →")
-        next_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {theme["bg_hover"]};
-                border-color: {theme["border_focus"]};
-            }}
-            QPushButton:disabled {{
-                background: {theme["bg_secondary"]};
-                color: {theme["text_disabled"]};
-            }}
-        """
-        )
-        next_btn.clicked.connect(self._on_next_bundle)
-        next_btn.setEnabled(self.current_bundle_index < len(self.bundles) - 1)
-        layout.addWidget(next_btn)
-        self.next_btn = next_btn
-
-        layout.addStretch()
-
-        # Zoom controls
-        btn_style = f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {theme["button_hover"]};
-                border-color: {theme["border"]};
-                color: {theme["text_primary"]};
-            }}
-            QPushButton:pressed {{
-                background: {theme["selected"]};
-            }}
-        """
-
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setStyleSheet(btn_style)
-        zoom_out_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
-        zoom_out_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        zoom_out_btn.setToolTip("Zoom Out")
-        zoom_out_btn.clicked.connect(self._on_zoom_out)
-        layout.addWidget(zoom_out_btn)
-
-        self.zoom_spinner = QSpinBox()
-        self.zoom_spinner.setRange(25, 400)
-        self.zoom_spinner.setValue(100)
-        self.zoom_spinner.setSuffix("%")
-        self.zoom_spinner.setFixedWidth(70)
-        self.zoom_spinner.setFixedHeight(32)
-        self.zoom_spinner.setStyleSheet(f"""
-            QSpinBox {{
-                background: {theme["button_bg"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                padding: 2px 4px;
-                font-size: 11px;
-            }}
-            QSpinBox:focus {{
-                border-color: {theme["selected"]};
-            }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                width: 0px;
-            }}
-        """)
-        self.zoom_spinner.valueChanged.connect(self._on_zoom_changed)
-        layout.addWidget(self.zoom_spinner)
-
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setStyleSheet(btn_style)
-        zoom_in_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
-        zoom_in_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        zoom_in_btn.setToolTip("Zoom In")
-        zoom_in_btn.clicked.connect(self._on_zoom_in)
-        layout.addWidget(zoom_in_btn)
-
-        # Separator
-        layout.addSpacing(12)
-
-        # Fit buttons
-        fit_width_btn = QPushButton("⬌")
-        fit_width_btn.setStyleSheet(btn_style)
-        fit_width_btn.setFixedSize(40, 32)
-        fit_width_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        fit_width_btn.setToolTip("Fit to Width")
-        fit_width_btn.clicked.connect(self._on_fit_width)
-        layout.addWidget(fit_width_btn)
-
-        fit_height_btn = QPushButton("⬍")
-        fit_height_btn.setStyleSheet(btn_style)
-        fit_height_btn.setFixedSize(40, 32)
-        fit_height_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        fit_height_btn.setToolTip("Fit to Height")
-        fit_height_btn.clicked.connect(self._on_fit_height)
-        layout.addWidget(fit_height_btn)
-
-        fit_window_btn = QPushButton("⛶")
-        fit_window_btn.setStyleSheet(btn_style)
-        fit_window_btn.setFixedSize(40, 32)
-        fit_window_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        fit_window_btn.setToolTip("Fit to Window")
-        fit_window_btn.clicked.connect(self._on_fit_window)
-        layout.addWidget(fit_window_btn)
-
-        # Separator
-        layout.addSpacing(12)
-
-        # Rotation controls
-        rotate_left_btn = QPushButton("↺")
-        rotate_left_btn.setStyleSheet(btn_style)
-        rotate_left_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
-        rotate_left_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        rotate_left_btn.setToolTip("Rotate Counter-Clockwise")
-        rotate_left_btn.clicked.connect(self._on_rotate_ccw)
-        layout.addWidget(rotate_left_btn)
-
-        rotate_right_btn = QPushButton("↻")
-        rotate_right_btn.setStyleSheet(btn_style)
-        rotate_right_btn.setFixedSize(40, 32)  # Set AFTER stylesheet to ensure it takes effect
-        rotate_right_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        rotate_right_btn.setToolTip("Rotate Clockwise")
-        rotate_right_btn.clicked.connect(self._on_rotate_cw)
-        layout.addWidget(rotate_right_btn)
-
-        layout.addStretch()
-
-        # Right side - Bundle decisions
-        skip_btn = QPushButton("⏭ Skip for Later")
-        skip_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {theme["warning"]};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {theme["warning_hover"]};
-            }}
-        """
-        )
-        skip_btn.clicked.connect(self._on_skip_bundle)
-        layout.addWidget(skip_btn)
-        self.skip_btn = skip_btn
-
-        reject_btn = QPushButton("✗ Reject Bundle")
-        reject_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {theme["danger"]};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {theme["danger_hover"]};
-            }}
-        """
-        )
-        reject_btn.clicked.connect(self._on_reject_bundle)
-        layout.addWidget(reject_btn)
-        self.reject_btn = reject_btn
-
-        accept_btn = QPushButton("✓ Accept && Convert to PDF")
-        accept_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {theme["success"]};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {theme["success_hover"]};
-            }}
-        """
-        )
-        accept_btn.setMinimumWidth(200)
-        accept_btn.clicked.connect(self._on_accept_bundle)
-        layout.addWidget(accept_btn)
-        self.accept_btn = accept_btn
-
-        return bar
-
-    def _create_mock_bundles(self) -> list:
-        """Create mock bundle data with complete metadata."""
-        bundles = []
-        companies = [
-            "Acme Corporation",
-            "TechCorp Industries",
-            "Global Shipping LLC",
-            "ABC Manufacturing",
-        ]
-        doc_types = ["Invoice", "Receipt", "Statement", "Contract"]
-
-        for i in range(1, 8):
-            # Make first bundle have 12 pages for demo
-            num_pages = 12 if i == 1 else (i % 5) + 2
-
-            company = companies[i % 4]
-            doc_type = doc_types[i % 4]
-
-            # Create analyses for each page
-            analyses = []
-            for p in range(num_pages):
-                analyses.append(
-                    {
-                        "document_type": doc_type,
-                        "company": company,
-                        "page_number": str(p + 1),
-                        "total_pages": str(num_pages),
-                        "rotation_needed": "none",
-                        "confidence_score": 0.85 + (p * 0.01),  # Slight variation per page
-                        "tax_related": i % 3 == 0,  # Some are tax related
-                        "analysis_id": f"analysis_{i:03d}_{p:03d}",
-                        "provider": "Ollama",
-                        "model": "qwen2.5-vl",
-                        "processing_time": f"{1200 + (p * 100)}ms",
-                        "analysis_date": f"2024-03-{15 + i:02d} 10:{30 + p:02d}:00",
-                    }
-                )
-
-            bundles.append(
-                {
-                    "bundle_id": f"bundle_{i:03d}",
-                    "company": company,
-                    "document_type": doc_type,
-                    "document_date": f"2024-0{(i % 9) + 1}-15",
-                    "confidence_score": 0.95 - (i * 0.05),
-                    "file_paths": [
-                        f"mock_bundle_{i}_page_{p}.png" for p in range(1, num_pages + 1)
-                    ],
-                    "analyses": analyses,
-                }
-            )
-        return bundles
+        main_layout.addWidget(self._action_bar)
 
     def _load_current_bundle(self):
         """Load the current bundle data."""
@@ -590,52 +275,20 @@ class BundleReviewWidget(QWidget):
         self.metadata_panel.load_bundle(bundle, self.page_order, 0, self.prototype_mode)
 
         # Apply configured zoom mode after UI is fully laid out
-        # Use longer delay to ensure container dimensions are available
         QTimer.singleShot(300, self._apply_default_zoom)
 
     def _update_header(self):
-        """Update header with current bundle info."""
-        theme = self._get_theme_colors()
+        """Update header and nav button state for the current bundle."""
         bundle = self.bundles[self.current_bundle_index]
-
-        # Progress
-        self.progress_label.setText(
-            f"Bundle {self.current_bundle_index + 1} of {len(self.bundles)}"
+        self._header_widget.refresh(
+            bundle,
+            self.current_bundle_index,
+            len(self.bundles),
+            len(self.accepted_bundles),
+            len(self.rejected_bundles),
+            len(self.skipped_bundles),
         )
-
-        # Bundle info with title case
-        doc_type = bundle.get("document_type", "Unknown").title()
-        company = bundle.get("company", "Unknown").title()
-        pages = len(bundle.get("file_paths", []))
-        self.bundle_info_label.setText(f"<b>{doc_type}</b> - {company} ({pages} pages)")
-
-        # Confidence with theme colors
-        confidence = bundle.get("confidence_score", 0.0)
-        confidence_pct = int(confidence * 100)
-        if confidence >= 0.8:
-            badge_color = theme["success"]
-        elif confidence >= 0.5:
-            badge_color = theme["warning"]
-        else:
-            badge_color = theme["danger"]
-
-        self.confidence_badge.setText(f"{confidence_pct}%")
-        self.confidence_badge.setStyleSheet(f"""
-            background: {badge_color};
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-weight: 600;
-            font-size: 12px;
-        """)
-
-        # Stats
-        stats_text = f"✓ {len(self.accepted_bundles)} Accepted  •  ✗ {len(self.rejected_bundles)} Rejected  •  ⏭ {len(self.skipped_bundles)} Skipped"
-        self.stats_label.setText(stats_text)
-
-        # Navigation buttons
-        self.prev_btn.setEnabled(self.current_bundle_index > 0)
-        self.next_btn.setEnabled(self.current_bundle_index < len(self.bundles) - 1)
+        self._action_bar.update_nav_state(self.current_bundle_index, len(self.bundles))
 
     def _populate_thumbnails(self):
         """Delegate to BundleThumbnailPanel.populate()."""
@@ -687,12 +340,12 @@ class BundleReviewWidget(QWidget):
     def _on_zoom_in(self):
         """Zoom in."""
         new_zoom = min(400, self.preview_panel.zoom_level + 25)
-        self.zoom_spinner.setValue(new_zoom)
+        self._action_bar.zoom_spinner.setValue(new_zoom)
 
     def _on_zoom_out(self):
         """Zoom out."""
         new_zoom = max(25, self.preview_panel.zoom_level - 25)
-        self.zoom_spinner.setValue(new_zoom)
+        self._action_bar.zoom_spinner.setValue(new_zoom)
 
     def _on_zoom_changed(self, value: int):
         """Propagate zoom change to the preview panel."""
@@ -707,7 +360,7 @@ class BundleReviewWidget(QWidget):
         container_width = self.preview_panel.get_container_size()[0] - 40
         if image_width > 0:
             zoom = max(25, min(400, int(container_width / image_width * 100)))
-            self.zoom_spinner.setValue(zoom)
+            self._action_bar.zoom_spinner.setValue(zoom)
 
     def _on_fit_height(self):
         """Fit image to preview panel height."""
@@ -718,7 +371,7 @@ class BundleReviewWidget(QWidget):
         container_height = self.preview_panel.get_container_size()[1] - 100
         if image_height > 0:
             zoom = max(25, min(400, int(container_height / image_height * 100)))
-            self.zoom_spinner.setValue(zoom)
+            self._action_bar.zoom_spinner.setValue(zoom)
 
     def _on_fit_window(self):
         """Fit image to preview panel (both width and height)."""
@@ -732,7 +385,7 @@ class BundleReviewWidget(QWidget):
             zoom_w = int(container_width / image_width * 100)
             zoom_h = int(container_height / image_height * 100)
             zoom = max(25, min(400, min(zoom_w, zoom_h)))
-            self.zoom_spinner.setValue(zoom)
+            self._action_bar.zoom_spinner.setValue(zoom)
 
     def _apply_default_zoom(self):
         """Apply the default zoom mode from config settings."""
@@ -754,27 +407,11 @@ class BundleReviewWidget(QWidget):
         self.preview_panel.rotate_cw()
 
     def _get_pdf_filename(self, filename: str) -> str:
-        """
-        Get final PDF filename with .PDF extension enforced.
-
-        Strips any existing extension and adds .PDF
-        As documented in the tooltip, any extension will be removed and replaced.
-
-        Args:
-            filename: Input filename (may or may not have extension)
-
-        Returns:
-            Filename with .PDF extension
-        """
+        """Get final PDF filename with .PDF extension enforced."""
         import os
 
-        # Remove any existing extension
         name_without_ext = os.path.splitext(filename)[0]
-
-        # Sanitize (preserve characters safe for filenames)
         name_without_ext = BundleMetadataPanel._sanitize_filename(name_without_ext)
-
-        # Force .PDF extension (uppercase for consistency)
         return f"{name_without_ext}.PDF"
 
     def _on_previous_bundle(self):
@@ -794,7 +431,6 @@ class BundleReviewWidget(QWidget):
         bundle = self.bundles[self.current_bundle_index]
         self.skipped_bundles.append(bundle)
 
-        # Move to next or close
         if self.current_bundle_index < len(self.bundles) - 1:
             self._on_next_bundle()
         else:
@@ -815,7 +451,6 @@ class BundleReviewWidget(QWidget):
             self.rejected_bundles.append(bundle)
             self.bundle_rejected.emit(bundle)
 
-            # Move to next or close
             if self.current_bundle_index < len(self.bundles) - 1:
                 self._on_next_bundle()
             else:
@@ -824,175 +459,56 @@ class BundleReviewWidget(QWidget):
     def _on_accept_bundle(self):
         """Accept bundle and convert to PDF."""
         bundle = self.bundles[self.current_bundle_index]
-
-        # Get metadata and output filename from panel
         metadata = self.metadata_panel.get_metadata()
         raw_filename = self.metadata_panel.get_output_filename().strip()
-        # Enforce .PDF extension (strips any existing extension user may have typed)
         metadata["output_filename"] = self._get_pdf_filename(raw_filename)
-
-        # Show PDF conversion progress
         self._show_pdf_conversion(bundle, metadata)
 
     def _determine_output_directory(self, bundle: dict) -> str:
         """Determine output directory based on configuration strategy."""
         return self._pdf_converter.determine_output_directory(bundle)
 
-    def _show_pdf_conversion(self, bundle, metadata):
+    def _show_pdf_conversion(self, bundle: dict, metadata: dict) -> None:
         """Show PDF conversion progress dialog."""
-        progress_dialog = QDialog(self)
-        progress_dialog.setWindowTitle("Converting to PDF")
-        progress_dialog.setMinimumWidth(400)
-        progress_dialog.setModal(True)
-
-        layout = QVBoxLayout(progress_dialog)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
-
-        # Icon and message
-        icon_label = QLabel("📄")
-        icon_label.setStyleSheet("font-size: 48px;")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
-
-        message = QLabel(f"Converting to PDF...\n\n{metadata['output_filename']}")
-        message.setStyleSheet("color: white; font-size: 14px;")  # White text for dark mode
-        message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        message.setWordWrap(True)
-        layout.addWidget(message)
-
-        # Progress bar
-        progress = QProgressBar()
-        progress.setMinimum(0)
-        progress.setMaximum(0)  # Indeterminate
-        _ct = self._get_theme_colors()
-        progress.setStyleSheet(f"""
-            QProgressBar {{
-                background: {_ct["bg_tertiary"]};
-                border-radius: 4px;
-                height: 8px;
-            }}
-            QProgressBar::chunk {{
-                background: {Colors.PRIMARY};
-                border-radius: 4px;
-            }}
-        """)
-        layout.addWidget(progress)
-
-        progress_dialog.show()
-
-        # Simulate PDF conversion (in real app, call bundling service)
-        QTimer.singleShot(
-            2000, lambda: self._complete_pdf_conversion(progress_dialog, bundle, metadata)
+        show_pdf_conversion(
+            self, self.dark_mode, bundle, metadata, on_complete=self._complete_pdf_conversion
         )
 
-    def _complete_pdf_conversion(self, progress_dialog, bundle, metadata):
+    def _complete_pdf_conversion(self, progress_dialog, bundle: dict, metadata: dict) -> None:
         """Complete PDF conversion and show success."""
-        progress_dialog.close()
 
-        if self.prototype_mode:
-            # Mock mode - just show success
-            success_dialog = QMessageBox(self)
-            success_dialog.setWindowTitle("PDF Created")
-            success_dialog.setIcon(QMessageBox.Icon.Information)
-            success_dialog.setText(f"✓ PDF created successfully!\n\n{metadata['output_filename']}")
-            success_dialog.setStandardButtons(
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok
-            )
-            success_dialog.setDefaultButton(QMessageBox.StandardButton.Ok)
-
-            result = success_dialog.exec()
-
-            if result == QMessageBox.StandardButton.Open:
-                QMessageBox.information(
-                    self,
-                    "Open PDF",
-                    f"Would open: {metadata['output_filename']}\n\n(Mock implementation)",
-                )
-
-            # Track acceptance
-            bundle_with_metadata = {**bundle, **metadata, "page_order": self.page_order}
+        def _on_accepted(bundle_with_metadata: dict) -> None:
             self.accepted_bundles.append(bundle_with_metadata)
             self.bundle_accepted.emit(bundle_with_metadata)
 
-            # Move to next or complete
-            if self.current_bundle_index < len(self.bundles) - 1:
-                self._on_next_bundle()
-            else:
-                self._show_completion_summary()
-            return
-
-        # Real conversion
-        try:
-            ordered_paths = [bundle["file_paths"][i] for i in self.page_order]
-            output_dir = self._pdf_converter.determine_output_directory(bundle)
-            pdf_path = self._pdf_converter.convert(
-                bundle, metadata, ordered_paths, self.preview_panel.rotation_angle
-            )
-
-            success_dialog = QMessageBox(self)
-            success_dialog.setWindowTitle("PDF Created")
-            success_dialog.setIcon(QMessageBox.Icon.Information)
-            success_dialog.setText(
-                f"✓ PDF created successfully!\n\n{metadata['output_filename']}\n\nLocation: {output_dir}"
-            )
-            success_dialog.setStandardButtons(
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok
-            )
-            success_dialog.setDefaultButton(QMessageBox.StandardButton.Ok)
-
-            result = success_dialog.exec()
-
-            if result == QMessageBox.StandardButton.Open:
-                self._pdf_converter.open_pdf(pdf_path)
-
-            bundle_with_metadata = {
-                **bundle,
-                **metadata,
-                "page_order": self.page_order,
-                "pdf_path": pdf_path,
-            }
-            self.accepted_bundles.append(bundle_with_metadata)
-            self.bundle_accepted.emit(bundle_with_metadata)
-
+        def _on_next_or_complete() -> None:
             if self.current_bundle_index < len(self.bundles) - 1:
                 self._on_next_bundle()
             else:
                 self._show_completion_summary()
 
-        except Exception as e:
-            QMessageBox.critical(
-                self, "PDF Conversion Failed", f"Failed to convert bundle to PDF:\n\n{str(e)}"
-            )
+        complete_pdf_conversion(
+            self,
+            progress_dialog,
+            bundle,
+            metadata,
+            prototype_mode=self.prototype_mode,
+            page_order=self.page_order,
+            rotation_angle=self.preview_panel.rotation_angle,
+            pdf_converter=self._pdf_converter,
+            on_accepted=_on_accepted,
+            on_next_or_complete=_on_next_or_complete,
+        )
 
-    def _show_completion_summary(self):
+    def _show_completion_summary(self) -> None:
         """Show workflow completion summary."""
-        summary = QMessageBox(self)
-        summary.setWindowTitle("Workflow Complete")
-        summary.setIcon(QMessageBox.Icon.Information)
-
-        summary_text = f"""
-Bundle Review Complete!
-
-✓ Accepted: {len(self.accepted_bundles)}
-✗ Rejected: {len(self.rejected_bundles)}
-⏭ Skipped: {len(self.skipped_bundles)}
-
-Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len(self.bundles)}
-        """.strip()
-
-        summary.setText(summary_text)
-        summary.setStandardButtons(QMessageBox.StandardButton.Ok)
-        summary.exec()
-
-        # Emit completion
-        self.workflow_completed.emit(
-            {
-                "accepted": len(self.accepted_bundles),
-                "rejected": len(self.rejected_bundles),
-                "skipped": len(self.skipped_bundles),
-                "total": len(self.bundles),
-            }
+        show_completion_summary(
+            self,
+            len(self.accepted_bundles),
+            len(self.rejected_bundles),
+            len(self.skipped_bundles),
+            len(self.bundles),
+            on_completed=self.workflow_completed.emit,
         )
 
     def _on_reanalyze_page(self):
@@ -1010,12 +526,11 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             )
             return
 
-        # Production implementation (reference from bundle_review_window_v2.py)
+        # Production implementation
         from services.analysis_service import AnalysisService
 
         bundle = self.bundles[self.current_bundle_index]
 
-        # Use page_order to map visual index to actual index
         actual_index = (
             self.page_order[self.current_page_index]
             if self.current_page_index < len(self.page_order)
@@ -1026,7 +541,6 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
 
         file_path = bundle["file_paths"][actual_index]
 
-        # Show progress
         progress = QProgressBar()
         progress.setMinimum(0)
         progress.setMaximum(0)
@@ -1035,31 +549,23 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
         progress.show()
 
         try:
-            # Create progress callback to update progress bar title
+
             def update_progress(status_text: str):
                 progress.setWindowTitle(status_text)
-                QApplication.processEvents()  # Force UI update
+                QApplication.processEvents()
 
-            # Use centralized re-analysis method (resets status and forces fresh analysis)
             analysis_service = AnalysisService(
                 self.config_manager, self.analysis_db, self.metadata_db
             )
             result = analysis_service.re_analyze_file(file_path, progress_callback=update_progress)
 
             if result["success"]:
-                # Analysis already saved to database by re_analyze_file
-                # Get the fresh analysis from the result
                 fresh_analysis = result.get("analysis")
                 if fresh_analysis:
-                    # Update bundle data with the new analysis metadata
-                    # Use actual_index (already calculated above) to update the correct analysis
                     bundle["analyses"][actual_index] = fresh_analysis
-
-                    # Refresh UI
                     self.metadata_panel.load_bundle(
                         bundle, self.page_order, self.current_page_index, self.prototype_mode
                     )
-
                     QMessageBox.information(self, "Success", "Page re-analyzed successfully!")
                 else:
                     QMessageBox.warning(self, "Error", "Re-analysis completed but no data returned")
@@ -1088,8 +594,6 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             )
             return
 
-        # Production implementation would show a page picker dialog
-        # For now, placeholder
         QMessageBox.information(
             self,
             "Add Page",
@@ -1126,23 +630,19 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # Remove from file_paths and analyses
             bundle["file_paths"].pop(actual_index)
             if "analyses" in bundle and actual_index < len(bundle["analyses"]):
                 bundle["analyses"].pop(actual_index)
 
-            # Update page_order
             self.page_order = [
                 idx if idx < actual_index else idx - 1
                 for idx in self.page_order
                 if idx != actual_index
             ]
 
-            # Adjust current page index if needed
             if self.current_page_index >= len(self.page_order):
                 self.current_page_index = max(0, len(self.page_order) - 1)
 
-            # Refresh UI
             self._populate_thumbnails()
             self._display_current_page()
             self._update_header()
@@ -1150,206 +650,39 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
     def _toggle_theme(self):
         """Toggle between light and dark mode (not used - theme set from config)."""
         self.dark_mode = not self.dark_mode
-
-        # Apply theme
-        if self.dark_mode:
-            self._apply_dark_theme()
-        else:
-            self._apply_light_theme()
-
-        # Force UI refresh by updating all component styles
         self._update_all_component_styles()
 
-    def _get_theme_colors(self):
-        """Get current theme colors."""
-        return get_bundle_colors(self.dark_mode)
-
-    def _hex_to_rgb(self, hex_color: str) -> tuple[int, int, int]:
-        """Convert hex color to RGB tuple."""
-        return _hex_to_rgb_fn(hex_color)
-
-    def _apply_dark_theme(self):
-        """Apply dark theme colors."""
-        self.setStyleSheet(build_bundle_stylesheet(True))
-
-    def _apply_light_theme(self):
-        """Apply light theme colors."""
-        self.setStyleSheet(build_bundle_stylesheet(False))
-
-    def _update_all_component_styles(self):
+    def _update_all_component_styles(self) -> None:
         """Update all component styles based on current theme."""
-        theme = self._get_theme_colors()
-
-        # Apply base theme first
-        if self.dark_mode:
-            self._apply_dark_theme()
-        else:
-            self._apply_light_theme()
-
-        # Update header components
-        if hasattr(self, "header_widget"):
-            self.header_widget.setStyleSheet(f"background: {theme['bg_secondary']};")
-
-        if hasattr(self, "title_label"):
-            self.title_label.setStyleSheet(
-                f"font-size: 18px; font-weight: bold; color: {theme['text_primary']}; "
-                f"text-decoration: none; background: transparent;"
-            )
-
-        if hasattr(self, "progress_label"):
-            self.progress_label.setStyleSheet(
-                f"color: {theme['text_primary']}; font-weight: 600; font-size: 13px; "
-                f"text-decoration: none; background: transparent; border: none;"
-            )
-
-        if hasattr(self, "stats_label"):
-            self.stats_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 13px;")
-
-        if hasattr(self, "bundle_info_label"):
-            self.bundle_info_label.setStyleSheet(
-                f"color: {theme['text_primary']}; font-size: 13px; background: transparent;"
-            )
-
-        if hasattr(self, "confidence_badge"):
-            # Badge color depends on confidence, but text should be white/dark accordingly
-            confidence = self.bundles[self.current_bundle_index].get("confidence_score", 0.0)
-            if confidence >= 0.8:
-                bg_color = theme["success"]
-            elif confidence >= 0.5:
-                bg_color = theme["warning"]
-            else:
-                bg_color = theme["danger"]
-            self.confidence_badge.setStyleSheet(
-                f"background: {bg_color}; color: white; padding: 4px 12px; border-radius: 12px; "
-                f"font-weight: 600; font-size: 11px;"
-            )
-
-        # Update thumbnail panel
-        if hasattr(self, "thumbnail_panel"):
-            self.thumbnail_panel.apply_theme(self.dark_mode)
-        # Update preview panel
-        if hasattr(self, "preview_panel"):
-            self.preview_panel.apply_theme(self.dark_mode)
-        # Update metadata panel
-        if hasattr(self, "metadata_panel"):
-            self.metadata_panel.apply_theme(self.dark_mode)
-
-        # Update action bar
-        if hasattr(self, "action_bar"):
-            self.action_bar.setStyleSheet(f"background: {theme['bg_secondary']};")
-
-        # Update action buttons with theme-aware colors
-        if hasattr(self, "prev_btn"):
-            self.prev_btn.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background: {theme["button_bg"]};
-                    color: {theme["button_text"]};
-                    border: 1px solid {theme["border"]};
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background: {theme["bg_hover"]};
-                    border-color: {theme["border_focus"]};
-                }}
-                QPushButton:disabled {{
-                    background: {theme["bg_secondary"]};
-                    color: {theme["text_disabled"]};
-                }}
-                """
-            )
-
-        if hasattr(self, "next_btn"):
-            self.next_btn.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background: {theme["button_bg"]};
-                    color: {theme["button_text"]};
-                    border: 1px solid {theme["border"]};
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background: {theme["bg_hover"]};
-                    border-color: {theme["border_focus"]};
-                }}
-                QPushButton:disabled {{
-                    background: {theme["bg_secondary"]};
-                    color: {theme["text_disabled"]};
-                }}
-                """
-            )
-
-        if hasattr(self, "skip_btn"):
-            self.skip_btn.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background: {theme["warning"]};
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background: {theme["warning_hover"]};
-                }}
-                """
-            )
-
-        if hasattr(self, "reject_btn"):
-            self.reject_btn.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background: {theme["danger"]};
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background: {theme["danger_hover"]};
-                }}
-                """
-            )
-
-        if hasattr(self, "accept_btn"):
-            self.accept_btn.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background: {theme["success"]};
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background: {theme["success_hover"]};
-                }}
-                """
-            )
-
-        # Force widget update
+        self.setStyleSheet(build_bundle_stylesheet(self.dark_mode))
+        bundle = self.bundles[self.current_bundle_index]
+        self._header_widget.apply_theme(self.dark_mode)
+        self._header_widget.refresh(
+            bundle,
+            self.current_bundle_index,
+            len(self.bundles),
+            len(self.accepted_bundles),
+            len(self.rejected_bundles),
+            len(self.skipped_bundles),
+        )
+        self._action_bar.apply_theme(self.dark_mode)
+        self._action_bar.update_nav_state(self.current_bundle_index, len(self.bundles))
+        self.thumbnail_panel.apply_theme(self.dark_mode)
+        self.preview_panel.apply_theme(self.dark_mode)
+        self.metadata_panel.apply_theme(self.dark_mode)
         self.update()
-
-        # Refresh visual components
         self._populate_thumbnails()
         self._display_current_page()
 
     def _on_metadata_changed(self) -> None:
         """Disable cross-panel interaction while user is editing metadata."""
         self.thumbnail_panel.setEnabled(False)
-        self.action_bar.setEnabled(False)
+        self._action_bar.setEnabled(False)
 
     def _on_metadata_save(self, metadata: dict) -> None:
         """Re-enable panels after metadata save."""
         self.thumbnail_panel.setEnabled(True)
-        self.action_bar.setEnabled(True)
+        self._action_bar.setEnabled(True)
         QMessageBox.information(
             self,
             "Changes Saved",
@@ -1360,12 +693,11 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
     def _on_metadata_cancel(self) -> None:
         """Re-enable panels after metadata cancel."""
         self.thumbnail_panel.setEnabled(True)
-        self.action_bar.setEnabled(True)
+        self._action_bar.setEnabled(True)
 
     def showEvent(self, event):  # noqa: N802
         """Handle first show - apply configured default zoom."""
         super().showEvent(event)
         if self._first_show:
             self._first_show = False
-            # Apply user's configured default zoom mode instead of hardcoded fit_to_width
             QTimer.singleShot(200, self._apply_default_zoom)
