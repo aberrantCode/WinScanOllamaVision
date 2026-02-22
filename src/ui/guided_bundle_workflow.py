@@ -12,10 +12,9 @@ Features:
 
 from pathlib import Path
 
-from PyQt6.QtCore import QMimeData, QPoint, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
-    QDrag,
     QPainter,
     QPixmap,
     QTransform,
@@ -43,64 +42,10 @@ from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_colors import hex_to_rgb as _hex_to_rgb_fn
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
-from ui.clickable_label import ClickableLabel
+from ui.bundle.draggable_thumbnail import DraggableThumbnail
 from ui.styles import (
     Colors,
 )
-
-
-class DraggableThumbnail(ClickableLabel):
-    """Thumbnail that supports drag-and-drop reordering."""
-
-    drag_started = pyqtSignal(int)  # index
-    drop_requested = pyqtSignal(int, int)  # from_index, to_index
-
-    def __init__(self, index: int, parent=None):
-        super().__init__(parent)
-        self.index = index
-        self.setAcceptDrops(True)
-        self.drag_active = False
-
-    def mousePressEvent(self, event):  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_start_position = event.pos()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):  # noqa: N802
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            return
-        if (event.pos() - self.drag_start_position).manhattanLength() < 10:
-            return
-
-        # Start drag
-        drag = QDrag(self)
-        mime_data = QMimeData()
-        mime_data.setText(str(self.index))
-        drag.setMimeData(mime_data)
-        drag.setPixmap(self.pixmap().scaled(60, 80, Qt.AspectRatioMode.KeepAspectRatio))
-
-        self.drag_started.emit(self.index)
-        drag.exec(Qt.DropAction.MoveAction)
-
-    def dragEnterEvent(self, event):  # noqa: N802
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-            self.setStyleSheet(self.styleSheet() + f"background: {Colors.PRIMARY_PALE};")
-
-    def dragLeaveEvent(self, event):  # noqa: N802
-        # Remove highlight
-        current_style = self.styleSheet()
-        self.setStyleSheet(current_style.replace(f"background: {Colors.PRIMARY_PALE};", ""))
-
-    def dropEvent(self, event):  # noqa: N802
-        from_index = int(event.mimeData().text())
-        to_index = self.index
-        self.drop_requested.emit(from_index, to_index)
-        event.acceptProposedAction()
-
-        # Remove highlight
-        current_style = self.styleSheet()
-        self.setStyleSheet(current_style.replace(f"background: {Colors.PRIMARY_PALE};", ""))
 
 
 class GuidedBundleWorkflow(QDialog):
