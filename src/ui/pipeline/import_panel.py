@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -105,9 +107,9 @@ class ImportPanel(QWidget):
         c = self._c()
         self.directory_combo.setStyleSheet(f"""
             QComboBox {{
-                background-color: {c['bg_secondary']};
-                color: {c['text_primary']};
-                border: 1px solid {c['border']};
+                background-color: {c["bg_secondary"]};
+                color: {c["text_primary"]};
+                border: 1px solid {c["border"]};
                 border-radius: 4px;
                 padding: 2px 8px;
                 min-height: 25px;
@@ -120,14 +122,14 @@ class ImportPanel(QWidget):
                 image: none;
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 5px solid {c['text_secondary']};
+                border-top: 5px solid {c["text_secondary"]};
                 margin-right: 6px;
             }}
             QComboBox QAbstractItemView {{
-                background-color: {c['bg_secondary']};
-                color: {c['text_primary']};
-                border: 1px solid {c['border']};
-                selection-background-color: {c['bg_hover']};
+                background-color: {c["bg_secondary"]};
+                color: {c["text_primary"]};
+                border: 1px solid {c["border"]};
+                selection-background-color: {c["bg_hover"]};
                 outline: none;
             }}
             QComboBox QAbstractItemView::item {{
@@ -135,7 +137,7 @@ class ImportPanel(QWidget):
                 padding: 4px;
             }}
             QComboBox QAbstractItemView::item:hover {{
-                background-color: {c['bg_hover']};
+                background-color: {c["bg_hover"]};
             }}
         """)
         self._populate_directory_combo()
@@ -231,6 +233,8 @@ class ImportPanel(QWidget):
         self.image_tree.setColumnWidth(2, 96)
         self.image_tree.setColumnWidth(3, 68)
         self.image_tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self.image_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.image_tree.customContextMenuRequested.connect(self._show_context_menu)
         left_layout.addWidget(self.image_tree)
 
         # Action buttons
@@ -295,8 +299,7 @@ class ImportPanel(QWidget):
         icon_lbl = QLabel("\U0001f5bc")  # 🖼 frame with picture
         icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_lbl.setStyleSheet(
-            f"font-size: 32pt; color: {c['text_tertiary']};"
-            " border: none; background: transparent;"
+            f"font-size: 32pt; color: {c['text_tertiary']}; border: none; background: transparent;"
         )
         card_layout.addWidget(icon_lbl)
 
@@ -312,8 +315,7 @@ class ImportPanel(QWidget):
         hint_lbl = QLabel("Click any item in the list\nto see a full preview here.")
         hint_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint_lbl.setStyleSheet(
-            f"font-size: 9pt; color: {c['text_tertiary']};"
-            " border: none; background: transparent;"
+            f"font-size: 9pt; color: {c['text_tertiary']}; border: none; background: transparent;"
         )
         card_layout.addWidget(hint_lbl)
 
@@ -523,19 +525,125 @@ class ImportPanel(QWidget):
         paths = self._selected_paths()
         if not paths:
             return
-        image_repo = self._image_repo
-        for p in paths:
-            image_repo.mark_deleted(p)
+        self._image_repo.mark_deleted_batch(paths)
         self._refresh()
 
     def _on_ignore(self) -> None:
         paths = self._selected_paths()
         if not paths:
             return
-        image_repo = self._image_repo
-        for p in paths:
-            image_repo.set_ignored(p, ignored=True)
+        self._image_repo.set_ignored_batch(paths, ignored=True)
         self._refresh()
+
+    def _show_context_menu(self, pos: QPoint) -> None:
+        """Show right-click context menu for selected tree items."""
+        if not self.image_tree:
+            return
+        paths = self._selected_paths()
+        if not paths:
+            return
+
+        n = len(paths)
+        suffix = f" ({n})" if n > 1 else ""
+
+        menu = QMenu(self)
+        menu.addAction(f"Unregister{suffix}", self._on_unregister)
+        menu.addAction(f"Ignore{suffix}", self._on_ignore)
+        menu.addAction(f"Delete from Disk{suffix}", self._on_delete)
+        menu.addSeparator()
+        menu.addAction(f"Rotate Clockwise{suffix}", self._on_rotate_cw)
+        menu.addAction(f"Rotate Counter-Clockwise{suffix}", self._on_rotate_ccw)
+        menu.addSeparator()
+        open_doc_label = "Open Document" if n == 1 else f"Open Documents ({n})"
+        menu.addAction(open_doc_label, self._on_open_document)
+        open_folder_label = "Open Folder" if n == 1 else "Open Folder(s)"
+        menu.addAction(open_folder_label, self._on_open_folder)
+
+        viewport = self.image_tree.viewport()
+        if viewport is not None:
+            menu.exec(viewport.mapToGlobal(pos))
+
+    def _on_delete(self) -> None:
+        """Permanently delete selected files from disk and unregister them."""
+        paths = self._selected_paths()
+        if not paths:
+            return
+        n = len(paths)
+        answer = QMessageBox.question(
+            self,
+            "Delete from Disk",
+            f"Permanently delete {n} file{'s' if n > 1 else ''} from disk?\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        errors: list[str] = []
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError as e:
+                errors.append(f"{os.path.basename(p)}: {e}")
+
+        self._image_repo.mark_deleted_batch(paths)
+        self._refresh()
+        if errors:
+            show_warning(
+                self,
+                "Delete Errors",
+                "Some files could not be deleted:\n" + "\n".join(errors),
+            )
+
+    def _on_rotate_cw(self) -> None:
+        """Rotate selected images 90 degrees clockwise."""
+        paths = self._selected_paths()
+        for p in paths:
+            current = self._image_repo.get_rotation(p)
+            self._image_repo.update_rotation(p, (current + 90) % 360)
+
+    def _on_rotate_ccw(self) -> None:
+        """Rotate selected images 90 degrees counter-clockwise."""
+        paths = self._selected_paths()
+        for p in paths:
+            current = self._image_repo.get_rotation(p)
+            self._image_repo.update_rotation(p, (current - 90) % 360)
+
+    def _on_open_document(self) -> None:
+        """Open selected files with their default application."""
+        import sys
+
+        for p in self._selected_paths():
+            try:
+                os.startfile(p)  # type: ignore[attr-defined]
+            except (OSError, AttributeError):
+                with contextlib.suppress(OSError):
+                    if sys.platform == "darwin":
+                        import subprocess
+
+                        subprocess.Popen(["open", p])  # noqa: S603, S607
+                    else:
+                        import subprocess
+
+                        subprocess.Popen(["xdg-open", p])  # noqa: S603, S607
+
+    def _on_open_folder(self) -> None:
+        """Open the containing folder(s) for selected files, deduplicating by folder."""
+        import sys
+
+        folders = {os.path.dirname(p) for p in self._selected_paths()}
+        for folder in folders:
+            try:
+                os.startfile(folder)  # type: ignore[attr-defined]
+            except (OSError, AttributeError):
+                with contextlib.suppress(OSError):
+                    if sys.platform == "darwin":
+                        import subprocess
+
+                        subprocess.Popen(["open", folder])  # noqa: S603, S607
+                    else:
+                        import subprocess
+
+                        subprocess.Popen(["xdg-open", folder])  # noqa: S603, S607
 
     @staticmethod
     def _fmt_size(size_bytes: int) -> str:
