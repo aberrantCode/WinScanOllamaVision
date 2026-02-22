@@ -42,7 +42,7 @@ from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_colors import hex_to_rgb as _hex_to_rgb_fn
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
-from ui.bundle.draggable_thumbnail import DraggableThumbnail
+from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
 from ui.styles import (
     Colors,
 )
@@ -184,8 +184,15 @@ class GuidedBundleWorkflow(QDialog):
         content_layout.setSpacing(0)
 
         # Left panel - Thumbnails with reordering (fixed width)
-        self.thumbnail_panel = self._create_thumbnail_panel()
+        self.thumbnail_panel = BundleThumbnailPanel(dark_mode=self.dark_mode, parent=self)
         self.thumbnail_panel.setFixedWidth(150)
+        self.thumbnail_panel.page_selected.connect(self._on_thumbnail_clicked)
+        self.thumbnail_panel.page_reorder_requested.connect(self._on_drop_requested)
+        self.thumbnail_panel.page_move_up_requested.connect(self._move_page_up)
+        self.thumbnail_panel.page_move_down_requested.connect(self._move_page_down)
+        self.thumbnail_panel.page_remove_requested.connect(self._on_remove_page)
+        self.thumbnail_panel.reanalyze_requested.connect(self._on_reanalyze_page)
+        self.thumbnail_panel.add_page_requested.connect(self._on_add_page)
         content_layout.addWidget(self.thumbnail_panel)
 
         # Center panel - Large preview (takes remaining space)
@@ -297,117 +304,6 @@ class GuidedBundleWorkflow(QDialog):
         layout.addLayout(bottom_row)
 
         return header
-
-    def _create_thumbnail_panel(self) -> QWidget:
-        """Create left panel with reorderable thumbnails."""
-        theme = self._get_theme_colors()
-
-        panel = QWidget()
-        panel.setStyleSheet(f"background: {theme['bg_primary']};")
-
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 12, 8, 12)
-        layout.setSpacing(10)
-
-        # Header
-        header_row = QHBoxLayout()
-        self.pages_header = QLabel("📄 Pages")
-        self.pages_header.setStyleSheet(
-            f"font-weight: 600; color: {theme['text_primary']}; font-size: 13px;"
-        )
-        header_row.addWidget(self.pages_header)
-        header_row.addStretch()
-        layout.addLayout(header_row)
-
-        # Action buttons row (centered)
-        actions_row = QHBoxLayout()
-        actions_row.setSpacing(4)
-
-        actions_row.addStretch()  # Left stretch for centering
-
-        # Re-analyze button
-        reanalyze_btn = QPushButton("↻ Re-analyze")
-        reanalyze_btn.setToolTip("Re-analyze current page")
-        reanalyze_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                font-size: 10px;
-                font-weight: 600;
-                padding: 4px 8px;
-            }}
-            QPushButton:hover {{
-                background: {theme["button_hover"]};
-                border-color: {theme["border"]};
-            }}
-        """)
-        reanalyze_btn.clicked.connect(self._on_reanalyze_page)
-        actions_row.addWidget(reanalyze_btn)
-
-        # Add page button
-        add_page_btn = QPushButton("+ Add")
-        add_page_btn.setToolTip("Add page from other bundles")
-        add_page_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["button_text"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 4px;
-                font-size: 10px;
-                font-weight: 600;
-                padding: 4px 8px;
-            }}
-            QPushButton:hover {{
-                background: {theme["button_hover"]};
-                border-color: {theme["border"]};
-            }}
-        """)
-        add_page_btn.clicked.connect(self._on_add_page)
-        actions_row.addWidget(add_page_btn)
-
-        actions_row.addStretch()  # Right stretch for centering
-
-        layout.addLayout(actions_row)
-
-        # Instructions
-        instructions = QLabel("Drag to reorder • Click to preview")
-        instructions.setStyleSheet(
-            f"color: {theme['text_tertiary']}; font-size: 10px; background: transparent;"
-        )
-        instructions.setWordWrap(True)
-        instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(instructions)
-
-        # Scroll area for thumbnails
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                border: none;
-                background: {theme["bg_primary"]};
-            }}
-            QScrollArea > QWidget > QWidget {{
-                background: {theme["bg_primary"]};
-            }}
-            QScrollArea > QWidget {{
-                background: {theme["bg_primary"]};
-            }}
-        """)
-
-        self.thumbnail_container = QWidget()
-        self.thumbnail_container.setStyleSheet(f"background: {theme['bg_primary']};")
-        self.thumbnail_layout = QVBoxLayout(self.thumbnail_container)
-        self.thumbnail_layout.setSpacing(8)
-        self.thumbnail_layout.setContentsMargins(0, 0, 0, 0)
-        self.thumbnail_layout.addStretch()
-
-        scroll.setWidget(self.thumbnail_container)
-        layout.addWidget(scroll)
-
-        return panel
 
     def _create_preview_panel(self) -> QWidget:
         """Create center panel with large image preview."""
@@ -1653,202 +1549,14 @@ class GuidedBundleWorkflow(QDialog):
         self.next_btn.setEnabled(self.current_bundle_index < len(self.bundles) - 1)
 
     def _populate_thumbnails(self):
-        """Populate thumbnail list with reordering support."""
-        from PyQt6.QtWidgets import QApplication
-
-        # Clear existing - remove ALL items first
-        widgets_to_delete = []
-        while self.thumbnail_layout.count():
-            item = self.thumbnail_layout.takeAt(0)
-            if item.widget():
-                widget = item.widget()
-                widget.hide()  # Hide immediately
-                widget.setParent(None)  # Remove parent
-                widgets_to_delete.append(widget)
-
-        # Delete all widgets
-        for widget in widgets_to_delete:
-            widget.deleteLater()
-
-        # Process events to ensure widgets are fully deleted
-        QApplication.processEvents()
-
+        """Delegate to BundleThumbnailPanel.populate()."""
         bundle = self.bundles[self.current_bundle_index]
-        file_paths = bundle.get("file_paths", [])
-
-        for visual_index, actual_index in enumerate(self.page_order):
-            thumb_row = self._create_thumbnail_row(
-                visual_index, actual_index, file_paths[actual_index]
-            )
-            self.thumbnail_layout.addWidget(thumb_row)
-
-        # Add stretch at the end to prevent artifacts
-        self.thumbnail_layout.addStretch()
-
-    def _create_thumbnail_row(
-        self, visual_index: int, actual_index: int, file_path: str
-    ) -> QWidget:
-        """Create thumbnail row with drag-and-drop and reorder buttons."""
-        theme = self._get_theme_colors()
-
-        row = QWidget()
-        row.setStyleSheet(f"background: {theme['bg_primary']};")
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        # Draggable thumbnail
-        if self.prototype_mode:
-            # Mock mode - create placeholder
-            pixmap = QPixmap(80, 100)
-            color_idx = actual_index
-            base_color = QColor(220 + (color_idx * 10) % 30, 230, 245)
-            pixmap.fill(base_color)
-            painter = QPainter(pixmap)
-            painter.drawText(
-                pixmap.rect(), Qt.AlignmentFlag.AlignCenter, f"Page\n{actual_index + 1}"
-            )
-            painter.end()
-        else:
-            # Real mode - load actual image
-            pixmap = QPixmap(file_path)
-            if pixmap.isNull():
-                # Fallback to placeholder if image fails to load
-                pixmap = QPixmap(80, 100)
-                pixmap.fill(QColor(220, 230, 245))
-                painter = QPainter(pixmap)
-                painter.drawText(
-                    pixmap.rect(),
-                    Qt.AlignmentFlag.AlignCenter,
-                    f"Page\n{actual_index + 1}\n(Error)",
-                )
-                painter.end()
-            else:
-                # Scale to thumbnail size
-                pixmap = pixmap.scaled(
-                    80,
-                    100,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-
-        thumbnail = DraggableThumbnail(visual_index)
-        thumbnail.setPixmap(pixmap)
-        thumbnail.setFixedSize(80, 100)
-        thumbnail.drag_started.connect(self._on_drag_started)
-        thumbnail.drop_requested.connect(self._on_drop_requested)
-        # Use functools.partial to avoid lambda closure issues
-        from functools import partial
-
-        thumbnail.clicked.connect(partial(self._on_thumbnail_clicked, visual_index))
-
-        # Selection border
-        if visual_index == self.current_page_index:
-            border_color = theme["selected"]
-            border_width = 3
-        else:
-            border_color = theme["border"]
-            border_width = 1
-
-        thumbnail.setStyleSheet(f"""
-            DraggableThumbnail {{
-                border: {border_width}px solid {border_color};
-                background: {theme["bg_primary"]};
-                border-radius: 4px;
-            }}
-            DraggableThumbnail:hover {{
-                border-color: {theme["selected"]};
-            }}
-        """)
-
-        layout.addWidget(thumbnail)
-
-        # Page actions (number, up/down, remove)
-        actions_container = QWidget()
-        actions_layout = QVBoxLayout(actions_container)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(2)
-
-        # Page number label
-        page_num = QLabel(f"{visual_index + 1}")
-        page_num.setStyleSheet(
-            f"color: {theme['text_primary']}; font-size: 10px; font-weight: 700; background: transparent;"
+        self.thumbnail_panel.populate(
+            bundle.get("file_paths", []),
+            self.page_order,
+            self.current_page_index,
+            self.prototype_mode,
         )
-        page_num.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        page_num.setFixedWidth(24)
-        actions_layout.addWidget(page_num)
-
-        # Consistent button style - all same size
-        btn_style = f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 2px;
-                color: {theme["text_primary"]};
-                font-size: 8px;
-                font-weight: bold;
-                min-width: 20px;
-                max-width: 20px;
-                min-height: 18px;
-                max-height: 18px;
-                padding: 0;
-            }}
-            QPushButton:hover {{
-                background: {theme["bg_hover"]};
-                border-color: {theme["border_focus"]};
-            }}
-            QPushButton:disabled {{
-                background: {theme["bg_secondary"]};
-                color: {theme["text_disabled"]};
-                border-color: {theme["border_light"]};
-            }}
-        """
-
-        remove_style = f"""
-            QPushButton {{
-                background: {theme["button_bg"]};
-                color: {theme["text_primary"]};
-                border: 1px solid {theme["border"]};
-                border-radius: 2px;
-                font-size: 11px;
-                font-weight: bold;
-                min-width: 20px;
-                max-width: 20px;
-                min-height: 18px;
-                max-height: 18px;
-                padding: 0;
-            }}
-            QPushButton:hover {{
-                background: {theme["danger"]};
-                color: white;
-                border-color: {theme["danger"]};
-            }}
-        """
-
-        up_btn = QPushButton("▲")
-        up_btn.setStyleSheet(btn_style)
-        up_btn.setToolTip("Move page up")
-        up_btn.setEnabled(visual_index > 0)
-        up_btn.clicked.connect(lambda: self._move_page_up(visual_index))
-        actions_layout.addWidget(up_btn)
-
-        down_btn = QPushButton("▼")
-        down_btn.setStyleSheet(btn_style)
-        down_btn.setToolTip("Move page down")
-        down_btn.setEnabled(visual_index < len(self.page_order) - 1)
-        down_btn.clicked.connect(lambda: self._move_page_down(visual_index))
-        actions_layout.addWidget(down_btn)
-
-        # Remove button - same size as up/down
-        remove_btn = QPushButton("×")
-        remove_btn.setStyleSheet(remove_style)
-        remove_btn.setToolTip("Remove page from bundle")
-        remove_btn.clicked.connect(lambda: self._on_remove_page(visual_index))
-        actions_layout.addWidget(remove_btn)
-
-        layout.addWidget(actions_container)
-
-        return row
 
     def _update_metadata_form(self):
         """Update metadata form with current bundle data."""
@@ -2003,10 +1711,6 @@ class GuidedBundleWorkflow(QDialog):
             self._populate_thumbnails()
             self._display_current_page()
             self._refresh_accordion_content()
-
-    def _on_drag_started(self, index: int):
-        """Handle drag start."""
-        pass  # Could add visual feedback
 
     def _on_drop_requested(self, from_index: int, to_index: int):
         """Handle drop - reorder pages."""
@@ -2799,48 +2503,7 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
 
         # Update thumbnail panel
         if hasattr(self, "thumbnail_panel"):
-            self.thumbnail_panel.setStyleSheet(f"background: {theme['bg_primary']};")
-
-        if hasattr(self, "pages_header"):
-            self.pages_header.setStyleSheet(
-                f"font-weight: 600; color: {theme['text_primary']}; font-size: 13px; background: transparent;"
-            )
-
-        # Update thumbnail scroll area and container
-        if hasattr(self, "thumbnail_container"):
-            self.thumbnail_container.setStyleSheet(f"background: {theme['bg_primary']};")
-
-        # Find and update thumbnail scroll area
-        if hasattr(self, "thumbnail_panel"):
-            for scroll in self.thumbnail_panel.findChildren(QScrollArea):
-                scroll.setStyleSheet(
-                    f"QScrollArea {{ border: none; background: {theme['bg_primary']}; }}"
-                )
-
-            # Update instruction label in thumbnail panel
-            for label in self.thumbnail_panel.findChildren(QLabel):
-                if "Drag to reorder" in label.text():
-                    label.setStyleSheet(f"color: {theme['text_tertiary']}; font-size: 10px;")
-
-            # Update Re-analyze and Add buttons in thumbnail panel
-            for button in self.thumbnail_panel.findChildren(QPushButton):
-                if "Re-analyze" in button.text() or "Add" in button.text():
-                    button.setStyleSheet(f"""
-                        QPushButton {{
-                            background: {theme["button_bg"]};
-                            color: {theme["button_text"]};
-                            border: 1px solid {theme["border"]};
-                            border-radius: 4px;
-                            font-size: 10px;
-                            font-weight: 600;
-                            padding: 4px 8px;
-                        }}
-                        QPushButton:hover {{
-                            background: {theme["button_hover"]};
-                            border-color: {theme["border"]};
-                        }}
-                    """)
-
+            self.thumbnail_panel.apply_theme(self.dark_mode)
         # Update preview panel
         if hasattr(self, "preview_container"):
             self.preview_container.setStyleSheet(

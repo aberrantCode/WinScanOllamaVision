@@ -131,7 +131,9 @@ class TestDetermineOutputDirectory:
         mock_config_manager.get_setting.side_effect = side_effect
 
         bundle = {"file_paths": []}
-        result = converter.determine_output_directory(bundle)
+        with patch("services.logging_service.get_logger") as mock_logger:
+            mock_logger.return_value = Mock()
+            result = converter.determine_output_directory(bundle)
 
         expected = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         assert result == expected
@@ -157,7 +159,9 @@ class TestDetermineOutputDirectory:
         mock_config_manager.get_setting.side_effect = side_effect
 
         bundle = {"file_paths": []}
-        result = converter.determine_output_directory(bundle)
+        with patch("services.logging_service.get_logger") as mock_logger:
+            mock_logger.return_value = Mock()
+            result = converter.determine_output_directory(bundle)
 
         expected = os.path.join(os.path.expanduser("~"), "Documents", "WinScanLLM", "PDFs")
         assert result == expected
