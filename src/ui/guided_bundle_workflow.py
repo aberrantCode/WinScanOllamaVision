@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.bundle_widgets import ClickableLabel
+from ui.clickable_label import ClickableLabel
 from ui.styles import (
     Colors,
 )
