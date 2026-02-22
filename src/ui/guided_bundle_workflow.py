@@ -20,17 +20,12 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QComboBox,
     QDialog,
-    QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
@@ -39,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_colors import hex_to_rgb as _hex_to_rgb_fn
+from ui.bundle.bundle_metadata_panel import BundleMetadataPanel
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
 from ui.bundle.bundle_preview_panel import BundlePreviewPanel
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
@@ -116,17 +112,11 @@ class GuidedBundleWorkflow(QDialog):
             self.default_zoom_mode = "fit_to_width"
             self.default_zoom_percent = 100
 
-        # Metadata inputs
-        self.metadata_inputs = {}
-
         # Page reordering tracking
         self.page_order = []  # Will be initialized when loading bundle
 
         # Track first show
         self._first_show = True
-
-        # Accordion sections
-        self.accordion_sections = []
 
         # Theme state - read from config (same key as settings window)
         if config_manager:
@@ -134,13 +124,6 @@ class GuidedBundleWorkflow(QDialog):
             self.dark_mode = theme == "dark"
         else:
             self.dark_mode = False
-
-        # Edit mode tracking
-        self.edit_mode = False
-        self.original_metadata = {}
-
-        # Output filename tracking
-        self.output_filename_manually_edited = False
 
         self._init_ui()
 
@@ -197,8 +180,11 @@ class GuidedBundleWorkflow(QDialog):
         content_layout.addWidget(self.preview_panel, stretch=1)
 
         # Right panel - Metadata (fixed width)
-        self.metadata_panel = self._create_metadata_panel()
+        self.metadata_panel = BundleMetadataPanel(dark_mode=self.dark_mode, parent=self)
         self.metadata_panel.setFixedWidth(380)
+        self.metadata_panel.metadata_changed.connect(self._on_metadata_changed)
+        self.metadata_panel.save_requested.connect(self._on_metadata_save)
+        self.metadata_panel.cancel_requested.connect(self._on_metadata_cancel)
         content_layout.addWidget(self.metadata_panel)
 
         main_layout.addWidget(content_container)
@@ -301,712 +287,6 @@ class GuidedBundleWorkflow(QDialog):
         layout.addLayout(bottom_row)
 
         return header
-
-    def _create_metadata_panel(self) -> QWidget:
-        """Create right panel with editable metadata in accordion sections."""
-        theme = self._get_theme_colors()
-
-        panel = QWidget()
-        panel.setStyleSheet(f"background: {theme['metadata_bg']};")
-
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # Scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"QScrollArea {{ border: none; background: {theme['metadata_bg']}; }}")
-
-        container = QWidget()
-        container.setStyleSheet(f"background: {theme['metadata_bg']};")
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(0)
-
-        # Store accordion sections
-        self.accordion_sections = []
-
-        # Extracted Metadata Section (expanded by default)
-        metadata_section = self._create_accordion_section(
-            "📋 Extracted Metadata", self._create_metadata_form(), initially_expanded=True
-        )
-        container_layout.addWidget(metadata_section)
-
-        # File Information Section
-        file_info_section = self._create_accordion_section(
-            "📄 File Information", self._create_file_info_form(), initially_expanded=False
-        )
-        container_layout.addWidget(file_info_section)
-
-        # Analysis Information Section
-        analysis_section = self._create_accordion_section(
-            "⚙️ Analysis Information", self._create_analysis_info_form(), initially_expanded=False
-        )
-        container_layout.addWidget(analysis_section)
-
-        # Don't add stretch - let expanded accordion fill space
-        scroll.setWidget(container)
-        layout.addWidget(scroll)  # Takes all available space
-
-        # Output filename section at bottom (fixed height)
-        output_section = self._create_output_filename_section()
-        layout.addWidget(output_section)
-
-        return panel
-
-    def _create_output_filename_section(self) -> QWidget:
-        """Create output filename section with auto-updating field."""
-        theme = self._get_theme_colors()
-
-        # Use a highlighted background color to make it stand out
-        highlight_bg = theme["info"] if self.dark_mode else "#e0f2fe"
-
-        section = QWidget()
-        section.setStyleSheet(f"background: {highlight_bg}; border-radius: 6px;")
-        section.setMinimumHeight(90)
-        section.setMaximumHeight(90)
-
-        layout = QVBoxLayout(section)
-        layout.setContentsMargins(10, 8, 10, 6)
-        layout.setSpacing(6)
-
-        # Label with icon and larger font - MUST be visible
-        label = QLabel("📄 Output File Name")
-        label_color = "white" if self.dark_mode else "#0c4a6e"
-        label.setStyleSheet(
-            f"color: {label_color}; font-weight: 700; font-size: 13px; background: transparent;"
-        )
-        label.setMinimumHeight(24)
-        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        layout.addWidget(label)
-
-        # Textbox for filename (larger, more prominent)
-        self.output_filename_input = QLineEdit()
-        self.output_filename_input.setPlaceholderText("Company - Invoice - 2024-01-15")
-        self.output_filename_input.setToolTip(
-            "Output PDF filename (without extension).\n\n"
-            "Extension will be automatically set to .PDF when saving.\n"
-            "Any extension you type will be removed and replaced with .PDF"
-        )
-
-        input_bg = "#ffffff" if self.dark_mode else "#ffffff"
-        input_text = "#111827" if self.dark_mode else "#111827"
-        input_border = "#60a5fa" if self.dark_mode else "#3b82f6"
-
-        self.output_filename_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {input_bg};
-                color: {input_text};
-                border: 2px solid {input_border};
-                border-radius: 6px;
-                padding: 10px 12px;
-                font-size: 14px;
-                font-weight: 600;
-            }}
-            QLineEdit:focus {{
-                border: 2px solid {theme["selected"]};
-                background: {input_bg};
-            }}
-        """)
-
-        # Track manual edits
-        self.output_filename_input.textChanged.connect(self._on_output_filename_manual_edit)
-
-        layout.addWidget(self.output_filename_input)
-
-        return section
-
-    def _create_metadata_form(self) -> QWidget:
-        """Create editable metadata form with all fields."""
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
-        theme = self._get_theme_colors()
-
-        form = QWidget()
-        form.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(form)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-
-        bundle = self.bundles[self.current_bundle_index]
-
-        # Get current page analysis - use page_order to map visual index to actual index
-        actual_index = (
-            self.page_order[self.current_page_index]
-            if self.current_page_index < len(self.page_order)
-            else self.current_page_index
-        )
-        logger.info(
-            f"[CREATE METADATA FORM] current_page_index={self.current_page_index}, actual_index={actual_index}"
-        )
-
-        if actual_index < len(bundle.get("analyses", [])):
-            analysis = bundle["analyses"][actual_index]
-            logger.info(
-                f"[CREATE METADATA FORM] Found analysis: document_type={analysis.get('document_type')}, company={analysis.get('company')}"
-            )
-        else:
-            analysis = {}
-            logger.info(f"[CREATE METADATA FORM] No analysis found for actual_index {actual_index}")
-
-        def add_field(label, field_name, value, widget_type="text", options=None, placeholder=""):
-            field_container = QWidget()
-            field_container.setStyleSheet("background: transparent;")
-            field_layout = QVBoxLayout(field_container)
-            field_layout.setContentsMargins(0, 0, 0, 0)
-            field_layout.setSpacing(6)
-
-            lbl = QLabel(label)
-            # Use explicit white in dark mode, dark in light mode
-            label_color = "#f1f5f9" if self.dark_mode else "#111827"
-            lbl.setStyleSheet(
-                f"color: {label_color}; font-weight: 600; font-size: 12px; background: transparent;"
-            )
-            field_layout.addWidget(lbl)
-
-            if widget_type == "dropdown":
-                widget = QComboBox()
-                widget.setEditable(True)
-                if options:
-                    widget.addItems(options)
-                if value:
-                    widget.setCurrentText(str(value))
-                # Create custom down arrow indicator using unicode character
-                arrow_color = theme["text_primary"]
-                widget.setStyleSheet(f"""
-                    QComboBox {{
-                        background: {theme["bg_input"]};
-                        color: {theme["text_primary"]};
-                        border: 1px solid {theme["border"]};
-                        border-radius: 4px;
-                        padding: 8px;
-                        padding-right: 30px;
-                        font-size: 13px;
-                    }}
-                    QComboBox:focus {{
-                        border: 1px solid {theme["border_focus"]};
-                    }}
-                    QComboBox::drop-down {{
-                        subcontrol-origin: padding;
-                        subcontrol-position: center right;
-                        width: 25px;
-                        border: none;
-                        background: transparent;
-                    }}
-                    QComboBox::down-arrow {{
-                        image: none;
-                        border: none;
-                        width: 12px;
-                        height: 12px;
-                        margin-right: 5px;
-                    }}
-                    QComboBox QAbstractItemView {{
-                        background: {theme["bg_input"]};
-                        color: {theme["text_primary"]};
-                        selection-background-color: {theme["selected"]};
-                        border: 1px solid {theme["border"]};
-                    }}
-                """)
-
-                # Add unicode down arrow as a visual indicator
-                # Create a custom paint event to draw the arrow
-                from PyQt6.QtCore import QPoint
-                from PyQt6.QtGui import QColor, QPainter, QPen, QPolygon
-
-                original_paint = widget.paintEvent
-
-                def custom_paint(event):
-                    original_paint(event)
-                    painter = QPainter(widget)
-                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-                    # Draw down arrow triangle on the right side
-                    arrow_x = widget.width() - 18
-                    arrow_y = widget.height() // 2
-
-                    # Create triangle points
-                    points = [
-                        QPoint(arrow_x - 4, arrow_y - 2),  # Top left
-                        QPoint(arrow_x + 4, arrow_y - 2),  # Top right
-                        QPoint(arrow_x, arrow_y + 3),  # Bottom center
-                    ]
-
-                    polygon = QPolygon(points)
-                    painter.setPen(QPen(QColor(arrow_color), 1))
-                    painter.setBrush(QColor(arrow_color))
-                    painter.drawPolygon(polygon)
-                    painter.end()
-
-                widget.paintEvent = custom_paint
-            elif widget_type == "checkbox":
-                widget = QCheckBox()
-                widget.setChecked(bool(value))
-                widget.setStyleSheet(f"""
-                    QCheckBox {{
-                        color: {theme["text_primary"]};
-                        font-size: 13px;
-                    }}
-                    QCheckBox::indicator {{
-                        width: 18px;
-                        height: 18px;
-                        border: 2px solid {theme["border"]};
-                        border-radius: 3px;
-                    }}
-                    QCheckBox::indicator:checked {{
-                        background: {theme["selected"]};
-                        border-color: {theme["selected"]};
-                    }}
-                """)
-            else:
-                widget = QLineEdit()
-                widget.setText(str(value) if value else "")
-                if placeholder:
-                    widget.setPlaceholderText(placeholder)
-                widget.setStyleSheet(f"""
-                    QLineEdit {{
-                        background: {theme["bg_input"]};
-                        color: {theme["text_primary"]};
-                        border: 1px solid {theme["border"]};
-                        border-radius: 4px;
-                        padding: 8px;
-                        font-size: 13px;
-                    }}
-                    QLineEdit:focus {{
-                        border: 1px solid {theme["border_focus"]};
-                    }}
-                """)
-
-            field_layout.addWidget(widget)
-            layout.addWidget(field_container)
-            self.metadata_inputs[field_name] = widget
-
-            # Connect field changes to update output filename
-            # Only for key fields used in filename generation
-            if field_name in ["company", "document_type", "document_date"]:
-                if widget_type == "dropdown":
-                    widget.currentTextChanged.connect(self._update_output_filename)
-                elif widget_type == "text":
-                    widget.textChanged.connect(self._update_output_filename)
-
-        # Add all fields (matching bundle_review_window_v2.py)
-        add_field(
-            "Document Type",
-            "document_type",
-            bundle.get("document_type"),
-            "dropdown",
-            ["Invoice", "Receipt", "Statement", "Contract", "Purchase Order"],
-            "e.g., invoice, receipt, contract",
-        )
-
-        add_field(
-            "Company",
-            "company",
-            bundle.get("company"),
-            "dropdown",
-            ["Acme Corporation", "TechCorp", "Global Shipping", "ABC Manufacturing"],
-            "Company or organization name",
-        )
-
-        add_field(
-            "Document Date",
-            "document_date",
-            bundle.get("document_date"),
-            "text",
-            None,
-            "YYYY-MM-DD format",
-        )
-
-        add_field(
-            "Page Number",
-            "page_number",
-            analysis.get("page_number", ""),
-            "text",
-            None,
-            "Current page number",
-        )
-
-        add_field(
-            "Total Pages",
-            "total_pages",
-            analysis.get("total_pages", ""),
-            "text",
-            None,
-            "Total number of pages",
-        )
-
-        add_field(
-            "Rotation Needed",
-            "rotation_needed",
-            analysis.get("rotation_needed", "none"),
-            "dropdown",
-            ["none", "90_cw", "90_ccw", "180"],
-        )
-
-        add_field("Tax Related", "tax_related", analysis.get("tax_related", False), "checkbox")
-
-        # Add Save/Cancel buttons (initially hidden)
-        layout.addSpacing(15)
-
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-
-        self.metadata_save_btn = QPushButton("💾 Save Changes")
-        self.metadata_save_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.SUCCESS};
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:hover {{
-                background-color: #059669;
-            }}
-        """)
-        self.metadata_save_btn.clicked.connect(self._on_save_metadata_changes)
-        self.metadata_save_btn.setVisible(False)
-        button_layout.addWidget(self.metadata_save_btn)
-
-        self.metadata_cancel_btn = QPushButton("✖ Cancel")
-        _ct = self._get_theme_colors()
-        self.metadata_cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {_ct["button_bg"]};
-                color: {_ct["button_text"]};
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:hover {{
-                background-color: {_ct["button_hover"]};
-            }}
-        """)
-        self.metadata_cancel_btn.clicked.connect(self._on_cancel_metadata_changes)
-        self.metadata_cancel_btn.setVisible(False)
-        button_layout.addWidget(self.metadata_cancel_btn)
-
-        layout.addLayout(button_layout)
-
-        # Connect all inputs to enter edit mode on change
-        for _field_name, input_widget in self.metadata_inputs.items():
-            if isinstance(input_widget, QCheckBox):
-                input_widget.stateChanged.connect(self._enter_edit_mode)
-            elif isinstance(input_widget, QComboBox):
-                input_widget.currentTextChanged.connect(self._enter_edit_mode)
-            elif isinstance(input_widget, QLineEdit):
-                input_widget.textChanged.connect(self._enter_edit_mode)
-
-        return form
-
-    def _generate_suggested_filename(self, bundle) -> str:
-        """Generate suggested PDF filename."""
-        company = bundle.get("company", "Unknown").replace(" ", "_")
-        doc_type = bundle.get("document_type", "Document").replace(" ", "_")
-        date = bundle.get("document_date", "").replace("-", "")
-        return f"{company}_{doc_type}_{date}.pdf" if date else f"{company}_{doc_type}.pdf"
-
-    def _create_accordion_section(
-        self, title: str, content_widget, initially_expanded: bool = False
-    ):
-        """Create collapsible accordion section."""
-        theme = self._get_theme_colors()
-
-        section = QWidget()
-        section_layout = QVBoxLayout(section)
-        section_layout.setContentsMargins(0, 0, 0, 1)  # Small bottom margin for spacing
-        section_layout.setSpacing(0)
-
-        # Header
-        header = QFrame()
-        header.setCursor(Qt.CursorShape.PointingHandCursor)
-        header.setStyleSheet(f"""
-            QFrame {{
-                background-color: {theme["bg_tertiary"]};
-                border: none;
-                border-radius: 4px;
-                padding: 6px 10px;
-            }}
-            QFrame:hover {{
-                background-color: {theme["bg_hover"]};
-            }}
-        """)
-
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Toggle indicator
-        toggle_indicator = QLabel("▼" if initially_expanded else "▶")
-        toggle_indicator.setStyleSheet(
-            f"color: {theme['text_secondary']}; font-size: 9px; border: none;"
-        )
-        toggle_indicator.setObjectName("accordion_toggle")
-        header_layout.addWidget(toggle_indicator)
-
-        # Title
-        title_label = QLabel(title)
-        title_label.setObjectName("accordion_title")  # Set object name for easy lookup
-        title_label.setStyleSheet(
-            f"color: {theme['text_primary']}; font-weight: 600; font-size: 12px; border: none;"
-        )
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-
-        section_layout.addWidget(header)
-
-        # Content (scrollable if needed)
-        content_scroll = QScrollArea()
-        content_scroll.setWidgetResizable(True)
-        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        content_scroll.setObjectName("accordion_content")
-        content_scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background-color: {theme["bg_secondary"]};
-                border: none;
-            }}
-        """)
-
-        content_container = QWidget()
-        content_container.setStyleSheet(f"background: {theme['bg_secondary']};")
-        content_container_layout = QVBoxLayout(content_container)
-        content_container_layout.setContentsMargins(12, 12, 12, 12)
-        content_container_layout.setSpacing(0)
-        content_container_layout.addWidget(content_widget)
-        content_container_layout.addStretch()
-
-        content_scroll.setWidget(content_container)
-
-        # Set viewport background explicitly
-        viewport = content_scroll.viewport()
-        if viewport is not None:
-            viewport.setStyleSheet(f"background: {theme['bg_secondary']};")
-        section_layout.addWidget(content_scroll)
-
-        # Set size policy for expansion
-        content_scroll.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Expanding if initially_expanded else QSizePolicy.Policy.Ignored,
-        )
-
-        # Toggle function - auto-close others
-        content_scroll.setVisible(initially_expanded)
-
-        def toggle_section():
-            is_currently_visible = content_scroll.isVisible()
-
-            # Only allow opening, not closing
-            # Clicking an already-open section does nothing
-            if not is_currently_visible:
-                # Close all other sections first
-                for other_section in self.accordion_sections:
-                    other_content = other_section.findChild(QScrollArea, "accordion_content")
-                    other_toggle = other_section.findChild(QLabel, "accordion_toggle")
-                    if other_content and other_content != content_scroll:
-                        other_content.setVisible(False)
-                        other_content.setSizePolicy(
-                            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored
-                        )
-                        if other_toggle:
-                            other_toggle.setText("▶")
-
-                # Open this section
-                content_scroll.setVisible(True)
-                content_scroll.setSizePolicy(
-                    QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
-                )
-                toggle_indicator.setText("▼")
-            # If already visible, do nothing (can't close by clicking same section)
-
-        header.mousePressEvent = lambda e: toggle_section()  # type: ignore[method-assign,assignment]
-
-        # Store references
-        section.accordion_header = header  # type: ignore[attr-defined]
-        section.accordion_content = content_scroll  # type: ignore[attr-defined]
-        section.accordion_toggle = toggle_indicator  # type: ignore[attr-defined]
-
-        self.accordion_sections.append(section)
-
-        return section
-
-    def _create_file_info_form(self) -> QWidget:
-        """Create file information form."""
-        import os
-        from datetime import datetime
-
-        theme = self._get_theme_colors()
-
-        widget = QWidget()
-        widget.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        bundle = self.bundles[self.current_bundle_index]
-
-        # Use page_order to map visual index to actual index
-        actual_index = (
-            self.page_order[self.current_page_index]
-            if self.current_page_index < len(self.page_order)
-            else self.current_page_index
-        )
-        if actual_index < len(bundle.get("file_paths", [])):
-            file_path = bundle["file_paths"][actual_index]
-            filename = Path(file_path).name
-            full_path = str(file_path)
-
-            # Get file stats (mock or real)
-            if self.prototype_mode:
-                file_size_str = "1.2 MB"
-                modified_str = "2024-03-15 10:30:00"
-            else:
-                if os.path.exists(file_path):
-                    file_size = os.path.getsize(file_path)
-                    file_size_str = self._format_file_size(file_size)
-                    modified_time = os.path.getmtime(file_path)
-                    modified_str = datetime.fromtimestamp(modified_time).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                else:
-                    file_size_str = "Unknown"
-                    modified_str = "Unknown"
-
-            def add_info_row(label, value, copyable=False):
-                row = QWidget()
-                row.setStyleSheet("background: transparent;")
-                row_layout = QHBoxLayout(row)
-                row_layout.setContentsMargins(0, 0, 0, 0)
-
-                lbl = QLabel(f"<b>{label}:</b>")
-                lbl.setStyleSheet(
-                    f"color: {theme['text_primary']}; font-size: 11px; font-weight: 600;"
-                )
-                lbl.setMinimumWidth(100)
-                row_layout.addWidget(lbl)
-
-                val = QLabel(value)
-                if copyable:
-                    # Make clickable for copy-to-clipboard
-                    val.setCursor(Qt.CursorShape.PointingHandCursor)
-                    val.setStyleSheet(
-                        f"color: {theme['selected']}; font-size: 11px; background: transparent; "
-                        f"text-decoration: underline;"
-                    )
-                    val.setToolTip("Click to copy to clipboard")
-
-                    # Create click handler that copies value to clipboard
-                    def make_copy_handler(text):
-                        def copy_to_clipboard(event):
-                            from PyQt6.QtWidgets import QApplication
-
-                            QApplication.clipboard().setText(text)
-                            # Show brief visual feedback
-                            original_style = val.styleSheet()
-                            val.setStyleSheet(
-                                f"color: {theme['success']}; font-size: 11px; background: transparent; "
-                                f"text-decoration: underline; font-weight: 700;"
-                            )
-                            from PyQt6.QtCore import QTimer
-
-                            QTimer.singleShot(300, lambda: val.setStyleSheet(original_style))
-
-                        return copy_to_clipboard
-
-                    val.mousePressEvent = make_copy_handler(value)
-                else:
-                    val.setStyleSheet(
-                        f"color: {theme['text_primary']}; font-size: 11px; background: transparent;"
-                    )
-
-                val.setWordWrap(True)
-                row_layout.addWidget(val, stretch=1)
-
-                layout.addWidget(row)
-
-            add_info_row("Filename", filename, copyable=True)
-            add_info_row("Full Path", full_path, copyable=True)
-            add_info_row("File Size", file_size_str)
-            add_info_row("Modified", modified_str)
-
-        return widget
-
-    def _create_analysis_info_form(self) -> QWidget:
-        """Create analysis information form."""
-        theme = self._get_theme_colors()
-
-        widget = QWidget()
-        widget.setStyleSheet("background: transparent;")
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        bundle = self.bundles[self.current_bundle_index]
-
-        # Use page_order to map visual index to actual index
-        actual_index = (
-            self.page_order[self.current_page_index]
-            if self.current_page_index < len(self.page_order)
-            else self.current_page_index
-        )
-        if actual_index < len(bundle.get("analyses", [])):
-            analysis = bundle["analyses"][actual_index]
-        else:
-            analysis = {}
-
-        def add_info_row(label, value, value_color=None):
-            row = QWidget()
-            row.setStyleSheet("background: transparent;")
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-
-            lbl = QLabel(f"<b>{label}:</b>")
-            lbl.setStyleSheet(
-                f"color: {theme['text_primary']}; font-size: 11px; font-weight: 600; background: transparent;"
-            )
-            lbl.setMinimumWidth(100)
-            row_layout.addWidget(lbl)
-
-            val = QLabel(str(value))
-            color = value_color if value_color else theme["text_primary"]
-            val.setStyleSheet(f"color: {color}; font-size: 11px; background: transparent;")
-            val.setWordWrap(True)
-            row_layout.addWidget(val, stretch=1)
-
-            layout.addWidget(row)
-
-        add_info_row("Analysis ID", analysis.get("analysis_id", "N/A"))
-
-        # Confidence score with color coding
-        confidence = analysis.get("confidence_score", 0.0)
-        if isinstance(confidence, int | float):
-            confidence_pct = int(confidence * 100 if confidence <= 1.0 else confidence)
-
-            # Color code based on confidence level
-            if confidence_pct >= 80:
-                conf_color = theme.get("success", "#10b981")
-            elif confidence_pct >= 50:
-                conf_color = theme.get("warning", "#f59e0b")
-            else:
-                conf_color = theme.get("danger", "#ef4444")
-
-            add_info_row("Confidence Score", f"{confidence_pct:.1f}%", value_color=conf_color)
-        else:
-            add_info_row("Confidence Score", "N/A")
-
-        add_info_row("Provider", analysis.get("provider", "N/A"))
-        add_info_row("Model", analysis.get("model", "N/A"))
-        add_info_row("Processing Time", analysis.get("processing_time", "N/A"))
-        add_info_row("Analysis Date", analysis.get("analysis_date", "N/A"))
-
-        return widget
-
-    def _format_file_size(self, size_bytes: int | float) -> str:
-        """Format file size in human-readable format."""
-        return BundlePdfConverter.format_file_size(size_bytes)
 
     def _create_action_bar(self) -> QWidget:
         """Create bottom action bar."""
@@ -1317,18 +597,8 @@ class GuidedBundleWorkflow(QDialog):
 
         self._update_header()
         self._populate_thumbnails()
-        self._update_metadata_form()
         self._display_current_page()
-
-        # Reset output filename manual edit flag for new bundle
-        self.output_filename_manually_edited = False
-
-        # Update output filename based on bundle metadata
-        if hasattr(self, "output_filename_input"):
-            self._update_output_filename()
-
-        if hasattr(self, "accordion_sections"):  # Only if accordions initialized
-            self._refresh_accordion_content()
+        self.metadata_panel.load_bundle(bundle, self.page_order, 0, self.prototype_mode)
 
         # Apply configured zoom mode after UI is fully laid out
         # Use longer delay to ensure container dimensions are available
@@ -1387,35 +657,6 @@ class GuidedBundleWorkflow(QDialog):
             self.current_page_index,
             self.prototype_mode,
         )
-
-    def _update_metadata_form(self):
-        """Update metadata form with current bundle data."""
-        bundle = self.bundles[self.current_bundle_index]
-
-        # Temporarily disconnect signals to prevent triggering edit mode during programmatic updates
-        if "document_type" in self.metadata_inputs:
-            widget = self.metadata_inputs["document_type"]
-            if isinstance(widget, QComboBox):
-                widget.currentTextChanged.disconnect(self._enter_edit_mode)
-            widget.setCurrentText(bundle.get("document_type", ""))
-            if isinstance(widget, QComboBox):
-                widget.currentTextChanged.connect(self._enter_edit_mode)
-
-        if "company" in self.metadata_inputs:
-            widget = self.metadata_inputs["company"]
-            if isinstance(widget, QComboBox):
-                widget.currentTextChanged.disconnect(self._enter_edit_mode)
-            widget.setCurrentText(bundle.get("company", ""))
-            if isinstance(widget, QComboBox):
-                widget.currentTextChanged.connect(self._enter_edit_mode)
-
-        if "document_date" in self.metadata_inputs:
-            widget = self.metadata_inputs["document_date"]
-            if isinstance(widget, QLineEdit):
-                widget.textChanged.disconnect(self._enter_edit_mode)
-            widget.setText(bundle.get("document_date", ""))
-            if isinstance(widget, QLineEdit):
-                widget.textChanged.connect(self._enter_edit_mode)
 
     def _display_current_page(self):
         """Create a pixmap for the current page and hand it to preview_panel."""
@@ -1523,75 +764,6 @@ class GuidedBundleWorkflow(QDialog):
         """Rotate clockwise."""
         self.preview_panel.rotate_cw()
 
-    def _on_output_filename_manual_edit(self):
-        """Mark output filename as manually edited."""
-        # Only set flag if the text was changed by user (not programmatically)
-        if hasattr(self, "output_filename_input"):
-            self.output_filename_manually_edited = True
-
-    def _update_output_filename(self):
-        """Update output filename based on current metadata (unless manually edited)."""
-        if self.output_filename_manually_edited:
-            return  # Don't auto-update if user manually edited
-
-        # Get metadata values from inputs
-        company = ""
-        document_type = ""
-        document_date = ""
-
-        if "company" in self.metadata_inputs:
-            widget = self.metadata_inputs["company"]
-            if isinstance(widget, QComboBox):
-                company = widget.currentText()
-            elif isinstance(widget, QLineEdit):
-                company = widget.text()
-
-        if "document_type" in self.metadata_inputs:
-            widget = self.metadata_inputs["document_type"]
-            if isinstance(widget, QComboBox):
-                document_type = widget.currentText()
-            elif isinstance(widget, QLineEdit):
-                document_type = widget.text()
-
-        if "document_date" in self.metadata_inputs:
-            widget = self.metadata_inputs["document_date"]
-            if isinstance(widget, QLineEdit):
-                document_date = widget.text()
-
-        # Build filename with sanitization and title case
-        filename_parts = []
-        if company:
-            filename_parts.append(company.title())
-        if document_type:
-            filename_parts.append(document_type.title())
-        if document_date:
-            filename_parts.append(document_date)  # Don't title case dates
-
-        # Join with dashes, or use default if all empty
-        filename = " - ".join(filename_parts) if filename_parts else "document"
-
-        # Sanitize filename (remove invalid characters)
-        filename = self._sanitize_filename(filename)
-
-        # DON'T add .pdf extension to display - it will be added automatically when saving
-
-        # Update textbox without triggering the manual edit flag
-        if hasattr(self, "output_filename_input"):
-            # Temporarily disconnect to avoid triggering manual edit
-            self.output_filename_input.textChanged.disconnect(self._on_output_filename_manual_edit)
-            self.output_filename_input.setText(filename)
-            self.output_filename_input.textChanged.connect(self._on_output_filename_manual_edit)
-
-    def _sanitize_filename(self, filename: str) -> str:
-        """Remove invalid characters from filename."""
-        # Remove invalid filename characters
-        invalid_chars = '<>:"/\\|?*'
-        for char in invalid_chars:
-            filename = filename.replace(char, "")
-        # Remove leading/trailing spaces and dots
-        filename = filename.strip(". ")
-        return filename
-
     def _get_pdf_filename(self, filename: str) -> str:
         """
         Get final PDF filename with .PDF extension enforced.
@@ -1610,8 +782,8 @@ class GuidedBundleWorkflow(QDialog):
         # Remove any existing extension
         name_without_ext = os.path.splitext(filename)[0]
 
-        # Sanitize
-        name_without_ext = self._sanitize_filename(name_without_ext)
+        # Sanitize (preserve characters safe for filenames)
+        name_without_ext = BundleMetadataPanel._sanitize_filename(name_without_ext)
 
         # Force .PDF extension (uppercase for consistency)
         return f"{name_without_ext}.PDF"
@@ -1664,20 +836,9 @@ class GuidedBundleWorkflow(QDialog):
         """Accept bundle and convert to PDF."""
         bundle = self.bundles[self.current_bundle_index]
 
-        # Get metadata edits
-        metadata = {
-            "document_type": self.metadata_inputs["document_type"].currentText(),
-            "company": self.metadata_inputs["company"].currentText(),
-            "document_date": self.metadata_inputs["document_date"].text(),
-        }
-
-        # Get output filename from textbox (user may have edited it)
-        if hasattr(self, "output_filename_input"):
-            raw_filename = self.output_filename_input.text().strip()
-        else:
-            # Fallback if textbox doesn't exist
-            raw_filename = self._generate_suggested_filename(bundle)
-
+        # Get metadata and output filename from panel
+        metadata = self.metadata_panel.get_metadata()
+        raw_filename = self.metadata_panel.get_output_filename().strip()
         # Enforce .PDF extension (strips any existing extension user may have typed)
         metadata["output_filename"] = self._get_pdf_filename(raw_filename)
 
@@ -1909,7 +1070,9 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
                     bundle["analyses"][actual_index] = fresh_analysis
 
                     # Refresh UI
-                    self._refresh_accordion_content()
+                    self.metadata_panel.load_bundle(
+                        bundle, self.page_order, self.current_page_index, self.prototype_mode
+                    )
 
                     QMessageBox.information(self, "Success", "Page re-analyzed successfully!")
                 else:
@@ -1998,120 +1161,6 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             self._display_current_page()
             self._update_header()
 
-    def _refresh_accordion_content(self):
-        """Refresh accordion sections when page changes."""
-        from PyQt6.QtWidgets import QApplication
-
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
-        try:
-            logger.info(
-                f"[REFRESH ACCORDION] Starting refresh, current_page_index={self.current_page_index}"
-            )
-            logger.info(
-                f"[REFRESH ACCORDION] Number of accordion sections: {len(self.accordion_sections)}"
-            )
-
-            # Find and update each accordion section
-            for idx, section in enumerate(self.accordion_sections):
-                logger.info(f"[REFRESH ACCORDION] Processing section {idx}")
-
-                if hasattr(section, "accordion_content"):
-                    content_scroll = section.accordion_content  # This is a QScrollArea
-                    logger.info(f"[REFRESH ACCORDION] Section {idx} has accordion_content")
-
-                    # Get title from the section - use object name to find the correct label
-                    title_label = section.findChild(QLabel, "accordion_title")
-                    if title_label:
-                        title = title_label.text()
-                        logger.info(f"[REFRESH ACCORDION] Section {idx} title: '{title}'")
-
-                        # Get the widget inside the scroll area (content_container)
-                        content_container = content_scroll.widget()
-                        if content_container:
-                            layout = content_container.layout()
-                            if layout:
-                                items_before = layout.count()
-                                logger.info(
-                                    f"[REFRESH ACCORDION] Section {idx} has layout with {items_before} items BEFORE clearing"
-                                )
-
-                                # Remove old widgets immediately (not deleteLater)
-                                widgets_to_delete = []
-                                spacer_items = []
-                                while layout.count() > 0:
-                                    item = layout.takeAt(0)
-                                    if item.widget():
-                                        widget = item.widget()
-                                        logger.info(
-                                            f"[REFRESH ACCORDION] Removing widget: {widget.__class__.__name__}"
-                                        )
-                                        widget.setParent(None)  # Remove parent immediately
-                                        widget.hide()  # Hide immediately
-                                        widgets_to_delete.append(widget)
-                                    elif item.spacerItem():
-                                        logger.info("[REFRESH ACCORDION] Removing spacer item")
-                                        spacer_items.append(item)
-
-                                # Delete all old widgets
-                                for widget in widgets_to_delete:
-                                    widget.deleteLater()
-
-                                # Force event processing to ensure widgets are deleted before adding new ones
-                                QApplication.processEvents()
-
-                                items_after_clear = layout.count()
-                                logger.info(
-                                    f"[REFRESH ACCORDION] Removed {len(widgets_to_delete)} widgets and {len(spacer_items)} spacers. Layout now has {items_after_clear} items"
-                                )
-
-                                # Add new widget based on section title
-                                if "Extracted Metadata" in title:
-                                    logger.info("[REFRESH ACCORDION] Creating new metadata form")
-                                    new_widget = self._create_metadata_form()
-                                elif "File Information" in title:
-                                    logger.info("[REFRESH ACCORDION] Creating new file info form")
-                                    new_widget = self._create_file_info_form()
-                                elif "Analysis Information" in title:
-                                    logger.info(
-                                        "[REFRESH ACCORDION] Creating new analysis info form"
-                                    )
-                                    new_widget = self._create_analysis_info_form()
-                                else:
-                                    logger.warning(
-                                        f"[REFRESH ACCORDION] Title '{title}' didn't match any section type"
-                                    )
-                                    continue
-
-                                layout.addWidget(new_widget)
-                                layout.addStretch()  # Add stretch like the initial creation does
-                                items_after_add = layout.count()
-                                logger.info(
-                                    f"[REFRESH ACCORDION] Added new widget ({new_widget.__class__.__name__}) and stretch to section {idx}. Layout now has {items_after_add} items"
-                                )
-                            else:
-                                logger.warning(
-                                    f"[REFRESH ACCORDION] Section {idx} content_container has no layout"
-                                )
-                        else:
-                            logger.warning(
-                                f"[REFRESH ACCORDION] Section {idx} scroll area has no widget"
-                            )
-                    else:
-                        logger.warning(f"[REFRESH ACCORDION] Section {idx} has no title label")
-                else:
-                    logger.warning(
-                        f"[REFRESH ACCORDION] Section {idx} has no accordion_content attribute"
-                    )
-
-            logger.info("[REFRESH ACCORDION] Finished refresh")
-        except Exception as e:
-            logger.error(
-                f"[REFRESH ACCORDION] Error refreshing accordion content: {e}", exc_info=True
-            )
-
     def _toggle_theme(self):
         """Toggle between light and dark mode (not used - theme set from config)."""
         self.dark_mode = not self.dark_mode
@@ -2196,8 +1245,8 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
         if hasattr(self, "preview_panel"):
             self.preview_panel.apply_theme(self.dark_mode)
         # Update metadata panel
-        if hasattr(self, "metadata_scroll"):
-            self.metadata_scroll.setStyleSheet(f"background: {theme['metadata_bg']};")
+        if hasattr(self, "metadata_panel"):
+            self.metadata_panel.apply_theme(self.dark_mode)
 
         # Update action bar
         if hasattr(self, "action_bar"):
@@ -2299,10 +1348,6 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
                 """
             )
 
-        # Update metadata panel background
-        if hasattr(self, "metadata_panel"):
-            self.metadata_panel.setStyleSheet(f"background: {theme['metadata_bg']};")
-
         # Force widget update
         self.update()
 
@@ -2310,146 +1355,15 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
         self._populate_thumbnails()
         self._display_current_page()
 
-        # Update accordion sections styling
-        if hasattr(self, "accordion_sections"):
-            for section in self.accordion_sections:
-                # Update accordion header
-                header = section.findChild(QFrame)
-                if header:
-                    header.setStyleSheet(f"""
-                        QFrame {{
-                            background-color: {theme["bg_tertiary"]};
-                            border: none;
-                            border-radius: 4px;
-                            padding: 6px 10px;
-                        }}
-                        QFrame:hover {{
-                            background-color: {theme["bg_hover"]};
-                        }}
-                    """)
-
-                # Update toggle indicator color
-                toggle = section.findChild(QLabel, "accordion_toggle")
-                if toggle:
-                    toggle.setStyleSheet(
-                        f"color: {theme['text_secondary']}; font-size: 9px; border: none;"
-                    )
-
-                # Update title label colors
-                labels = section.findChildren(QLabel)
-                for label in labels:
-                    if label.objectName() != "accordion_toggle":
-                        label.setStyleSheet(
-                            f"color: {theme['text_primary']}; font-weight: 600; font-size: 12px; border: none;"
-                        )
-                        break
-
-                # Update content scroll area
-                scroll = section.findChild(QScrollArea, "accordion_content")
-                if scroll:
-                    scroll.setStyleSheet(f"""
-                        QScrollArea {{
-                            background-color: {theme["bg_secondary"]};
-                            border: none;
-                        }}
-                    """)
-
-                    # Update content container and viewport
-                    container = scroll.widget()
-                    if container:
-                        container.setStyleSheet(f"background: {theme['bg_secondary']};")
-
-                    # Update viewport explicitly
-                    viewport = scroll.viewport()
-                    if viewport:
-                        viewport.setStyleSheet(f"background: {theme['bg_secondary']};")
-
-            # Refresh accordion content forms
-            self._refresh_accordion_content()
-
-        # Update output filename section if it exists (with prominent styling)
-        if hasattr(self, "output_filename_input"):
-            # Find the parent section widget
-            output_section = self.output_filename_input.parent()
-            if output_section:
-                # Use highlighted background to make it stand out
-                highlight_bg = theme["info"] if self.dark_mode else "#e0f2fe"
-                output_section.setStyleSheet(f"background: {highlight_bg}; border-radius: 6px;")
-                output_section.setMinimumHeight(90)
-                output_section.setMaximumHeight(90)
-
-                # Update label colors (with prominent styling)
-                label_color = "white" if self.dark_mode else "#0c4a6e"
-                for label in output_section.findChildren(QLabel):
-                    label.setStyleSheet(
-                        f"color: {label_color}; font-weight: 700; font-size: 13px; background: transparent;"
-                    )
-                    label.setMinimumHeight(24)
-                    label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-
-                # Update textbox styling (larger, more prominent)
-                input_bg = "#ffffff"
-                input_text = "#111827"
-                input_border = "#60a5fa" if self.dark_mode else "#3b82f6"
-
-                self.output_filename_input.setStyleSheet(f"""
-                    QLineEdit {{
-                        background: {input_bg};
-                        color: {input_text};
-                        border: 2px solid {input_border};
-                        border-radius: 6px;
-                        padding: 10px 12px;
-                        font-size: 14px;
-                        font-weight: 600;
-                    }}
-                    QLineEdit:focus {{
-                        border: 2px solid {theme["selected"]};
-                        background: {input_bg};
-                    }}
-                """)
-
-    def _enter_edit_mode(self):
-        """Enter edit mode when metadata is changed."""
-        if self.edit_mode:
-            return  # Already in edit mode
-
-        # Store original metadata values
-        self.original_metadata = {}
-        for field_name, input_widget in self.metadata_inputs.items():
-            if isinstance(input_widget, QCheckBox):
-                self.original_metadata[field_name] = input_widget.isChecked()
-            elif isinstance(input_widget, QComboBox):
-                self.original_metadata[field_name] = input_widget.currentText()
-            elif isinstance(input_widget, QLineEdit):
-                self.original_metadata[field_name] = input_widget.text()
-
-        self.edit_mode = True
-
-        # Disable thumbnail panel
+    def _on_metadata_changed(self) -> None:
+        """Disable cross-panel interaction while user is editing metadata."""
         self.thumbnail_panel.setEnabled(False)
-
-        # Disable action bar
         self.action_bar.setEnabled(False)
 
-        # Disable accordion headers (prevent page switching)
-        for section in self.accordion_sections:
-            if hasattr(section, "accordion_header"):
-                header = section.accordion_header
-                header.setEnabled(False)
-                header.setCursor(Qt.CursorShape.ForbiddenCursor)
-
-        # Show Save/Cancel buttons
-        if hasattr(self, "metadata_save_btn"):
-            self.metadata_save_btn.setVisible(True)
-        if hasattr(self, "metadata_cancel_btn"):
-            self.metadata_cancel_btn.setVisible(True)
-
-    def _on_save_metadata_changes(self):
-        """Save metadata changes and exit edit mode."""
-        # Changes are already in the input widgets, just exit edit mode
-        self._exit_edit_mode()
-
-        # Show confirmation
+    def _on_metadata_save(self, metadata: dict) -> None:
+        """Re-enable panels after metadata save."""
+        self.thumbnail_panel.setEnabled(True)
+        self.action_bar.setEnabled(True)
         QMessageBox.information(
             self,
             "Changes Saved",
@@ -2457,52 +1371,10 @@ Total Reviewed: {len(self.accepted_bundles) + len(self.rejected_bundles)} / {len
             "Changes will be applied when you accept or save the bundle.",
         )
 
-    def _on_cancel_metadata_changes(self):
-        """Cancel metadata changes and revert to original values."""
-        # Revert all fields to original values
-        for field_name, original_value in self.original_metadata.items():
-            if field_name in self.metadata_inputs:
-                input_widget = self.metadata_inputs[field_name]
-
-                # Temporarily disconnect signals to avoid triggering edit mode again
-                if isinstance(input_widget, QCheckBox):
-                    input_widget.blockSignals(True)
-                    input_widget.setChecked(original_value)
-                    input_widget.blockSignals(False)
-                elif isinstance(input_widget, QComboBox):
-                    input_widget.blockSignals(True)
-                    input_widget.setCurrentText(original_value)
-                    input_widget.blockSignals(False)
-                elif isinstance(input_widget, QLineEdit):
-                    input_widget.blockSignals(True)
-                    input_widget.setText(original_value)
-                    input_widget.blockSignals(False)
-
-        self._exit_edit_mode()
-
-    def _exit_edit_mode(self):
-        """Exit edit mode and re-enable panels."""
-        self.edit_mode = False
-        self.original_metadata = {}
-
-        # Re-enable thumbnail panel
+    def _on_metadata_cancel(self) -> None:
+        """Re-enable panels after metadata cancel."""
         self.thumbnail_panel.setEnabled(True)
-
-        # Re-enable action bar
         self.action_bar.setEnabled(True)
-
-        # Re-enable accordion headers
-        for section in self.accordion_sections:
-            if hasattr(section, "accordion_header"):
-                header = section.accordion_header
-                header.setEnabled(True)
-                header.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        # Hide Save/Cancel buttons
-        if hasattr(self, "metadata_save_btn"):
-            self.metadata_save_btn.setVisible(False)
-        if hasattr(self, "metadata_cancel_btn"):
-            self.metadata_cancel_btn.setVisible(False)
 
     def showEvent(self, event):  # noqa: N802
         """Handle first show - apply configured default zoom."""
