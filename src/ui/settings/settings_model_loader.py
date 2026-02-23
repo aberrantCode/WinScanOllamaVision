@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import QComboBox
 
-from ui.styles import show_warning
+from ui.theme.styles import show_warning
 
 
 class _ModelLoaderMixin:
@@ -528,7 +528,7 @@ Return ONLY the JSON array, no other text."""
 
     def _download_ollama_model(self):
         """Download an Ollama model"""
-        from ui.styles import show_information
+        from ui.theme.styles import show_information
 
         show_information(
             self,

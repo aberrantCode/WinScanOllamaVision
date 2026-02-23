@@ -32,7 +32,7 @@ from ui.bundle.bundle_review_helpers import (
 )
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
-from ui.styles import show_confirm, show_critical, show_information, show_warning
+from ui.theme.styles import show_confirm, show_critical, show_information, show_warning
 
 
 def _create_mock_bundles() -> list:

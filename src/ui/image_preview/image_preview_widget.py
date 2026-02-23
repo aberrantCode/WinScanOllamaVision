@@ -13,7 +13,7 @@ from ui.image_preview.enums import ToolbarPosition, ToolbarSize
 from ui.image_preview.pannable_label import PannableImageLabel
 from ui.image_preview.rotation_mixin import _RotationPersistenceMixin
 from ui.image_preview.toolbar_mixin import _ImageToolbarMixin
-from ui.theme_manager import ThemeManager
+from ui.theme.theme_manager import ThemeManager
 
 
 class ImagePreviewWidget(_ImageToolbarMixin, _RotationPersistenceMixin, QWidget):

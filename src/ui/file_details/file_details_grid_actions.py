@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.file_details.file_details_table_model import FileDetailsTableModel
-from ui.styles import show_confirm, show_critical, show_information, show_warning
+from ui.theme.styles import show_confirm, show_critical, show_information, show_warning
 
 
 class _GridActionsMixin:

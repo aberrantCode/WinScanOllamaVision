@@ -17,7 +17,7 @@ from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from services.bundling_service import BundlingService
 from services.logging_service import get_logger
-from ui.theme_manager import ThemeManager
+from ui.theme.theme_manager import ThemeManager
 
 
 class BundlePanel(QWidget):

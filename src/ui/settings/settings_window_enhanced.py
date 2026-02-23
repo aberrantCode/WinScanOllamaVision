@@ -38,7 +38,7 @@ from ui.settings.settings_tab_directories import _SettingsTabDirectoriesMixin
 from ui.settings.settings_tab_general import _SettingsTabGeneralMixin
 from ui.settings.settings_tab_prompts import _SettingsTabPromptsMixin
 from ui.settings.settings_tab_provider import _SettingsTabProviderMixin
-from ui.styles import show_critical, show_warning
+from ui.theme.styles import show_critical, show_warning
 
 if TYPE_CHECKING:
     from services.logging_service import get_logger
@@ -100,7 +100,7 @@ class EnhancedSettingsWindow(
         except Exception as e:
             self._get_logger().error(f"FATAL ERROR in Settings __init__: {e}", exc_info=True)
             # Show error dialog
-            from ui.styles import show_critical
+            from ui.theme.styles import show_critical
 
             show_critical(
                 None,
@@ -564,7 +564,7 @@ class EnhancedSettingsWindow(
                 "true" if self.close_to_tray_checkbox.isChecked() else "false",
             )
 
-            from ui.styles import show_information
+            from ui.theme.styles import show_information
 
             show_information(self, "Settings Saved", "Your settings have been saved successfully.")
 
@@ -577,7 +577,7 @@ class EnhancedSettingsWindow(
             self.accept()
 
         except Exception as e:
-            from ui.styles import show_critical
+            from ui.theme.styles import show_critical
 
             show_critical(self, "Save Failed", f"Failed to save settings:\n\n{e}")
 

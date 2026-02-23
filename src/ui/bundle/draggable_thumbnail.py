@@ -4,7 +4,7 @@ from PyQt6.QtCore import QMimeData, Qt, pyqtSignal
 from PyQt6.QtGui import QCursor, QDrag
 from PyQt6.QtWidgets import QLabel
 
-from ui.styles import Colors
+from ui.theme.styles import Colors
 
 
 class DraggableThumbnail(QLabel):

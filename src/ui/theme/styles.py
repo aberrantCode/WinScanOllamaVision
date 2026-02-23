@@ -10,7 +10,7 @@ for application-wide theming. This module provides:
   - show_*(): themed message box helpers
 """
 
-from ui.theme_manager import ThemeManager
+from ui.theme.theme_manager import ThemeManager
 
 # ===== COLOR CONSTANTS =====
 

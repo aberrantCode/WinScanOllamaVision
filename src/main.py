@@ -141,7 +141,7 @@ if __name__ == "__main__":
     from config.appdata_manager import initialize_appdata
     from config.config_manager import ConfigManager
     from ui.startup import InitializationWorker, SplashScreen
-    from ui.theme_manager import ThemeManager
+    from ui.theme.theme_manager import ThemeManager
 
     try:
         logger.info("=" * 80)

@@ -32,8 +32,8 @@ from ui.pipeline.stages import (
     STAGE_IMPORT,
     PipelineHeaderWidget,
 )
-from ui.styles import Colors
-from ui.theme_manager import ThemeManager
+from ui.theme.styles import Colors
+from ui.theme.theme_manager import ThemeManager
 
 # ---------------------------------------------------------------------------
 # Windows DWM title-bar colour helpers

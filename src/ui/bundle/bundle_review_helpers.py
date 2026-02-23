@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
-from ui.styles import Colors, show_critical, show_information, show_question
+from ui.theme.styles import Colors, show_critical, show_information, show_question
 
 
 def show_pdf_conversion(

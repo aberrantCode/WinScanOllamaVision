@@ -33,8 +33,8 @@ from services.discovery_worker import DiscoveryWorker
 from services.logging_service import get_logger
 from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.pipeline.stages import _LINK_STYLE
-from ui.styles import Colors, show_confirm, show_information, show_warning
-from ui.theme_manager import ThemeManager
+from ui.theme.styles import Colors, show_confirm, show_information, show_warning
+from ui.theme.theme_manager import ThemeManager
 
 
 class ImportPanel(QWidget):

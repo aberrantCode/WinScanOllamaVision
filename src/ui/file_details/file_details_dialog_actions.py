@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ui.styles import show_critical, show_information, show_question, show_warning
+from ui.theme.styles import show_critical, show_information, show_question, show_warning
 
 
 class _DialogActionsMixin:

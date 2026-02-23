@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.styles import (
+from ui.theme.styles import (
     get_distribution_bar_style,
     get_progress_bar_style,
 )

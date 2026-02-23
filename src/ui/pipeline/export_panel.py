@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 )
 
 from config.config_manager import ConfigManager
-from ui.styles import show_warning
-from ui.theme_manager import ThemeManager
+from ui.theme.styles import show_warning
+from ui.theme.theme_manager import ThemeManager
 
 
 class ExportPanel(QWidget):

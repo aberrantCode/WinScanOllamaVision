@@ -26,7 +26,7 @@ from services.analysis_worker import AnalysisWorker
 from services.logging_service import get_logger
 from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.pipeline.stages import _LINK_STYLE
-from ui.theme_manager import ThemeManager
+from ui.theme.theme_manager import ThemeManager
 
 if TYPE_CHECKING:
     from ui.file_details import FileDetailsGrid

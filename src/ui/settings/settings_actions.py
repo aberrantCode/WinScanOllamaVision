@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.settings.settings_workers import PromptComparisonDialog, PromptOptimizationThread
-from ui.styles import show_critical, show_information, show_question, show_warning
+from ui.theme.styles import show_critical, show_information, show_question, show_warning
 
 
 class _SettingsActionsMixin:

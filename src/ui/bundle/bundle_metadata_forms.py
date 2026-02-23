@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 
 from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
-from ui.styles import Colors
+from ui.theme.styles import Colors
 
 
 def create_metadata_form(
