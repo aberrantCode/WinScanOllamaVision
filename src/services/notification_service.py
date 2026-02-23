@@ -1,5 +1,5 @@
 """
-Toast Notifier
+Notification Service
 Windows toast notification utility for discovery events.
 """
 
@@ -29,11 +29,11 @@ except ImportError:
     ToastDisplayImage = None  # type: ignore
 
 
-class ToastNotifier:
+class NotificationService:
     """Windows toast notification manager"""
 
     def __init__(self):
-        """Initialize toast notifier"""
+        """Initialize notification service"""
         self._toasts_available = self._check_toasts_available()
 
     def _get_logger(self) -> logging.Logger:
@@ -137,7 +137,7 @@ if __name__ == "__main__":
 
     LoggingService().initialize(log_level=logging.DEBUG, console_output=True)
 
-    notifier = ToastNotifier()
+    notifier = NotificationService()
 
     # Test with different counts
     print("Showing toast with 0 files...")

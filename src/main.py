@@ -23,7 +23,7 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
     from PyQt6.QtCore import QTimer
 
     from services.discovery_worker import DiscoveryWorker
-    from ui.toast_notifier import ToastNotifier
+    from services.notification_service import NotificationService
 
     scan_on_startup = config_manager.get_bool("SourceDirectories", "scan_on_startup", True)
     if not scan_on_startup:
@@ -39,7 +39,7 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
 
     def start_discovery() -> None:
         discovery_worker = DiscoveryWorker(config_manager, directories)
-        toast_notifier = ToastNotifier()
+        toast_notifier = NotificationService()
 
         def on_discovery_finished(count: int) -> None:
             get_logger().info(f"Startup discovery finished – {count} new files registered")
