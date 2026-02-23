@@ -1,20 +1,22 @@
-"""DraggableThumbnail — a ClickableLabel that supports drag-and-drop reordering."""
+"""DraggableThumbnail — a QLabel that emits clicked and supports drag-and-drop reordering."""
 
 from PyQt6.QtCore import QMimeData, Qt, pyqtSignal
-from PyQt6.QtGui import QDrag
+from PyQt6.QtGui import QCursor, QDrag
+from PyQt6.QtWidgets import QLabel
 
-from ui.clickable_label import ClickableLabel
 from ui.styles import Colors
 
 
-class DraggableThumbnail(ClickableLabel):
-    """Thumbnail widget that supports drag-and-drop page reordering."""
+class DraggableThumbnail(QLabel):
+    """Thumbnail widget that emits a clicked signal and supports drag-and-drop page reordering."""
 
+    clicked = pyqtSignal()
     drag_started = pyqtSignal(int)  # index
     drop_requested = pyqtSignal(int, int)  # from_index, to_index
 
     def __init__(self, index: int, parent=None):
         super().__init__(parent)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.index = index
         self.setAcceptDrops(True)
         self.drag_active = False
@@ -22,7 +24,7 @@ class DraggableThumbnail(ClickableLabel):
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_start_position = event.pos()
-        super().mousePressEvent(event)
+        self.clicked.emit()
 
     def mouseMoveEvent(self, event):  # noqa: N802
         if not (event.buttons() & Qt.MouseButton.LeftButton):
