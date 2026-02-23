@@ -1,0 +1,685 @@
+"""
+File Details Dialog Actions Mixin
+
+Provides action handler methods for FileDetailsDialog (save, delete, re-analyze,
+format helpers, metadata change tracking, etc.).
+"""
+# mypy: disable-error-code=attr-defined
+
+import json
+import os
+from html import escape as html_escape
+from typing import Any
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QTransform
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from ui.styles import show_critical, show_information, show_question, show_warning
+
+
+class _DialogActionsMixin:
+    """
+    Mixin providing action handler methods for FileDetailsDialog.
+
+    All methods access self.* which resolves correctly via MRO since
+    FileDetailsDialog inherits from this mixin alongside QDialog.
+    """
+
+    def _format_summary(self) -> str:
+        """Format summary information as HTML."""
+        html = "<html><body style='font-family: Segoe UI; font-size: 10pt;'>"
+
+        # File Information
+        html += "<h3 style='color: #2563eb;'>File Information</h3>"
+        html += "<table cellpadding='5'>"
+        html += f"<tr><td><b>Filename:</b></td><td>{html_escape(str(self.file_data.get('filename', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Full Path:</b></td><td>{html_escape(str(self.file_data.get('full_path', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>File Size:</b></td><td>{html_escape(self._format_size(self.file_data.get('file_size')))}</td></tr>"
+        html += f"<tr><td><b>Modified:</b></td><td>{html_escape(self._format_dt(self.file_data.get('modified_time')))}</td></tr>"
+        html += f"<tr><td><b>File Hash:</b></td><td>{html_escape(str(self.file_data.get('file_hash', 'N/A')))}</td></tr>"
+        html += "</table>"
+
+        # Analysis Information
+        html += "<h3 style='color: #2563eb;'>Analysis Information</h3>"
+        html += "<table cellpadding='5'>"
+        html += f"<tr><td><b>Status:</b></td><td>{html_escape(str(self.file_data.get('status', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Analyzed:</b></td><td>{html_escape(self._format_dt(self.file_data.get('analysis_time')))}</td></tr>"
+        html += f"<tr><td><b>Processing Time:</b></td><td>{html_escape(self._format_duration(self.file_data.get('processing_duration')))}</td></tr>"
+        html += f"<tr><td><b>Provider:</b></td><td>{html_escape(str(self.file_data.get('provider', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Model:</b></td><td>{html_escape(str(self.file_data.get('model_used', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Cached:</b></td><td>{'Yes' if self.file_data.get('cache_hit') else 'No'}</td></tr>"
+
+        if self.file_data.get("error_message"):
+            html += f"<tr><td><b>Error:</b></td><td style='color: red;'>{html_escape(str(self.file_data.get('error_message')))}</td></tr>"
+
+        html += "</table>"
+
+        html += "</body></html>"
+        return html
+
+    def _format_metadata(self) -> str:
+        """Format metadata information as HTML."""
+        html = "<html><body style='font-family: Segoe UI; font-size: 10pt;'>"
+
+        html += "<h3 style='color: #2563eb;'>Extracted Metadata</h3>"
+        html += "<table cellpadding='5'>"
+
+        confidence = self.file_data.get("confidence", 0)
+        try:
+            conf_float = float(confidence)
+            conf_color = (
+                "#16a34a" if conf_float >= 80 else "#ea580c" if conf_float >= 50 else "#dc2626"
+            )
+            html += f"<tr><td><b>Confidence:</b></td><td style='color: {conf_color}; font-weight: bold;'>{conf_float:.1f}%</td></tr>"
+        except (ValueError, TypeError):
+            html += f"<tr><td><b>Confidence:</b></td><td>{html_escape(str(confidence))}</td></tr>"
+
+        html += f"<tr><td><b>Company:</b></td><td>{html_escape(str(self.file_data.get('company', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Document Type:</b></td><td>{html_escape(str(self.file_data.get('document_type', 'N/A')))}</td></tr>"
+        html += f"<tr><td><b>Document Date:</b></td><td>{html_escape(str(self.file_data.get('document_date', 'N/A')))}</td></tr>"
+
+        page_num = self.file_data.get("page_number")
+        total_pages = self.file_data.get("total_pages")
+        if page_num and total_pages:
+            html += f"<tr><td><b>Pages:</b></td><td>{html_escape(str(page_num))} of {html_escape(str(total_pages))}</td></tr>"
+        elif page_num:
+            html += f"<tr><td><b>Page Number:</b></td><td>{html_escape(str(page_num))}</td></tr>"
+        elif total_pages:
+            html += f"<tr><td><b>Total Pages:</b></td><td>{html_escape(str(total_pages))}</td></tr>"
+
+        html += "</table>"
+        html += "</body></html>"
+        return html
+
+    def _format_size(self, size: Any) -> str:
+        """Format file size."""
+        try:
+            size = int(size)
+            for unit in ["B", "KB", "MB", "GB"]:
+                if size < 1024.0:
+                    return f"{size:.1f} {unit}"
+                size /= 1024.0
+            return f"{size:.1f} TB"
+        except (ValueError, TypeError):
+            return str(size) if size else "N/A"
+
+    def _format_dt(self, dt: Any) -> str:
+        """Format datetime (converts UTC to local timezone)."""
+        if not dt:
+            return "N/A"
+        # Simple string conversion for now
+        return str(dt)
+
+    def _format_duration(self, duration: Any) -> str:
+        """Format duration."""
+        if not duration:
+            return "N/A"
+        try:
+            seconds = float(duration)
+            if seconds < 1:
+                return f"{seconds * 1000:.0f}ms"
+            elif seconds < 60:
+                return f"{seconds:.1f}s"
+            else:
+                minutes = int(seconds // 60)
+                secs = int(seconds % 60)
+                return f"{minutes}m {secs}s"
+        except (ValueError, TypeError):
+            return str(duration)
+
+    def _copy_json(self):
+        """Copy JSON data to clipboard."""
+        json_str = json.dumps(self.file_data, indent=2, default=str)
+        QApplication.clipboard().setText(json_str)
+        show_information(self, "Copied", "JSON data copied to clipboard")
+
+    def _view_document(self):
+        """Open the document with the default system viewer."""
+        stored_path = self.file_data.get("full_path")
+        filename = self.file_data.get("filename")
+
+        if not filename:
+            show_warning(
+                self, "File Name Not Found", "Could not find the file name for this record."
+            )
+            return
+
+        # Find actual file path (handles temp path issue)
+        file_path = self._find_actual_file_path(stored_path, filename)
+
+        if not file_path:
+            show_warning(
+                self,
+                "File Not Found",
+                f"Could not find the file:\n\n{filename}\n\nSearched in configured source directories.",
+            )
+            return
+
+        try:
+            # Open file with default system viewer
+            os.startfile(file_path)
+        except Exception as e:
+            show_critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
+
+    def _save_metadata(self):
+        """Save edited metadata back to the database."""
+        # Collect values from all metadata input fields
+        updated_metadata = {}
+        for field_name, input_widget in self.metadata_inputs.items():
+            if isinstance(input_widget, QLineEdit):
+                value = input_widget.text().strip()
+            elif isinstance(input_widget, QComboBox):
+                value = input_widget.currentText()
+            elif isinstance(input_widget, QCheckBox):
+                value = input_widget.isChecked()
+                # Always include checkbox values (even False)
+                updated_metadata[field_name] = value
+                continue
+            else:
+                continue
+
+            # Only include non-empty values (for text fields)
+            if value:
+                updated_metadata[field_name] = value
+
+        # Update file_data dictionary
+        self.file_data.update(updated_metadata)
+
+        # Save to database - use both databases
+        try:
+            # Use the database instances passed to constructor
+            analysis_db = self.analysis_db
+            metadata_db = self.metadata_db
+
+            if analysis_db and metadata_db:
+                file_path = self.file_data.get("full_path")
+
+                if file_path:
+                    # Prepare metadata dict with standard field names
+                    metadata = {
+                        "document_type": updated_metadata.get("document_type", ""),
+                        "company": updated_metadata.get("company", ""),
+                        "document_date": updated_metadata.get("document_date", ""),
+                        "page_number": updated_metadata.get("page_number", ""),
+                        "total_pages": updated_metadata.get("total_pages", ""),
+                        "rotation_needed": updated_metadata.get("rotation_needed", ""),
+                        "tax_related": updated_metadata.get("tax_related", False),
+                        "output_filename": updated_metadata.get("output_filename", ""),
+                        "document_category": updated_metadata.get("document_category", ""),
+                    }
+
+                    # Debug logging before database save
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.debug(
+                        f"[SAVE METADATA] Saving metadata to DB - "
+                        f"rotation_needed: '{metadata.get('rotation_needed')}'"
+                    )
+
+                    # Update analysis database (legacy)
+                    analysis_db.update_analysis_metadata(file_path, metadata)
+
+                    # Save rotation to image_files table (via MetadataDB)
+                    rotation_needed = metadata.get("rotation_needed", "none")
+                    rotation_degrees = {
+                        "none": 0,
+                        "90_cw": 90,
+                        "90_ccw": 270,
+                        "180": 180,
+                    }.get(rotation_needed, 0)
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.debug(
+                        f"Converted rotation_needed to rotation_degrees: {rotation_degrees}"
+                    )
+                    metadata_db.save_rotation(file_path, rotation_degrees)
+
+                    # Update normalized metadata table (user edit) via MetadataDB
+                    try:
+                        metadata_updates = {
+                            "company": metadata.get("company"),
+                            "document_type": metadata.get("document_type"),
+                            "document_date": metadata.get("document_date"),
+                            "page_number": int(metadata["page_number"])
+                            if metadata.get("page_number")
+                            else None,
+                            "total_pages": int(metadata["total_pages"])
+                            if metadata.get("total_pages")
+                            else None,
+                            "rotation": rotation_degrees,
+                            "tax_related": metadata.get("tax_related", False),
+                            "output_filename": metadata.get("output_filename"),
+                            "document_category": metadata.get("document_category"),
+                        }
+                        # Use save_metadata which handles the metadata updates
+                        metadata_db.save_metadata(file_path, metadata_updates)
+                        logger.debug("Updated normalized metadata table via MetadataDB (user edit)")
+                    except Exception as meta_error:
+                        logger.warning(f"Failed to update normalized metadata: {meta_error}")
+
+                    # Reload fresh data from database to ensure file_data is up-to-date
+                    fresh_analysis = analysis_db.get_analysis(file_path)
+                    if fresh_analysis:
+                        logger.debug(
+                            f"Reloaded analysis from DB - rotation_needed: {fresh_analysis.get('rotation_needed')}"
+                        )
+
+                        # Update file_data with fresh values from database
+                        for key in [
+                            "document_type",
+                            "company",
+                            "document_date",
+                            "page_number",
+                            "total_pages",
+                            "rotation_needed",
+                            "tax_related",
+                            "confidence",
+                            "output_filename",
+                            "document_category",
+                        ]:
+                            if key in fresh_analysis:
+                                self.file_data[key] = fresh_analysis[key]
+
+                        logger.debug(
+                            f"Updated file_data - rotation_needed: {self.file_data.get('rotation_needed')}"
+                        )
+
+                    # CRITICAL: Also reload rotation from metadata table (authoritative source via MetadataDB)
+                    fresh_rotation = metadata_db.get_rotation(file_path)
+                    self.file_data["rotation"] = fresh_rotation
+                    logger.debug(
+                        f"Reloaded rotation from image_files: {fresh_rotation}° (authoritative source)"
+                    )
+
+                    # Emit signal so parent can refresh its data
+                    self.metadata_saved.emit(file_path)
+
+                    show_information(self, "Success", "Metadata saved successfully!")
+
+                    # Update original values to current values (reset change tracking)
+                    self._store_original_metadata_values()
+                    self._update_save_button_state()
+                else:
+                    show_warning(
+                        self, "Missing File Path", "Cannot save metadata: file path not found."
+                    )
+            else:
+                # Determine which database is missing
+                missing_dbs = []
+                if not analysis_db:
+                    missing_dbs.append("analysis_db")
+                if not metadata_db:
+                    missing_dbs.append("metadata_db")
+
+                show_warning(
+                    self,
+                    "Database Not Available",
+                    f"Cannot save metadata: {', '.join(missing_dbs)} not available.",
+                )
+
+        except Exception as e:
+            show_critical(self, "Save Failed", f"Failed to save metadata:\n\n{str(e)}")
+
+    def _find_actual_file_path(self, stored_path, filename):
+        """Find the actual file path, searching source directories if needed."""
+        # First, check if the stored path exists and is not in a temp folder
+        if stored_path and os.path.exists(stored_path):
+            # Check if it's in a temp folder
+            temp_indicators = ["temp", "tmp", "AppData\\Local\\Temp"]
+            if not any(indicator in stored_path for indicator in temp_indicators):
+                return stored_path
+
+        # If stored path doesn't exist or is in temp, search source directories
+        # Traverse parent chain to find config_manager
+        parent_widget = self.parent()
+        config_manager = None
+
+        while parent_widget:
+            if hasattr(parent_widget, "config_manager"):
+                config_manager = parent_widget.config_manager
+                break
+            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+
+        if config_manager:
+            directories = config_manager.get_directories()
+
+            # Search for the file by name in all source directories
+            for directory in directories:
+                if not os.path.exists(directory):
+                    continue
+
+                for root, _, files in os.walk(directory):
+                    if filename in files:
+                        found_path = os.path.join(root, filename)
+                        if os.path.exists(found_path):
+                            return found_path
+
+        return None
+
+    def _re_analyze(self):
+        """Queue this file for re-analysis and close dialog."""
+        file_path = self.file_data.get("full_path") or self.file_data.get("filename")
+        if not file_path:
+            show_warning(self, "No File Path", "Cannot re-analyze: file path not found.")
+            return
+
+        # Emit signal to parent (AnalysisStatusWindow will queue the job)
+        self.re_analyze_requested.emit(file_path)
+
+        # Close the dialog so user can see analysis progress in main window
+        self.accept()
+
+    def _delete_record(self):
+        """Delete this record from the database (same as context menu delete)."""
+        file_path = self.file_data.get("full_path") or self.file_data.get("filename")
+        if not file_path:
+            show_warning(self, "No File Path", "Cannot delete: file path not found.")
+            return
+
+        # Create custom dialog with checkbox for file deletion
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Delete Record")
+        dialog.setMinimumWidth(450)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(15)
+
+        # Warning icon and message
+        message_layout = QHBoxLayout()
+        icon_label = QLabel("⚠️")
+        icon_label.setStyleSheet("font-size: 32pt;")
+        message_layout.addWidget(icon_label)
+
+        message_text = QLabel(
+            f"Delete this record from the database?\n\n"
+            f"File: {os.path.basename(file_path)}\n"
+            f"Path: {file_path}"
+        )
+        message_text.setWordWrap(True)
+        message_layout.addWidget(message_text, 1)
+        layout.addLayout(message_layout)
+
+        # Checkbox for deleting physical file (checked by default)
+        delete_file_checkbox = QCheckBox("Also delete the file from disk")
+        delete_file_checkbox.setChecked(True)
+        delete_file_checkbox.setStyleSheet("font-weight: 600; color: #DC2626;")
+        layout.addWidget(delete_file_checkbox)
+
+        # Warning label
+        warning_label = QLabel("⚠️ Warning: Deleting the file from disk cannot be undone!")
+        warning_label.setStyleSheet("color: #DC2626; font-size: 9pt;")
+        warning_label.setWordWrap(True)
+        layout.addWidget(warning_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #DC2626;
+                color: white;
+                font-weight: 600;
+                padding: 8px 20px;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #B91C1C;
+            }
+        """)
+        delete_btn.clicked.connect(dialog.accept)
+        delete_btn.setDefault(True)
+        button_layout.addWidget(delete_btn)
+
+        layout.addLayout(button_layout)
+
+        # Show dialog and get result
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Get checkbox state
+        delete_physical_file = delete_file_checkbox.isChecked()
+
+        # Check if we have database access
+        if not self.analysis_db:
+            show_warning(
+                self,
+                "Database Not Available",
+                "Cannot delete record: database connection not available.",
+            )
+            return
+
+        try:
+            # Delete using the same logic as context menu delete
+            # 1. Mark image as deleted in image_files table (soft delete)
+            self.analysis_db.mark_image_deleted(file_path)
+
+            # 2. Delete from metadata table
+            self.analysis_db.delete_metadata_by_path(file_path)
+
+            # 3. Delete physical file if checkbox was checked
+            if delete_physical_file and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    from services.logging_service import get_logger
+
+                    logger = get_logger()
+                    logger.info(f"Deleted physical file: {file_path}")
+                except Exception as file_error:
+                    # Show warning but don't fail the whole operation
+                    show_warning(
+                        self,
+                        "File Deletion Failed",
+                        f"Database record deleted, but failed to delete the physical file:\n\n{str(file_error)}",
+                    )
+
+            # 4. Emit signal to notify parent to refresh
+            self.record_deleted.emit(file_path)
+
+            # 5. Close the dialog
+            self.accept()
+
+        except Exception as e:
+            from services.logging_service import get_logger
+
+            logger = get_logger()
+            logger.error(f"Error deleting record: {e}", exc_info=True)
+            show_critical(self, "Delete Failed", f"Failed to delete record:\n\n{str(e)}")
+
+    # Note: Analysis progress/completion handlers removed - now handled by queue system in AnalysisStatusWindow
+
+    def _set_controls_enabled(self, enabled: bool):
+        """Enable or disable all buttons and edit controls."""
+        # Buttons
+        self.delete_btn.setEnabled(enabled)
+        self.open_doc_btn.setEnabled(enabled)
+        self.save_metadata_btn.setEnabled(enabled)
+        self.copy_json_btn.setEnabled(enabled)
+        self.re_analyze_btn.setEnabled(enabled)
+        self.close_btn.setEnabled(enabled)
+
+        # Edit controls
+        if hasattr(self, "metadata_inputs"):
+            for input_widget in self.metadata_inputs.values():
+                input_widget.setEnabled(enabled)
+
+    def _update_metadata_fields(self):
+        """Update metadata input fields with current file_data values."""
+        if not hasattr(self, "metadata_inputs"):
+            return
+
+        for field_name, input_widget in self.metadata_inputs.items():
+            value = self.file_data.get(field_name, "")
+
+            if isinstance(input_widget, QLineEdit):
+                input_widget.setText(str(value) if value else "")
+            elif isinstance(input_widget, QComboBox):
+                if value:
+                    input_widget.setCurrentText(str(value))
+            elif isinstance(input_widget, QCheckBox):
+                input_widget.setChecked(bool(value))
+
+    def _apply_rotation(self, rotation: str):
+        """Apply metadata rotation to the base image (permanent rotation)."""
+        if not hasattr(self, "base_pixmap") or self.base_pixmap is None:  # type: ignore[has-type]
+            return
+
+        # Update current rotation tracker
+        self.current_rotation = rotation
+
+        # Map rotation strings to angles
+        rotation_map = {"90_cw": -90, "90_ccw": 90, "180": 180, "none": 0}
+
+        angle = rotation_map.get(rotation, 0)
+
+        # Load the original unrotated pixmap from file
+        file_path = self.file_data.get("full_path")
+        if file_path and os.path.exists(file_path):
+            original = QPixmap(file_path)
+
+            if angle == 0:
+                # No rotation - use original directly
+                self.base_pixmap = original
+            else:
+                # Apply metadata rotation to create new base pixmap
+                transform = QTransform()
+                transform.rotate(angle)
+                self.base_pixmap = original.transformed(
+                    transform, Qt.TransformationMode.SmoothTransformation
+                )
+
+            # Reset and update the image preview widget
+            self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window", file_path=file_path)
+        else:
+            # If file doesn't exist, just update with current pixmap
+            self.image_preview.set_pixmap(self.base_pixmap, apply_fit="window")
+
+    def _store_original_metadata_values(self):
+        """Store the original values of all metadata fields for change tracking."""
+        for field_name, widget in self.metadata_inputs.items():
+            if isinstance(widget, QCheckBox):
+                self.original_metadata_values[field_name] = widget.isChecked()
+            elif isinstance(widget, QComboBox):
+                self.original_metadata_values[field_name] = widget.currentText()
+            elif isinstance(widget, QLineEdit):
+                self.original_metadata_values[field_name] = widget.text()
+
+    def _connect_metadata_change_signals(self):
+        """Connect change signals from all metadata input fields."""
+        for _field_name, widget in self.metadata_inputs.items():
+            if isinstance(widget, QCheckBox):
+                widget.stateChanged.connect(self._on_metadata_changed)
+            elif isinstance(widget, QComboBox):
+                widget.currentTextChanged.connect(self._on_metadata_changed)
+            elif isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._on_metadata_changed)
+
+    def _on_metadata_changed(self):
+        """Handle metadata field changes - update save button state."""
+        self._update_save_button_state()
+
+    def _has_unsaved_changes(self):
+        """Check if current metadata values differ from original values."""
+        for field_name, widget in self.metadata_inputs.items():
+            original_value = self.original_metadata_values.get(field_name)
+
+            if isinstance(widget, QCheckBox):
+                current_value = widget.isChecked()
+            elif isinstance(widget, QComboBox):
+                current_value = widget.currentText()
+            elif isinstance(widget, QLineEdit):
+                current_value = widget.text()
+            else:
+                continue
+
+            # Compare current to original (handle None and empty string as equivalent)
+            if original_value != current_value and not (not original_value and not current_value):
+                return True
+
+        return False
+
+    def _update_save_button_state(self):
+        """Enable or disable the save button based on whether there are unsaved changes."""
+        if hasattr(self, "save_metadata_btn"):
+            has_changes = self._has_unsaved_changes()
+            self.save_metadata_btn.setEnabled(has_changes)
+
+            # Update button style to show enabled/disabled state
+            if has_changes:
+                # Enabled state - use blue accent color to draw attention
+                self.save_metadata_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {self.theme_colors["accent"]};
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        padding: 10px 20px;
+                        font-weight: 600;
+                        min-height: 36px;
+                    }}
+                    QPushButton:hover {{
+                        background: {self.theme_colors["text_primary"]};
+                        color: white;
+                    }}
+                """)
+            else:
+                # Disabled state with grayed out text
+                disabled_text_color = "#808080" if self.is_dark_mode else "#A0A0A0"
+                self.save_metadata_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {self.theme_colors["bg_secondary"]};
+                        color: {disabled_text_color};
+                        border: 1px solid {self.theme_colors["border"]};
+                        border-radius: 6px;
+                        padding: 10px 20px;
+                        font-weight: 600;
+                        min-height: 36px;
+                        opacity: 0.6;
+                    }}
+                    QPushButton:disabled {{
+                        color: {disabled_text_color};
+                        opacity: 0.6;
+                    }}
+                """)
+
+    def _check_unsaved_changes_before_close(self):
+        """Check for unsaved changes and prompt user. Returns True if OK to close, False otherwise."""
+        if self._has_unsaved_changes():
+            reply = show_question(
+                self,
+                "Unsaved Changes",
+                "You have unsaved changes. Do you want to save them before closing?",
+                buttons=QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                default_button=QMessageBox.StandardButton.Save,
+            )
+
+            if reply == QMessageBox.StandardButton.Save:
+                # Save the metadata
+                self._save_metadata()
+                return True
+            # Discard -> close without saving; Cancel -> don't close
+            return reply == QMessageBox.StandardButton.Discard
+        # No unsaved changes, OK to close
+        return True
