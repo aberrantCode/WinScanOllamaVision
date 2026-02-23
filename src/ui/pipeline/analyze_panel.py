@@ -24,7 +24,7 @@ from db.metadata_db import MetadataDB
 from services.analysis_queue import AnalysisJob, AnalysisQueue, JobPriority, JobType
 from services.analysis_worker import AnalysisWorker
 from services.logging_service import get_logger
-from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
+from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.pipeline.stages import _LINK_STYLE
 from ui.theme_manager import ThemeManager
 

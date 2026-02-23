@@ -5,127 +5,18 @@ This widget encapsulates all image transformation logic with a configurable
 floating toolbar overlay. Designed to be reusable across multiple windows.
 """
 
-from enum import Enum
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPainter, QPixmap, QTransform
+from PyQt6.QtWidgets import QSpinBox, QVBoxLayout, QWidget
 
-from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QCursor, QPainter, QPixmap, QTransform, QWheelEvent
-from PyQt6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QSpinBox,
-    QVBoxLayout,
-    QWidget,
-)
-
+from ui.image_preview.enums import ToolbarPosition, ToolbarSize
+from ui.image_preview.pannable_label import PannableImageLabel
+from ui.image_preview.rotation_mixin import _RotationPersistenceMixin
+from ui.image_preview.toolbar_mixin import _ImageToolbarMixin
 from ui.theme_manager import ThemeManager
 
 
-class PannableImageLabel(QLabel):
-    """QLabel with click & drag panning and scroll wheel zoom support."""
-
-    pan_changed = pyqtSignal()
-    zoom_requested = pyqtSignal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.is_panning = False
-        self.pan_start_pos = QPoint()
-        self.pan_offset = QPoint(0, 0)
-        self.zoom_level = 100
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMouseTracking(True)
-
-    def set_zoom_level(self, zoom: int):
-        """Update zoom level to control cursor and panning behavior."""
-        self.zoom_level = zoom
-        self._update_cursor()
-
-    def reset_pan(self):
-        """Reset pan offset to center."""
-        self.pan_offset = QPoint(0, 0)
-
-    def get_pan_offset(self) -> QPoint:
-        """Get current pan offset."""
-        return QPoint(self.pan_offset)
-
-    def set_pan_offset(self, offset: QPoint):
-        """Set pan offset."""
-        self.pan_offset = offset
-
-    def mousePressEvent(self, event):  # noqa: N802
-        """Start panning on left click (works at any zoom level)."""
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.is_panning = True
-            self.pan_start_pos = event.pos()
-            self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
-            event.accept()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):  # noqa: N802
-        """Update pan offset while dragging."""
-        if self.is_panning:
-            delta = event.pos() - self.pan_start_pos
-            self.pan_offset += delta
-            self.pan_start_pos = event.pos()
-            self.pan_changed.emit()
-            parent = self.parent()
-            while parent:
-                if hasattr(parent, "_update_image_preview"):
-                    parent._update_image_preview()
-                    break
-                parent = parent.parent()
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):  # noqa: N802
-        """End panning."""
-        if self.is_panning and event.button() == Qt.MouseButton.LeftButton:
-            self.is_panning = False
-            self._update_cursor()
-            event.accept()
-        else:
-            super().mouseReleaseEvent(event)
-
-    def wheelEvent(self, event: QWheelEvent | None):  # noqa: N802
-        """Handle scroll wheel for zooming."""
-        if event is None:
-            return
-        delta = event.angleDelta().y()
-        steps = delta // 120
-        zoom_change = steps * 10
-        if zoom_change != 0:
-            self.zoom_requested.emit(zoom_change)
-        event.accept()
-
-    def _update_cursor(self):
-        """Update cursor to show panning capability."""
-        if not self.is_panning:
-            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-
-
-class ToolbarSize(Enum):
-    """Toolbar size options for floating controls."""
-
-    COMPACT = "compact"  # 20x20px buttons, 10pt font (50% of standard)
-    STANDARD = "standard"  # 40x40px buttons, 20pt font (100%)
-
-
-class ToolbarPosition(Enum):
-    """Toolbar position options."""
-
-    TOP_LEFT = "top_left"
-    TOP_CENTER = "top_center"
-    TOP_RIGHT = "top_right"
-    BOTTOM_LEFT = "bottom_left"
-    BOTTOM_CENTER = "bottom_center"  # Default
-    BOTTOM_RIGHT = "bottom_right"
-
-
-class ImagePreviewWidget(QWidget):
+class ImagePreviewWidget(_ImageToolbarMixin, _RotationPersistenceMixin, QWidget):
     """
     Unified image preview widget with zoom, rotation, and pan controls.
 
@@ -228,214 +119,6 @@ class ImagePreviewWidget(QWidget):
         # Ensure overlay has correct stacking order
         self.overlay_controls.raise_()
 
-    def _create_overlay_controls(self) -> QWidget:
-        """Create floating toolbar with zoom and rotation controls."""
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
-        # Get sizing parameters based on toolbar size
-        if self.toolbar_size == ToolbarSize.COMPACT:
-            btn_size = 20
-            font_size = 10
-            spinner_width = 55
-            spinner_height = 20
-            border_radius = 6
-            spacing = 2
-            padding = 4
-            margin = 4
-            logger.info("Creating COMPACT toolbar")
-        else:  # STANDARD
-            btn_size = 40
-            font_size = 20
-            spinner_width = 110
-            spinner_height = 40
-            border_radius = 12
-            spacing = 4
-            padding = 4
-            margin = 8
-            logger.info("Creating STANDARD toolbar")
-
-        # Get theme colors
-        bg = self.theme_colors["bg_primary"]
-        btn_bg = self.theme_colors["button_bg"]
-        btn_hover = self.theme_colors["button_hover"]
-        text = self.theme_colors["text_primary"]
-        border = self.theme_colors["border"]
-        accent = self.theme_colors["accent"]
-
-        controls = QWidget()
-
-        # Force minimum size to ensure widget is visible
-        if self.toolbar_size == ToolbarSize.COMPACT:
-            controls.setMinimumHeight(30)
-            controls.setMinimumWidth(250)
-        else:
-            controls.setMinimumHeight(60)
-            controls.setMinimumWidth(500)
-
-        controls.setStyleSheet(f"""
-            QWidget {{
-                background: {bg};
-                border: 2px solid {border};
-                border-radius: {border_radius}px;
-                padding: {padding}px;
-            }}
-        """)
-
-        layout = QHBoxLayout(controls)
-        layout.setContentsMargins(margin, margin, margin, margin)
-        layout.setSpacing(spacing)
-        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetFixedSize)
-
-        # Button style
-        btn_style = f"""
-            QPushButton {{
-                background: {btn_bg};
-                color: {text};
-                border: 1px solid {border};
-                border-radius: 4px;
-                font-size: {font_size}pt;
-                font-weight: bold;
-                min-width: {btn_size}px;
-                max-width: {btn_size}px;
-                min-height: {btn_size}px;
-                max-height: {btn_size}px;
-            }}
-            QPushButton:hover {{
-                background: {btn_hover};
-                border-color: {accent};
-            }}
-        """
-
-        # Zoom out button
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setStyleSheet(btn_style)
-        zoom_out_btn.setToolTip("Zoom Out (25%)")
-        zoom_out_btn.clicked.connect(self._on_zoom_out)
-        layout.addWidget(zoom_out_btn)
-
-        # Zoom spinner
-        self.zoom_spinner = QSpinBox()
-        self.zoom_spinner.setRange(5, 400)
-        self.zoom_spinner.setValue(100)
-        self.zoom_spinner.setSuffix("%")
-        self.zoom_spinner.setFixedWidth(spinner_width)
-        self.zoom_spinner.setFixedHeight(spinner_height)
-        self.zoom_spinner.setToolTip("Zoom Level (25-400%)")
-        self.zoom_spinner.setStyleSheet(f"""
-            QSpinBox {{
-                background: {bg};
-                color: {text};
-                border: 1px solid {border};
-                border-radius: 4px;
-                padding: 2px;
-                font-size: {font_size}pt;
-            }}
-        """)
-        self.zoom_spinner.valueChanged.connect(self._on_zoom_percent_changed)
-        layout.addWidget(self.zoom_spinner)
-
-        # Zoom in button
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setStyleSheet(btn_style)
-        zoom_in_btn.setToolTip("Zoom In (25%)")
-        zoom_in_btn.clicked.connect(self._on_zoom_in)
-        layout.addWidget(zoom_in_btn)
-
-        # Fit to width button
-        fit_width_btn = QPushButton("W")
-        fit_width_btn.setStyleSheet(btn_style)
-        fit_width_btn.setToolTip("Fit to Width")
-        fit_width_btn.clicked.connect(self.fit_to_width)
-        layout.addWidget(fit_width_btn)
-
-        # Fit to height button
-        fit_height_btn = QPushButton("H")
-        fit_height_btn.setStyleSheet(btn_style)
-        fit_height_btn.setToolTip("Fit to Height")
-        fit_height_btn.clicked.connect(self.fit_to_height)
-        layout.addWidget(fit_height_btn)
-
-        # Fit to window button
-        fit_btn = QPushButton("F")
-        fit_btn.setStyleSheet(btn_style)
-        fit_btn.setToolTip("Fit to Window")
-        fit_btn.clicked.connect(self.fit_to_window)
-        layout.addWidget(fit_btn)
-
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"background: {border};")
-        sep.setFixedWidth(2)
-        sep.setFixedHeight(btn_size)
-        layout.addWidget(sep)
-
-        # Rotate counter-clockwise button
-        rotate_ccw_btn = QPushButton("↺")
-        rotate_ccw_btn.setStyleSheet(btn_style)
-        rotate_ccw_btn.setToolTip("Rotate Counter-Clockwise (90°)")
-        rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
-        layout.addWidget(rotate_ccw_btn)
-
-        # Rotate clockwise button
-        rotate_cw_btn = QPushButton("↻")
-        rotate_cw_btn.setStyleSheet(btn_style)
-        rotate_cw_btn.setToolTip("Rotate Clockwise (90°)")
-        rotate_cw_btn.clicked.connect(self._on_rotate_cw)
-        layout.addWidget(rotate_cw_btn)
-
-        logger.info(f"Overlay controls created with {layout.count()} buttons")
-        return controls
-
-    def _position_overlay_controls(self):
-        """Position overlay controls based on toolbar_position setting."""
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
-        if not self.overlay_controls:
-            logger.warning("_position_overlay_controls: no overlay_controls!")
-            return
-
-        widget_width = self.width()
-        widget_height = self.height()
-        controls_width = self.overlay_controls.width()
-        controls_height = self.overlay_controls.height()
-
-        logger.info(
-            f"Positioning overlay: widget={widget_width}x{widget_height}, controls={controls_width}x{controls_height}, visible={self.overlay_controls.isVisible()}"
-        )
-
-        margin = 10
-
-        # Calculate position based on toolbar_position
-        if self.toolbar_position == ToolbarPosition.TOP_LEFT:
-            x = margin
-            y = margin
-        elif self.toolbar_position == ToolbarPosition.TOP_CENTER:
-            x = (widget_width - controls_width) // 2
-            y = margin
-        elif self.toolbar_position == ToolbarPosition.TOP_RIGHT:
-            x = widget_width - controls_width - margin
-            y = margin
-        elif self.toolbar_position == ToolbarPosition.BOTTOM_LEFT:
-            x = margin
-            y = widget_height - controls_height - margin
-        elif self.toolbar_position == ToolbarPosition.BOTTOM_CENTER:
-            x = (widget_width - controls_width) // 2
-            y = widget_height - controls_height - margin
-        else:  # BOTTOM_RIGHT
-            x = widget_width - controls_width - margin
-            y = widget_height - controls_height - margin
-
-        logger.info(f"Moving overlay to position ({x}, {y})")
-        self.overlay_controls.move(x, y)
-        logger.info(
-            f"After move - actual pos: {self.overlay_controls.pos()}, geometry: {self.overlay_controls.geometry()}"
-        )
-
     def resizeEvent(self, event):  # noqa: N802
         """Handle widget resize to reposition toolbar."""
         super().resizeEvent(event)
@@ -479,7 +162,8 @@ class ImagePreviewWidget(QWidget):
                 logger.info(f"Loaded saved rotation {saved_rotation}° for {file_path}")
 
         logger.info(
-            f"set_pixmap called: pixmap size={pixmap.size()}, apply_fit={apply_fit}, file_path={file_path}, rotation={self.rotation_angle}, widget size={self.size()}"
+            f"set_pixmap called: pixmap size={pixmap.size()}, apply_fit={apply_fit}, "
+            f"file_path={file_path}, rotation={self.rotation_angle}, widget size={self.size()}"
         )
 
         # Show and position toolbar
@@ -497,7 +181,9 @@ class ImagePreviewWidget(QWidget):
             self._position_overlay_controls()
 
             logger.info(
-                f"After positioning: pos={self.overlay_controls.pos()}, visible={self.overlay_controls.isVisible()}, geometry={self.overlay_controls.geometry()}"
+                f"After positioning: pos={self.overlay_controls.pos()}, "
+                f"visible={self.overlay_controls.isVisible()}, "
+                f"geometry={self.overlay_controls.geometry()}"
             )
 
         # Apply initial fit if requested (deferred to allow layout to complete)
@@ -756,63 +442,3 @@ class ImagePreviewWidget(QWidget):
             pixmap = canvas
 
         self.image_label.setPixmap(pixmap)
-
-    # ========== Rotation Persistence ==========
-
-    def _is_rotation_persistence_enabled(self) -> bool:
-        """Check if rotation persistence is enabled in settings."""
-        if not self.config_manager:
-            return False
-        return bool(self.config_manager.get_bool("GUI", "persist_rotation", True))
-
-    def _load_saved_rotation(self, file_path: str) -> int:
-        """
-        Load saved rotation for a file from database.
-
-        Args:
-            file_path: Absolute path to image file
-
-        Returns:
-            Rotation angle in degrees (0, 90, 180, 270), or 0 if not found
-        """
-        if not self.analysis_db:
-            return 0
-
-        try:
-            from db.repositories.rotation_repo import RotationRepository
-
-            rotation_repo = RotationRepository(self.analysis_db.connection)
-            return rotation_repo.get(file_path)
-        except Exception as e:
-            from services.logging_service import get_logger
-
-            logger = get_logger()
-            logger.warning(f"Failed to load rotation for {file_path}: {e}")
-            return 0
-
-    def _save_rotation(self, file_path: str, rotation_degrees: int) -> None:
-        """
-        Save rotation for a file to database.
-
-        Args:
-            file_path: Absolute path to image file
-            rotation_degrees: Rotation angle in degrees
-        """
-        if not self.analysis_db:
-            return
-
-        try:
-            from db.repositories.rotation_repo import RotationRepository
-
-            rotation_repo = RotationRepository(self.analysis_db.connection)
-            rotation_repo.save(file_path, rotation_degrees)
-
-            from services.logging_service import get_logger
-
-            logger = get_logger()
-            logger.info(f"Saved rotation {rotation_degrees}° for {file_path}")
-        except Exception as e:
-            from services.logging_service import get_logger
-
-            logger = get_logger()
-            logger.error(f"Failed to save rotation for {file_path}: {e}", exc_info=True)

@@ -31,7 +31,7 @@ from db.analysis_db import AnalysisDB
 from db.repositories.image_files_repo import ImageFilesRepository
 from services.discovery_worker import DiscoveryWorker
 from services.logging_service import get_logger
-from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
+from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.pipeline.stages import _LINK_STYLE
 from ui.styles import Colors, show_confirm, show_information, show_warning
 from ui.theme_manager import ThemeManager
