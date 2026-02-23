@@ -36,7 +36,7 @@ def mock_config_manager():
 
 
 def _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager):
-    from ui.pipeline_window import BundlePanel
+    from ui.pipeline import BundlePanel
 
     with patch("ui.pipeline.bundle_panel.BundlingService"):
         panel = BundlePanel(

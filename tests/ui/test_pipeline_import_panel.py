@@ -34,7 +34,7 @@ def mock_config_manager():
 
 def _make_panel(qapp, mock_analysis_db, mock_config_manager):
     """Instantiate ImportPanel with Qt widgets suppressed where needed."""
-    from ui.pipeline_window import ImportPanel
+    from ui.pipeline import ImportPanel
 
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_repo.return_value.get_all.return_value = []
@@ -61,7 +61,7 @@ def test_populate_directory_combo_logs_on_config_error(qapp, mock_analysis_db, m
             mock_logger = MagicMock()
             mock_get_logger.return_value = mock_logger
 
-            from ui.pipeline_window import ImportPanel
+            from ui.pipeline import ImportPanel
 
             ImportPanel(
                 analysis_db=mock_analysis_db,
@@ -85,7 +85,7 @@ def test_populate_directory_combo_still_shows_all_directories_on_error(
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_repo.return_value.get_all.return_value = []
         with patch("ui.pipeline.import_panel.get_logger"):
-            from ui.pipeline_window import ImportPanel
+            from ui.pipeline import ImportPanel
 
             panel = ImportPanel(
                 analysis_db=mock_analysis_db,
@@ -107,7 +107,7 @@ def test_populate_directory_combo_happy_path(qapp, mock_analysis_db, mock_config
 
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_repo.return_value.get_all.return_value = []
-        from ui.pipeline_window import ImportPanel
+        from ui.pipeline import ImportPanel
 
         panel = ImportPanel(
             analysis_db=mock_analysis_db,
@@ -131,7 +131,7 @@ def test_refresh_public_method_delegates_to_private(qapp, mock_analysis_db, mock
     """ImportPanel.refresh() must call _refresh() exactly once."""
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_repo.return_value.get_all.return_value = []
-        from ui.pipeline_window import ImportPanel
+        from ui.pipeline import ImportPanel
 
         panel = ImportPanel(
             analysis_db=mock_analysis_db,
@@ -154,7 +154,7 @@ def test_make_divider_returns_hline_frame(qapp):
     """_make_divider() returns a QFrame with HLine shape and 1-pixel height."""
     from PyQt6.QtWidgets import QFrame
 
-    from ui.pipeline_window import _make_divider
+    from ui.pipeline import _make_divider
 
     divider = _make_divider()
 
@@ -165,7 +165,7 @@ def test_make_divider_returns_hline_frame(qapp):
 
 def test_make_divider_returns_independent_instances(qapp):
     """Each call to _make_divider() returns a distinct QFrame object."""
-    from ui.pipeline_window import _make_divider
+    from ui.pipeline import _make_divider
 
     d1 = _make_divider()
     d2 = _make_divider()
@@ -185,7 +185,7 @@ def test_make_divider_returns_independent_instances(qapp):
 
 def test_image_repo_instantiated_once_on_init(qapp, mock_analysis_db, mock_config_manager):
     """ImageFilesRepository is constructed exactly once (in __init__), not per call."""
-    from ui.pipeline_window import ImportPanel
+    from ui.pipeline import ImportPanel
 
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_repo.return_value.get_all.return_value = []
@@ -204,7 +204,7 @@ def test_image_repo_instantiated_once_on_init(qapp, mock_analysis_db, mock_confi
 
 def test_image_repo_attribute_is_repo_instance(qapp, mock_analysis_db, mock_config_manager):
     """panel._image_repo is the ImageFilesRepository instance created in __init__."""
-    from ui.pipeline_window import ImportPanel
+    from ui.pipeline import ImportPanel
 
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_instance = MagicMock()
@@ -327,7 +327,7 @@ def test_summary_bar_updated_after_refresh(qapp, mock_analysis_db, mock_config_m
 
     with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
         mock_repo.return_value.get_all.return_value = images
-        from ui.pipeline_window import ImportPanel
+        from ui.pipeline import ImportPanel
 
         panel = ImportPanel(
             analysis_db=mock_analysis_db,

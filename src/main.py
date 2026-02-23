@@ -194,7 +194,7 @@ if __name__ == "__main__":
             """
             logger.info("Initialization complete – opening Document Pipeline")
 
-            from ui.pipeline_window import DocumentPipelineWindow
+            from ui.pipeline import DocumentPipelineWindow
 
             # The pipeline window creates and owns its own DB connections when
             # none are supplied, and closes them automatically on exit.

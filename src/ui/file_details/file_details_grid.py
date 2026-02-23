@@ -3,9 +3,6 @@ File Analysis Grid Component
 
 Provides a comprehensive grid view of all analyzed files with advanced filtering,
 sorting, and data export capabilities.
-
-This module re-exports the refactored sub-modules for backward compatibility and
-provides the main FileDetailsGrid widget.
 """
 
 import json
@@ -24,18 +21,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.file_details.file_details_dialog import FileDetailsDialog
 from ui.file_details.file_details_filter_model import FileDetailsSortFilterProxyModel
 from ui.file_details.file_details_grid_actions import _GridActionsMixin
 from ui.file_details.file_details_table_model import FileDetailsTableModel
-
-# Re-export for any code that imports these from this module
-__all__ = [
-    "FileDetailsGrid",
-    "FileDetailsDialog",
-    "FileDetailsTableModel",
-    "FileDetailsSortFilterProxyModel",
-]
 
 
 class FileDetailsGrid(_GridActionsMixin, QWidget):

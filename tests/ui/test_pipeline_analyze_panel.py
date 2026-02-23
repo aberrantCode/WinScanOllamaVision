@@ -38,7 +38,7 @@ def mock_config_manager():
 
 
 def _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager):
-    from ui.pipeline_window import AnalyzePanel
+    from ui.pipeline import AnalyzePanel
 
     with patch("ui.pipeline.analyze_panel.AnalysisWorker"):
         panel = AnalyzePanel(
@@ -146,7 +146,7 @@ def test_analyze_panel_has_no_close_event_override(
     qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
 ):
     """AnalyzePanel must not override closeEvent — it never fires on embedded widgets."""
-    from ui.pipeline_window import AnalyzePanel
+    from ui.pipeline import AnalyzePanel
 
     # closeEvent should not be defined on AnalyzePanel itself (only on QWidget base)
     assert "closeEvent" not in AnalyzePanel.__dict__
@@ -232,7 +232,7 @@ def test_job_finished_accumulates_onto_zeroed_stats(
 
 
 def _make_panel_with_mode(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager, dark_mode):
-    from ui.pipeline_window import AnalyzePanel
+    from ui.pipeline import AnalyzePanel
 
     with patch("ui.pipeline.analyze_panel.AnalysisWorker"):
         return AnalyzePanel(
@@ -272,7 +272,7 @@ def test_is_running_is_property_not_attribute(
     qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
 ):
     """is_running must be a property (not stored in __dict__) so callers can't overwrite it."""
-    from ui.pipeline_window import AnalyzePanel
+    from ui.pipeline import AnalyzePanel
 
     assert isinstance(AnalyzePanel.is_running, property)
 
@@ -281,7 +281,7 @@ def test_window_close_event_calls_shutdown(qapp):
     """DocumentPipelineWindow.closeEvent delegates worker cleanup to analyze_panel.shutdown()."""
     from PyQt6.QtGui import QCloseEvent
 
-    from ui.pipeline_window import DocumentPipelineWindow
+    from ui.pipeline import DocumentPipelineWindow
 
     with (
         patch.object(DocumentPipelineWindow, "_build_ui"),

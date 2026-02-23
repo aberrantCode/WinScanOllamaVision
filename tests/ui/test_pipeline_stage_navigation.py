@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PyQt6.QtWidgets import QApplication
 
-from ui.pipeline_window import (
+from ui.pipeline import (
     STAGE_ANALYZE,
     STAGE_BUNDLE,
     STAGE_EXPORT,

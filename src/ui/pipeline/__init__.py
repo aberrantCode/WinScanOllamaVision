@@ -1,7 +1,7 @@
 """
 Document Pipeline UI subpackage.
 
-Public API — consumers may import from here or from ui.pipeline_window (shim).
+Public API for the document pipeline UI.
 """
 
 from ui.pipeline.analyze_panel import AnalyzePanel

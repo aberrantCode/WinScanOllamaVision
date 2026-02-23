@@ -582,10 +582,6 @@ class EnhancedSettingsWindow(
             show_critical(self, "Save Failed", f"Failed to save settings:\n\n{e}")
 
 
-# For backward compatibility, alias to old name
-SettingsWindow = EnhancedSettingsWindow
-
-
 if __name__ == "__main__":
     from PyQt6.QtWidgets import QApplication
 
