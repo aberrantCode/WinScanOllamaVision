@@ -243,7 +243,7 @@ class AnalyzePanel(QWidget):
 
     def _build_analytics_section(self) -> QWidget:
         """Build a collapsible analytics section with quality and document insights."""
-        from ui.collection_status_helpers import (
+        from ui.pipeline.analyze_status_helpers import (
             create_collapsible_section,
             create_company_insights_widget,
             create_document_insights_widget_split,
@@ -371,7 +371,7 @@ class AnalyzePanel(QWidget):
         if self._type_dist_container:
             from PyQt6.QtWidgets import QVBoxLayout
 
-            from ui.collection_status_helpers import create_distribution_bar
+            from ui.pipeline.analyze_status_helpers import create_distribution_bar
 
             type_layout: QVBoxLayout = self._type_dist_container.layout  # type: ignore[assignment]
             while type_layout.count():
@@ -392,7 +392,7 @@ class AnalyzePanel(QWidget):
         if self._company_dist_container:
             from PyQt6.QtWidgets import QVBoxLayout
 
-            from ui.collection_status_helpers import create_distribution_bar
+            from ui.pipeline.analyze_status_helpers import create_distribution_bar
 
             comp_layout: QVBoxLayout = self._company_dist_container.layout  # type: ignore[assignment]
             while comp_layout.count():

@@ -80,7 +80,7 @@ class ExportPanel(QWidget):
         root.addWidget(summary_header)
 
         # ── Metric cards row
-        from ui.collection_status_helpers import create_metric_card
+        from ui.pipeline.metric_card import create_metric_card
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(8)

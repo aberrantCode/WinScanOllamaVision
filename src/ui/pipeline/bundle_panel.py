@@ -110,7 +110,7 @@ class BundlePanel(QWidget):
 
     def _build_stats_grid(self, c: dict) -> QWidget:
         """Build a 2-column stats grid for the placeholder page."""
-        from ui.collection_status_helpers import create_metric_card
+        from ui.pipeline.metric_card import create_metric_card
 
         grid = QWidget()
         grid.setStyleSheet("background-color: transparent;")
