@@ -21,8 +21,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.file_details_dialog_actions import _DialogActionsMixin
-from ui.file_details_dialog_sections import _DialogSectionsMixin
+from ui.file_details.file_details_dialog_actions import _DialogActionsMixin
+from ui.file_details.file_details_dialog_sections import _DialogSectionsMixin
 from ui.image_preview_widget import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 
 

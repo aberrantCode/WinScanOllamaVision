@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.prompts import DEFAULT_ANALYSIS_PROMPT
-from ui.settings_workers import ExpandablePromptEdit
+from ui.settings.settings_workers import ExpandablePromptEdit
 
 
 class _SettingsTabPromptsMixin:

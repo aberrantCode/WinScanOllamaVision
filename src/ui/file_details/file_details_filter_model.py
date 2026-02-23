@@ -9,7 +9,7 @@ from typing import Any
 
 from PyQt6.QtCore import QModelIndex, QSortFilterProxyModel
 
-from ui.file_details_table_model import FileDetailsTableModel
+from ui.file_details.file_details_table_model import FileDetailsTableModel
 
 
 class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):

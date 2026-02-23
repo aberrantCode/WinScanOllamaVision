@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
 )
 
-from ui.settings_workers import PromptComparisonDialog, PromptOptimizationThread
+from ui.settings.settings_workers import PromptComparisonDialog, PromptOptimizationThread
 from ui.styles import show_critical, show_information, show_question, show_warning
 
 

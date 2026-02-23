@@ -303,7 +303,7 @@ class DocumentPipelineWindow(QMainWindow):
 
     def _show_settings(self) -> None:
         """Open the application settings dialog."""
-        from ui.settings_window_enhanced import EnhancedSettingsWindow
+        from ui.settings import EnhancedSettingsWindow
 
         settings = EnhancedSettingsWindow(
             parent=self,

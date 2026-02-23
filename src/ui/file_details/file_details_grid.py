@@ -24,10 +24,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.file_details_dialog import FileDetailsDialog
-from ui.file_details_filter_model import FileDetailsSortFilterProxyModel
-from ui.file_details_grid_actions import _GridActionsMixin
-from ui.file_details_table_model import FileDetailsTableModel
+from ui.file_details.file_details_dialog import FileDetailsDialog
+from ui.file_details.file_details_filter_model import FileDetailsSortFilterProxyModel
+from ui.file_details.file_details_grid_actions import _GridActionsMixin
+from ui.file_details.file_details_table_model import FileDetailsTableModel
 
 # Re-export for any code that imports these from this module
 __all__ = [

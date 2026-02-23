@@ -27,17 +27,17 @@ from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.ollama_service import OllamaService
-from ui.settings_actions import _SettingsActionsMixin
-from ui.settings_change_tracker import _ChangeTrackerMixin
-from ui.settings_model_loader import _ModelLoaderMixin
-from ui.settings_style_dark import get_dark_theme_stylesheet
-from ui.settings_style_light import get_light_theme_stylesheet
-from ui.settings_tab_appearance import _SettingsTabAppearanceMixin
-from ui.settings_tab_database import _SettingsTabDatabaseMixin
-from ui.settings_tab_directories import _SettingsTabDirectoriesMixin
-from ui.settings_tab_general import _SettingsTabGeneralMixin
-from ui.settings_tab_prompts import _SettingsTabPromptsMixin
-from ui.settings_tab_provider import _SettingsTabProviderMixin
+from ui.settings.settings_actions import _SettingsActionsMixin
+from ui.settings.settings_change_tracker import _ChangeTrackerMixin
+from ui.settings.settings_model_loader import _ModelLoaderMixin
+from ui.settings.settings_style_dark import get_dark_theme_stylesheet
+from ui.settings.settings_style_light import get_light_theme_stylesheet
+from ui.settings.settings_tab_appearance import _SettingsTabAppearanceMixin
+from ui.settings.settings_tab_database import _SettingsTabDatabaseMixin
+from ui.settings.settings_tab_directories import _SettingsTabDirectoriesMixin
+from ui.settings.settings_tab_general import _SettingsTabGeneralMixin
+from ui.settings.settings_tab_prompts import _SettingsTabPromptsMixin
+from ui.settings.settings_tab_provider import _SettingsTabProviderMixin
 from ui.styles import show_critical, show_warning
 
 if TYPE_CHECKING:

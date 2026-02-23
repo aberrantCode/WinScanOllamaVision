@@ -19,7 +19,7 @@ from config.config_manager import ConfigManager
 from llm_providers.provider_factory import ProviderFactory
 
 if TYPE_CHECKING:
-    from ui.settings_window_enhanced import EnhancedSettingsWindow
+    from ui.settings.settings_window_enhanced import EnhancedSettingsWindow
 
 logger: logging.Logger | None = None
 

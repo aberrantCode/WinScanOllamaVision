@@ -29,7 +29,7 @@ from ui.pipeline.stages import _LINK_STYLE
 from ui.theme_manager import ThemeManager
 
 if TYPE_CHECKING:
-    from ui.file_details_grid import FileDetailsGrid
+    from ui.file_details import FileDetailsGrid
 
 
 class AnalyzePanel(QWidget):
@@ -211,7 +211,7 @@ class AnalyzePanel(QWidget):
         root.addWidget(self._analytics_section)
 
         # ── Content area: file grid (left) + image preview (right)
-        from ui.file_details_grid import FileDetailsGrid
+        from ui.file_details import FileDetailsGrid
 
         self.file_grid = FileDetailsGrid(
             parent=self,

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QMenu,
 )
 
-from ui.file_details_table_model import FileDetailsTableModel
+from ui.file_details.file_details_table_model import FileDetailsTableModel
 from ui.styles import show_confirm, show_critical, show_information, show_warning
 
 
@@ -97,7 +97,7 @@ class _GridActionsMixin:
 
     def _show_details_dialog(self, index: QModelIndex):
         """Show details dialog for double-clicked row."""
-        from ui.file_details_dialog import FileDetailsDialog
+        from ui.file_details.file_details_dialog import FileDetailsDialog
 
         source_index = self.proxy_model.mapToSource(index)
         row_data = self.model.get_row_data(source_index.row())
