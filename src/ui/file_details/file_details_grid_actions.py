@@ -4,10 +4,12 @@ File Details Grid Actions Mixin
 Provides action handler methods for FileDetailsGrid (context menu actions,
 metadata handling, export, clipboard, delete operations, etc.).
 """
-# mypy: disable-error-code=attr-defined
+
+from __future__ import annotations
 
 import csv
 import os
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import QModelIndex
 from PyQt6.QtGui import QAction
@@ -16,8 +18,17 @@ from PyQt6.QtWidgets import (
     QMenu,
 )
 
+from services.logging_service import get_logger
 from ui.file_details.file_details_table_model import FileDetailsTableModel
+from ui.file_details.file_details_utils import find_actual_file_path, is_path_confined
 from ui.theme.styles import show_confirm, show_critical, show_information, show_warning
+
+if TYPE_CHECKING:
+    from config.config_manager import ConfigManager
+    from db.analysis_db import AnalysisDB
+    from db.metadata_db import MetadataDB
+
+logger = get_logger()
 
 
 class _GridActionsMixin:
@@ -28,32 +39,37 @@ class _GridActionsMixin:
     FileDetailsGrid inherits from this mixin alongside QWidget.
     """
 
-    def _find_actual_file_path(self, stored_path, filename):
+    # Attributes declared by the orchestrator class (FileDetailsGrid)
+    analysis_db: AnalysisDB
+    metadata_db: MetadataDB
+    config_manager: ConfigManager
+    is_dark_mode: bool
+    theme_colors: dict[str, Any]
+    # UI widgets declared by FileDetailsGrid._init_ui
+    model: Any  # FileDetailsTableModel
+    proxy_model: Any  # FileDetailsSortFilterProxyModel
+    table_view: Any  # QTableView
+    re_analyze_requested: Any  # pyqtSignal
+
+    def _save_column_state(self) -> None:
+        """Implemented by orchestrator (FileDetailsGrid)."""
+        ...
+
+    def parent(self) -> Any:  # type: ignore[override]
+        """Provided by QWidget base class."""
+        ...
+
+    def _find_actual_file_path(self, stored_path: str | None, filename: str) -> str | None:
         """Find the actual file path, searching source directories if needed."""
-        # First, check if the stored path exists and is not in a temp folder
-        if stored_path and os.path.exists(stored_path):
-            # Check if it's in a temp folder
-            temp_indicators = ["temp", "tmp", "AppData\\Local\\Temp"]
-            if not any(indicator in stored_path for indicator in temp_indicators):
-                return stored_path
+        # Resolve config_manager: prefer self.config_manager, then walk parent chain
+        config_manager = getattr(self, "config_manager", None)
+        if config_manager is None:
+            parent = self.parent()  # type: ignore[attr-defined]
+            if parent and hasattr(parent, "config_manager"):
+                config_manager = parent.config_manager
 
-        # If stored path doesn't exist or is in temp, search source directories
-        if self.parent() and hasattr(self.parent(), "config_manager"):
-            config_manager = self.parent().config_manager
-            directories = config_manager.get_directories()
-
-            # Search for the file by name in all source directories
-            for directory in directories:
-                if not os.path.exists(directory):
-                    continue
-
-                for root, _, files in os.walk(directory):
-                    if filename in files:
-                        found_path = os.path.join(root, filename)
-                        if os.path.exists(found_path):
-                            return found_path
-
-        return None
+        source_dirs: list[str] = config_manager.get_directories() if config_manager else []
+        return find_actual_file_path(stored_path, filename, source_dirs)
 
     def _view_selected_document(self):
         """Open the selected document with the default system viewer."""
@@ -86,6 +102,22 @@ class _GridActionsMixin:
                 self,
                 "File Not Found",
                 f"Could not find the file:\n\n{filename}\n\nSearched in configured source directories.",
+            )
+            return
+
+        # Validate path is confined to configured source directories (C-2)
+        source_dirs: list[str] = []
+        if self.config_manager:
+            source_dirs = self.config_manager.get_directories()
+        if not is_path_confined(file_path, source_dirs):
+            logger.warning(
+                "Blocked os.startfile: path not under configured source directories: %s",
+                file_path,
+            )
+            show_warning(
+                self,
+                "Access Denied",
+                "The file is not located within a configured source directory.",
             )
             return
 
@@ -300,10 +332,6 @@ class _GridActionsMixin:
 
     def _on_metadata_saved(self, file_path: str):
         """Handle metadata saved signal - refresh the row data for the updated file."""
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
         if not self.analysis_db:
             return
 
@@ -316,7 +344,9 @@ class _GridActionsMixin:
         rotation_degrees = self.metadata_db.get_rotation(file_path)
         fresh_analysis["rotation"] = rotation_degrees
         logger.debug(
-            f"[GRID UPDATE] Updating row for {file_path} with rotation={rotation_degrees}°"
+            "[GRID UPDATE] Updating row for %s with rotation=%d°",
+            file_path,
+            rotation_degrees,
         )
 
         # Find and update the row in the model
@@ -328,7 +358,10 @@ class _GridActionsMixin:
                 for key, value in fresh_analysis.items():
                     row_data[key] = value
                 logger.debug(
-                    f"[GRID UPDATE] Row {row} updated: rotation changed from {old_rotation}° to {row_data.get('rotation')}°"
+                    "[GRID UPDATE] Row %d updated: rotation changed from %s° to %s°",
+                    row,
+                    old_rotation,
+                    row_data.get("rotation"),
                 )
 
                 # Notify model that data changed
@@ -343,15 +376,13 @@ class _GridActionsMixin:
                 self.table_view.viewport().update()
 
                 logger.debug(
-                    f"[GRID UPDATE] Emitted dataChanged signal for row {row}, invalidated proxy model"
+                    "[GRID UPDATE] Emitted dataChanged signal for row %d, invalidated proxy model",
+                    row,
                 )
                 break
 
     def _on_record_deleted(self, file_path: str):
         """Handle record deleted signal - remove the specific row from grid."""
-        from services.logging_service import get_logger
-
-        logger = get_logger()
 
         # Find and remove the row from the model data
         for i, row_data in enumerate(self.model._data):
@@ -361,7 +392,7 @@ class _GridActionsMixin:
                 self.model._data.pop(i)
                 self.model.endRemoveRows()
 
-                logger.debug(f"Removed row for deleted record: {file_path}")
+                logger.debug("Removed row for deleted record: %s", file_path)
                 break
 
     def _clear_error_for_selected(self):

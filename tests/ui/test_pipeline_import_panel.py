@@ -154,7 +154,7 @@ def test_make_divider_returns_hline_frame(qapp):
     """_make_divider() returns a QFrame with HLine shape and 1-pixel height."""
     from PyQt6.QtWidgets import QFrame
 
-    from ui.pipeline import _make_divider
+    from ui.pipeline.stages import _make_divider
 
     divider = _make_divider()
 
@@ -165,7 +165,7 @@ def test_make_divider_returns_hline_frame(qapp):
 
 def test_make_divider_returns_independent_instances(qapp):
     """Each call to _make_divider() returns a distinct QFrame object."""
-    from ui.pipeline import _make_divider
+    from ui.pipeline.stages import _make_divider
 
     d1 = _make_divider()
     d2 = _make_divider()

@@ -160,9 +160,8 @@ class EnhancedSettingsWindow(
         """Clean up resources when window closes."""
         # Wait for optimization thread to finish
         if self.optimization_thread and self.optimization_thread.isRunning():
-            self.optimization_thread.wait(2000)  # Wait up to 2 seconds
-            if self.optimization_thread.isRunning():
-                self.optimization_thread.terminate()
+            self.optimization_thread.requestInterruption()
+            self.optimization_thread.wait(3000)
 
         # Close database connections only if we own them (not injected)
         if (
@@ -365,10 +364,26 @@ class EnhancedSettingsWindow(
             if self.save_button:
                 self._update_save_button_style(False)
 
-    def _on_models_loaded(self):
-        """Handle model loading completion (runs on main thread)"""
+    def _on_models_loaded(self, payload: dict):
+        """Handle model loading completion (runs on main thread).
+
+        Args:
+            payload: Dict with keys "ollama", "claude", "gemini", each containing
+                     a list of model name strings fetched by the background worker.
+        """
         try:
-            self._get_logger().debug("showEvent: Models loaded, capturing original values")
+            self._get_logger().debug("showEvent: Models loaded, populating combos")
+
+            # Populate combo-boxes on the main thread using the pre-fetched data.
+            # Use cache_only=True so the widget-updating methods fall back to the
+            # just-written cache entries rather than making network calls again.
+            self._cache_models("ollama_downloaded", payload.get("ollama", []))
+            self._cache_models("claude", payload.get("claude", []))
+            self._cache_models("gemini", payload.get("gemini", []))
+
+            self._load_ollama_models(cache_only=True)
+            self._load_claude_models(cache_only=True)
+            self._load_gemini_models(cache_only=True)
 
             # Capture final state with all models loaded
             self._capture_original_values()

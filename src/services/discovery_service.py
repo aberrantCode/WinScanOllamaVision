@@ -233,11 +233,11 @@ if __name__ == "__main__":
 
     # Test discovery
     def progress(status, current, total):
-        _logger.info(f"[{current}/{total}] {status}")
+        _logger.info("[%s/%s] %s", current, total, status)
 
     _logger.info("Testing discovery service...")
     count = service.discover_images(directories, progress_callback=progress)
-    _logger.info(f"Discovery complete: {count} new files registered")
+    _logger.info("Discovery complete: %s new files registered", count)
 
     # Cleanup
     analysis_db_instance.close()

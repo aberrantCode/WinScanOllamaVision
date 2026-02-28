@@ -30,7 +30,7 @@ class _SettingsTabDirectoriesMixin:
         layout = QVBoxLayout(widget)
 
         # Section 1: Directory Management
-        dir_section_label = QLabel("📁 Source Directories")
+        dir_section_label = QLabel("Source Directories")
         dir_section_label.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 5px 0px;")
         layout.addWidget(dir_section_label)
 
@@ -88,7 +88,7 @@ class _SettingsTabDirectoriesMixin:
         layout.addSpacing(15)
 
         # Section 2: Discovery & Scheduling
-        discovery_section_label = QLabel("🔍 Discovery & Scheduling")
+        discovery_section_label = QLabel("Discovery & Scheduling")
         discovery_section_label.setStyleSheet(
             "font-weight: bold; font-size: 11pt; padding: 5px 0px;"
         )
@@ -194,7 +194,7 @@ class _SettingsTabDirectoriesMixin:
         layout.addSpacing(15)
 
         # Section 3: Export Directory
-        export_section_label = QLabel("📤 Export Directory")
+        export_section_label = QLabel("Export Directory")
         export_section_label.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 5px 0px;")
         layout.addWidget(export_section_label)
 

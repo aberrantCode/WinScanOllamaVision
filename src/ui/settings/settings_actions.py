@@ -248,17 +248,13 @@ class _SettingsActionsMixin:
             try:
                 if data_type == "all":
                     self.analysis_db.purge_all_data()
-                    self.metadata_db.connection.execute("DELETE FROM metadata")
-                    self.metadata_db.connection.commit()
+                    self.metadata_db.purge_all_data()
                 elif data_type == "cache":
-                    self.metadata_db.connection.execute("DELETE FROM metadata")
-                    self.metadata_db.connection.commit()
+                    self.metadata_db.purge_cache()
                 elif data_type == "analysis":
-                    self.analysis_db.connection.execute("DELETE FROM analysis_results")
-                    self.analysis_db.connection.commit()
+                    self.analysis_db.purge_analysis_results()
                 elif data_type == "bundles":
-                    self.analysis_db.connection.execute("DELETE FROM document_bundles")
-                    self.analysis_db.connection.commit()
+                    self.analysis_db.purge_bundles()
 
                 show_information(
                     self, "Purge Complete", f"Successfully purged {type_names[data_type]}."

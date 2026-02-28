@@ -163,7 +163,15 @@ class SplashScreen(QWidget):
         │     Verifying configuration...       │  ← live status text
         │                                      │
         └──────────────────────────────────────┘
+
+    The splash remains visible until BOTH conditions are satisfied:
+      * The GIF animation has completed at least one full loop.
+      * The background ``InitializationWorker`` has emitted ``init_complete``.
+
+    When both gates are open ``ready_to_close`` is emitted exactly once.
     """
+
+    ready_to_close = pyqtSignal()
 
     def __init__(
         self, app_name: str, is_dark_mode: bool = True, parent: "QWidget | None" = None
@@ -172,6 +180,10 @@ class SplashScreen(QWidget):
         self._app_name = app_name
         self._is_dark_mode = is_dark_mode
         self._movie: QMovie | None = None
+        # Gate flags — both must be True before ready_to_close is emitted.
+        self._animation_done: bool = False
+        self._init_done: bool = False
+        self._seen_non_zero_frame: bool = False
         self._setup_window()
         self._setup_ui()
 
@@ -187,6 +199,36 @@ class SplashScreen(QWidget):
         to use a queued connection and deliver the call on the main thread.
         """
         self._status_label.setText(text)
+
+    def mark_init_done(self) -> None:
+        """Call this when the background initialization worker has finished.
+
+        Opens the ``ready_to_close`` gate for the init side.  If the animation
+        gate is already open, ``ready_to_close`` is emitted immediately.
+        """
+        self._init_done = True
+        self._check_ready()
+
+    # ------------------------------------------------------------------
+    # Private gate helpers
+    # ------------------------------------------------------------------
+
+    def _on_frame_changed(self, frame_number: int) -> None:
+        """Track GIF playback to detect when one full loop has completed."""
+        if frame_number > 0:
+            self._seen_non_zero_frame = True
+        elif self._seen_non_zero_frame:
+            # Wrapped back to frame 0 after playing at least one non-zero frame
+            # → one complete animation cycle has finished.
+            self._animation_done = True
+            with contextlib.suppress(Exception):
+                self._movie.frameChanged.disconnect(self._on_frame_changed)  # type: ignore[union-attr]
+            self._check_ready()
+
+    def _check_ready(self) -> None:
+        """Emit ``ready_to_close`` once both gates are open (idempotent)."""
+        if self._init_done and self._animation_done:
+            self.ready_to_close.emit()
 
     def center_on_screen(self) -> None:
         """Move the splash so it is centred on the primary screen."""
@@ -259,8 +301,10 @@ class SplashScreen(QWidget):
         Mirrors the logic used in StartupWindow so the visual experience is
         consistent between the splash and the main window.
         """
-        # This file lives in src/ui/; the project root is two levels up.
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        # This file lives in src/ui/startup/; the project root is three levels up.
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        )
         gif_path = os.path.join(project_root, "assets", "scanner.gif")
 
         if not os.path.exists(gif_path):
@@ -295,5 +339,13 @@ class SplashScreen(QWidget):
         self._scanner_label.setMovie(movie)
         self._scanner_label.setFixedSize(scaled)
         movie.setSpeed(100)
+
+        # Gate: open the animation side immediately for single-frame GIFs;
+        # otherwise wait for the first full loop (frame wraps back to 0).
+        if movie.frameCount() <= 1:
+            self._animation_done = True
+        else:
+            movie.frameChanged.connect(self._on_frame_changed)
+
         movie.start()
         self._movie = movie  # Keep a reference to prevent garbage collection

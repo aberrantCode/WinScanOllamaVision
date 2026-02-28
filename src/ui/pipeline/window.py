@@ -5,6 +5,7 @@ Document Pipeline Window — unified Import → Analyze → Bundle → Export wo
 import ctypes
 import os
 import platform
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
@@ -17,6 +18,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+if TYPE_CHECKING:
+    from ui.settings import EnhancedSettingsWindow
 
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
@@ -96,6 +100,7 @@ class DocumentPipelineWindow(QMainWindow):
 
         self._current_stage = STAGE_IMPORT
         self._completed_stages: set[int] = set()
+        self._settings_window: EnhancedSettingsWindow | None = None
 
         self._build_ui()
         self._apply_theme()
@@ -302,15 +307,24 @@ class DocumentPipelineWindow(QMainWindow):
         self.export_panel.update_stats(stats)
 
     def _show_settings(self) -> None:
-        """Open the application settings dialog."""
+        """Open the application settings dialog (modal, single instance)."""
         from ui.settings import EnhancedSettingsWindow
 
-        settings = EnhancedSettingsWindow(
+        if (
+            hasattr(self, "_settings_window")
+            and self._settings_window is not None
+            and self._settings_window.isVisible()
+        ):
+            self._settings_window.raise_()
+            self._settings_window.activateWindow()
+            return
+
+        self._settings_window = EnhancedSettingsWindow(
             parent=self,
             analysis_db=self.analysis_db,
             metadata_db=self.metadata_db,
         )
-        settings.show()
+        self._settings_window.exec()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if hasattr(self, "analyze_panel"):

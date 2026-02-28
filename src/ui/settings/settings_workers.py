@@ -1,6 +1,7 @@
 """Worker threads and helper dialog classes for the Settings window."""
 
 import logging
+import re
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -82,6 +83,10 @@ class PromptOptimizationThread(QThread):
                 # We'll use subprocess to call ollama with text-only chat
                 model = provider.get_default_model()
                 timeout = provider.get_timeout()
+
+                # H-14: validate model name before passing to subprocess
+                if not re.fullmatch(r"[a-zA-Z0-9._:/-]+", model):
+                    raise ValueError(f"Invalid model name: {model!r}")
 
                 try:
                     # Use Ollama chat API directly (not vision)
@@ -199,10 +204,18 @@ class PromptComparisonDialog(QDialog):
 
 
 class ModelLoadingWorker(QThread):
-    """Background worker for loading models from providers without blocking UI"""
+    """Background worker for loading models from providers without blocking UI.
 
-    finished = pyqtSignal()  # Emitted when all models are loaded
-    error = pyqtSignal(str)  # Emitted if loading fails
+    The worker fetches model lists as plain Python data on a background thread
+    and emits a ``models_loaded`` signal with a dict of results.  The
+    settings window receives this signal on the main thread and populates the
+    combo-boxes there — no Qt widget methods are called inside ``run()``.
+    """
+
+    # Emitted on success: {"ollama": [...], "claude": [...], "gemini": [...]}
+    models_loaded = pyqtSignal(dict)
+    # Emitted on failure with an error message
+    error = pyqtSignal(str)
 
     def __init__(self, settings_window: "EnhancedSettingsWindow"):
         super().__init__()
@@ -213,18 +226,38 @@ class ModelLoadingWorker(QThread):
         return _get_logger()
 
     def run(self):
-        """Load models in background thread"""
+        """Fetch model lists on a background thread and emit results as plain data."""
         try:
             self._get_logger().debug("[MODEL LOADING] Starting background model loading")
 
-            # Load all models (these methods already have caching)
-            self.settings_window._load_ollama_models()
-            self.settings_window._load_claude_models()
-            self.settings_window._load_gemini_models()
+            # Gather model data without touching any Qt widgets.
+            # _fetch_*_models_from_web() and _get_cached_models() only do I/O.
+            ollama_models = self._fetch_ollama_model_data()
+            claude_models = self.settings_window._fetch_claude_models_from_web()
+            gemini_models = self.settings_window._fetch_gemini_models_from_web()
 
-            self._get_logger().debug("[MODEL LOADING] All models loaded successfully")
-            self.finished.emit()
+            payload = {
+                "ollama": ollama_models,
+                "claude": claude_models,
+                "gemini": gemini_models,
+            }
+
+            self._get_logger().debug("[MODEL LOADING] All models fetched successfully")
+            self.models_loaded.emit(payload)
 
         except Exception as e:
             self._get_logger().error(f"[MODEL LOADING] Error loading models: {e}")
             self.error.emit(str(e))
+
+    def _fetch_ollama_model_data(self) -> list[str]:
+        """Fetch the list of downloaded Ollama model names without touching widgets."""
+        try:
+            local_models = self.settings_window.ollama_service.list_models()
+            return [
+                (m.get("name") or m.get("model", "")).split(":")[0]
+                for m in local_models
+                if m.get("name") or m.get("model")
+            ]
+        except Exception as e:
+            self._get_logger().warning(f"[MODEL LOADING] Could not list Ollama models: {e}")
+            return []

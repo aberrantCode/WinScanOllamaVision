@@ -35,58 +35,6 @@ from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
 from ui.theme.styles import show_confirm, show_critical, show_information, show_warning
 
 
-def _create_mock_bundles() -> list:
-    """Create mock bundle data with complete metadata."""
-    bundles = []
-    companies = [
-        "Acme Corporation",
-        "TechCorp Industries",
-        "Global Shipping LLC",
-        "ABC Manufacturing",
-    ]
-    doc_types = ["Invoice", "Receipt", "Statement", "Contract"]
-
-    for i in range(1, 8):
-        # Make first bundle have 12 pages for demo
-        num_pages = 12 if i == 1 else (i % 5) + 2
-
-        company = companies[i % 4]
-        doc_type = doc_types[i % 4]
-
-        # Create analyses for each page
-        analyses = []
-        for p in range(num_pages):
-            analyses.append(
-                {
-                    "document_type": doc_type,
-                    "company": company,
-                    "page_number": str(p + 1),
-                    "total_pages": str(num_pages),
-                    "rotation_needed": "none",
-                    "confidence_score": 0.85 + (p * 0.01),
-                    "tax_related": i % 3 == 0,
-                    "analysis_id": f"analysis_{i:03d}_{p:03d}",
-                    "provider": "Ollama",
-                    "model": "qwen2.5-vl",
-                    "processing_time": f"{1200 + (p * 100)}ms",
-                    "analysis_date": f"2024-03-{15 + i:02d} 10:{30 + p:02d}:00",
-                }
-            )
-
-        bundles.append(
-            {
-                "bundle_id": f"bundle_{i:03d}",
-                "company": company,
-                "document_type": doc_type,
-                "document_date": f"2024-0{(i % 9) + 1}-15",
-                "confidence_score": 0.95 - (i * 0.05),
-                "file_paths": [f"mock_bundle_{i}_page_{p}.png" for p in range(1, num_pages + 1)],
-                "analyses": analyses,
-            }
-        )
-    return bundles
-
-
 class BundleReviewWidget(QWidget):
     """Orchestrator widget composing the three bundle-review panels.
 
@@ -122,7 +70,9 @@ class BundleReviewWidget(QWidget):
 
         # State
         self.prototype_mode = prototype_mode
-        self.bundles = bundles or _create_mock_bundles()
+        if not bundles:
+            raise ValueError("No bundles provided to BundleReviewWidget")
+        self.bundles = bundles
         self.current_bundle_index = start_index
         self.current_page_index = 0
 
@@ -143,9 +93,12 @@ class BundleReviewWidget(QWidget):
                 .lower()
                 .replace(" ", "_")
             )
-            self.default_zoom_percent = int(
-                self.config_manager.get_setting("Theme", "default_zoom_percent_png", "100")
-            )
+            try:
+                self.default_zoom_percent = int(
+                    self.config_manager.get_setting("Theme", "default_zoom_percent_png", "100")
+                )
+            except ValueError:
+                self.default_zoom_percent = 100
         else:
             self.default_zoom_mode = "fit_to_width"
             self.default_zoom_percent = 100
@@ -222,7 +175,9 @@ class BundleReviewWidget(QWidget):
         content_layout.addWidget(self.preview_panel, stretch=1)
 
         # Right panel - Metadata (fixed width)
-        self.metadata_panel = BundleMetadataPanel(dark_mode=self.dark_mode, parent=self)
+        self.metadata_panel = BundleMetadataPanel(
+            dark_mode=self.dark_mode, parent=self, analysis_db=self.analysis_db
+        )
         self.metadata_panel.setFixedWidth(380)
         self.metadata_panel.metadata_changed.connect(self._on_metadata_changed)
         self.metadata_panel.save_requested.connect(self._on_metadata_save)
@@ -508,6 +463,65 @@ class BundleReviewWidget(QWidget):
             on_completed=self.workflow_completed.emit,
         )
 
+    # ------------------------------------------------------------------
+    # Page navigation (thumbnail panel signals)
+    # ------------------------------------------------------------------
+
+    def _on_thumbnail_clicked(self, page_index: int) -> None:
+        """Navigate to the page selected in the thumbnail panel."""
+        if 0 <= page_index < len(self.page_order):
+            self.current_page_index = page_index
+            self._display_current_page()
+            self._populate_thumbnails()
+
+    def _on_drop_requested(self, from_index: int, to_index: int) -> None:
+        """Reorder pages after a drag-and-drop operation in the thumbnail panel."""
+        if from_index == to_index:
+            return
+        if not (0 <= from_index < len(self.page_order) and 0 <= to_index < len(self.page_order)):
+            return
+        order = list(self.page_order)
+        page = order.pop(from_index)
+        order.insert(to_index, page)
+        self.page_order = order
+        # Keep current_page_index tracking the same logical page after the move.
+        if self.current_page_index == from_index:
+            self.current_page_index = to_index
+        elif from_index < self.current_page_index <= to_index:
+            self.current_page_index -= 1
+        elif to_index <= self.current_page_index < from_index:
+            self.current_page_index += 1
+        self._populate_thumbnails()
+        self._display_current_page()
+
+    def _move_page_up(self, visual_index: int) -> None:
+        """Move the page at visual_index one position earlier in the order."""
+        if visual_index <= 0 or visual_index >= len(self.page_order):
+            return
+        order = list(self.page_order)
+        order[visual_index - 1], order[visual_index] = order[visual_index], order[visual_index - 1]
+        self.page_order = order
+        if self.current_page_index == visual_index:
+            self.current_page_index -= 1
+        elif self.current_page_index == visual_index - 1:
+            self.current_page_index += 1
+        self._populate_thumbnails()
+        self._display_current_page()
+
+    def _move_page_down(self, visual_index: int) -> None:
+        """Move the page at visual_index one position later in the order."""
+        if visual_index < 0 or visual_index >= len(self.page_order) - 1:
+            return
+        order = list(self.page_order)
+        order[visual_index], order[visual_index + 1] = order[visual_index + 1], order[visual_index]
+        self.page_order = order
+        if self.current_page_index == visual_index:
+            self.current_page_index += 1
+        elif self.current_page_index == visual_index + 1:
+            self.current_page_index -= 1
+        self._populate_thumbnails()
+        self._display_current_page()
+
     def _on_reanalyze_page(self):
         """Re-analyze the current page using LLM provider."""
         if self.prototype_mode:
@@ -624,9 +638,13 @@ class BundleReviewWidget(QWidget):
             f"Remove this page from the bundle?\n\n{filename}\n\n"
             "The page will be marked as a loose page.",
         ):
-            bundle["file_paths"].pop(actual_index)
+            bundle["file_paths"] = [
+                p for i, p in enumerate(bundle["file_paths"]) if i != actual_index
+            ]
             if "analyses" in bundle and actual_index < len(bundle["analyses"]):
-                bundle["analyses"].pop(actual_index)
+                bundle["analyses"] = [
+                    a for i, a in enumerate(bundle["analyses"]) if i != actual_index
+                ]
 
             self.page_order = [
                 idx if idx < actual_index else idx - 1

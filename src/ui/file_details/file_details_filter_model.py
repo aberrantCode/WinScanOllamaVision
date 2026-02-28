@@ -4,7 +4,7 @@ File Details Sort/Filter Proxy Model
 Provides filtering and sorting capabilities for the file details table.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from PyQt6.QtCore import QModelIndex, QSortFilterProxyModel
@@ -116,7 +116,11 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
                 if isinstance(analysis_time, str):
                     analysis_time = datetime.fromisoformat(analysis_time)
                 if isinstance(analysis_time, datetime):
-                    hours_ago = (datetime.now() - analysis_time).total_seconds() / 3600
+                    now = datetime.now(timezone.utc)
+                    # Ensure both datetimes are comparable: strip tz if analysis_time is naive
+                    if analysis_time.tzinfo is None:
+                        now = now.replace(tzinfo=None)
+                    hours_ago = (now - analysis_time).total_seconds() / 3600
                     return hours_ago < 24
             except (ValueError, TypeError):
                 pass

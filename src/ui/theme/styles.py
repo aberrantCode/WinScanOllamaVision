@@ -10,6 +10,8 @@ for application-wide theming. This module provides:
   - show_*(): themed message box helpers
 """
 
+import time
+
 from ui.theme.theme_manager import ThemeManager
 
 # ===== COLOR CONSTANTS =====
@@ -57,17 +59,32 @@ class Colors:
 
 # ===== INTERNAL HELPERS =====
 
+_dark_mode_cache: tuple[bool, float] | None = None
 
-def _is_dark() -> bool:
-    """Read current theme setting. Matches main.py startup logic."""
+
+def _is_dark(config_manager=None) -> bool:
+    """Read current theme setting. Matches main.py startup logic.
+
+    Uses a 1-second TTL cache to avoid repeatedly instantiating ConfigManager
+    for module-level / high-frequency callers. Pass an existing config_manager
+    to bypass the cache entirely (uses the supplied instance directly).
+    """
+    global _dark_mode_cache
+    if config_manager is None:
+        now = time.time()
+        if _dark_mode_cache is not None and now - _dark_mode_cache[1] < 1.0:
+            return _dark_mode_cache[0]
     try:
         from config.config_manager import ConfigManager
 
-        config = ConfigManager()
-        theme: str = str(config.get_setting("Theme", "theme", "dark"))
-        return theme == "dark"
+        cm = config_manager or ConfigManager()
+        theme: str = str(cm.get_setting("Theme", "theme", "dark"))
+        result = theme == "dark"
     except Exception:
-        return True  # Default to dark mode
+        result = True  # Default to dark mode
+    if config_manager is None:
+        _dark_mode_cache = (result, time.time())
+    return result
 
 
 def _get_message_box_stylesheet() -> str:
@@ -398,15 +415,26 @@ def show_confirm(
     default_cancel: bool = True,
 ) -> bool:
     """
-    Show a simple confirmation dialog.
+    Show a simple confirmation dialog with custom button labels.
 
     Returns:
         True if user confirmed, False if cancelled
     """
     from PyQt6.QtWidgets import QMessageBox
 
-    buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-    default = QMessageBox.StandardButton.No if default_cancel else QMessageBox.StandardButton.Yes
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Icon.Question)
+    msg_box.setWindowTitle(title)
+    msg_box.setText(text)
+    msg_box.setStyleSheet(_get_message_box_stylesheet())
 
-    reply = show_question(parent, title, text, buttons=buttons, default_button=default)
-    return bool(reply == QMessageBox.StandardButton.Yes)
+    btn_yes = msg_box.addButton(confirm_text, QMessageBox.ButtonRole.YesRole)
+    btn_no = msg_box.addButton(cancel_text, QMessageBox.ButtonRole.NoRole)
+
+    if default_cancel:
+        msg_box.setDefaultButton(btn_no)
+    else:
+        msg_box.setDefaultButton(btn_yes)
+
+    msg_box.exec()
+    return bool(msg_box.clickedButton() == btn_yes)

@@ -302,6 +302,34 @@ class AnalyzePanel(QWidget):
         section = create_collapsible_section(c, "Analytics", scroll, initially_expanded=False)
         return section
 
+    def _clear_and_repopulate_dist(
+        self,
+        container: QWidget,
+        counts: dict[str, int],
+        total: int,
+        top_n: int = 5,
+    ) -> None:
+        """Clear a distribution container and repopulate it with bar widgets.
+
+        The container's ``_stored_layout`` attribute is a ``QVBoxLayout``
+        instance set by ``create_document_insights_widget_split`` / similar
+        helpers to avoid shadowing the ``layout()`` method.
+        """
+        from PyQt6.QtWidgets import QVBoxLayout
+
+        from ui.pipeline.analyze_status_helpers import create_distribution_bar
+
+        layout: QVBoxLayout = container._stored_layout  # type: ignore[attr-defined]
+        while layout.count():
+            item = layout.takeAt(0)
+            if item:
+                w = item.widget()
+                if w:
+                    w.deleteLater()
+        for label, count in sorted(counts.items(), key=lambda x: -x[1])[:top_n]:
+            bar = create_distribution_bar(self._c(), label, count, total)
+            layout.addWidget(bar)
+
     def _refresh_analytics_section(self) -> None:
         """Recompute analytics from the DB and update labels in the analytics section."""
         if not self._avg_conf_label:
@@ -366,48 +394,20 @@ class AnalyzePanel(QWidget):
             self._bundle_acceptance_label.setText("Bundle Acceptance Rate: —")
 
         # Type distribution
-        # Note: `.layout` is monkey-patched in create_document_insights_widget_split
-        # to hold the QVBoxLayout instance directly (not the layout() method).
         if self._type_dist_container:
-            from PyQt6.QtWidgets import QVBoxLayout
-
-            from ui.pipeline.analyze_status_helpers import create_distribution_bar
-
-            type_layout: QVBoxLayout = self._type_dist_container.layout  # type: ignore[assignment]
-            while type_layout.count():
-                item = type_layout.takeAt(0)
-                if item:
-                    w = item.widget()
-                    if w:
-                        w.deleteLater()
             type_counts: dict[str, int] = {}
             for r in analyzed:
                 dt = r.get("document_type") or "Unknown"
                 type_counts[dt] = type_counts.get(dt, 0) + 1
-            for doc_type, count in sorted(type_counts.items(), key=lambda x: -x[1])[:5]:
-                bar = create_distribution_bar(self._c(), doc_type, count, n_analyzed)
-                type_layout.addWidget(bar)
+            self._clear_and_repopulate_dist(self._type_dist_container, type_counts, n_analyzed)
 
         # Company distribution
         if self._company_dist_container:
-            from PyQt6.QtWidgets import QVBoxLayout
-
-            from ui.pipeline.analyze_status_helpers import create_distribution_bar
-
-            comp_layout: QVBoxLayout = self._company_dist_container.layout  # type: ignore[assignment]
-            while comp_layout.count():
-                item = comp_layout.takeAt(0)
-                if item:
-                    w = item.widget()
-                    if w:
-                        w.deleteLater()
             comp_counts: dict[str, int] = {}
             for r in analyzed:
                 comp = r.get("company") or "Unknown"
                 comp_counts[comp] = comp_counts.get(comp, 0) + 1
-            for company, count in sorted(comp_counts.items(), key=lambda x: -x[1])[:5]:
-                bar = create_distribution_bar(self._c(), company, count, n_analyzed)
-                comp_layout.addWidget(bar)
+            self._clear_and_repopulate_dist(self._company_dist_container, comp_counts, n_analyzed)
 
     def refresh(self) -> None:
         """Load (or reload) current file statuses from the database into the grid."""

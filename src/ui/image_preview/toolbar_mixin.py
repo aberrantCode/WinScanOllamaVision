@@ -15,6 +15,8 @@ from ui.image_preview.enums import ToolbarPosition, ToolbarSize
 class _ImageToolbarMixin:
     """Mixin providing overlay toolbar creation and positioning for ImagePreviewWidget."""
 
+    zoom_spinner: QSpinBox | None = None
+
     def _create_overlay_controls(self) -> QWidget:
         """Create floating toolbar with zoom and rotation controls."""
         from services.logging_service import get_logger
@@ -173,7 +175,7 @@ class _ImageToolbarMixin:
         rotate_cw_btn.clicked.connect(self._on_rotate_cw)
         layout.addWidget(rotate_cw_btn)
 
-        logger.info(f"Overlay controls created with {layout.count()} buttons")
+        logger.info("Overlay controls created with %s buttons", layout.count())
         return controls
 
     def _position_overlay_controls(self) -> None:
@@ -192,9 +194,12 @@ class _ImageToolbarMixin:
         controls_height = self.overlay_controls.height()
 
         logger.info(
-            f"Positioning overlay: widget={widget_width}x{widget_height}, "
-            f"controls={controls_width}x{controls_height}, "
-            f"visible={self.overlay_controls.isVisible()}"
+            "Positioning overlay: widget=%sx%s, controls=%sx%s, visible=%s",
+            widget_width,
+            widget_height,
+            controls_width,
+            controls_height,
+            self.overlay_controls.isVisible(),
         )
 
         margin = 10
@@ -219,9 +224,10 @@ class _ImageToolbarMixin:
             x = widget_width - controls_width - margin
             y = widget_height - controls_height - margin
 
-        logger.info(f"Moving overlay to position ({x}, {y})")
+        logger.info("Moving overlay to position (%s, %s)", x, y)
         self.overlay_controls.move(x, y)
         logger.info(
-            f"After move - actual pos: {self.overlay_controls.pos()}, "
-            f"geometry: {self.overlay_controls.geometry()}"
+            "After move - actual pos: %s, geometry: %s",
+            self.overlay_controls.pos(),
+            self.overlay_controls.geometry(),
         )

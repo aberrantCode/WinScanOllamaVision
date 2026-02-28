@@ -12,7 +12,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from services.logging_service import LoggingService
-from ui.guided_bundle_workflow import GuidedBundleWorkflow
+from ui.bundle.bundle_review_widget import BundleReviewWidget as GuidedBundleWorkflow
 
 
 def capture():

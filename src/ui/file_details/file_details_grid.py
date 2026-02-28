@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from ui.file_details.file_details_filter_model import FileDetailsSortFilterProxyModel
 from ui.file_details.file_details_grid_actions import _GridActionsMixin
 from ui.file_details.file_details_table_model import FileDetailsTableModel
+from ui.file_details.file_details_utils import get_file_details_theme_colors
 
 
 class FileDetailsGrid(_GridActionsMixin, QWidget):
@@ -53,7 +54,7 @@ class FileDetailsGrid(_GridActionsMixin, QWidget):
             self.is_dark_mode = parent.is_dark_mode
 
         # Get theme colors
-        self.theme_colors = self._get_theme_colors()
+        self.theme_colors = get_file_details_theme_colors(self.is_dark_mode)
 
         # Get config manager from parent or create new one
         self.config_manager = None
@@ -68,43 +69,6 @@ class FileDetailsGrid(_GridActionsMixin, QWidget):
         self.proxy_model = FileDetailsSortFilterProxyModel()
         self.proxy_model.setSourceModel(self.model)
         self._init_ui()
-
-    def _get_theme_colors(self):
-        """Return color palette based on current theme (matching analysis_status_window)"""
-        if self.is_dark_mode:
-            return {
-                "bg_primary": "#0B1120",
-                "bg_secondary": "#151D2F",
-                "bg_tertiary": "#1F2A40",
-                "text_primary": "#E0E0E0",
-                "text_secondary": "#B0B0B0",
-                "text_tertiary": "#808080",
-                "border": "#2A3550",
-                "input_bg": "#151D2F",
-                "button_bg": "#1F2A40",
-                "button_hover": "#2A3550",
-                "accent": "#3B82F6",
-                "tab_active_bg": "#151D2F",
-                "tab_inactive_bg": "#0B1120",
-                "tab_hover_bg": "#1F2A40",
-            }
-        else:
-            return {
-                "bg_primary": "#F9FAFB",
-                "bg_secondary": "#FFFFFF",
-                "bg_tertiary": "#F3F4F6",
-                "text_primary": "#111827",
-                "text_secondary": "#374151",
-                "text_tertiary": "#6B7280",
-                "border": "#E5E7EB",
-                "input_bg": "#FFFFFF",
-                "button_bg": "#F3F4F6",
-                "button_hover": "#E5E7EB",
-                "accent": "#3B82F6",
-                "tab_active_bg": "#FFFFFF",
-                "tab_inactive_bg": "#F3F4F6",
-                "tab_hover_bg": "#E5E7EB",
-            }
 
     def _init_ui(self):
         """Initialize the user interface."""

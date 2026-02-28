@@ -4,12 +4,13 @@ File Details Dialog Actions Mixin
 Provides action handler methods for FileDetailsDialog (save, delete, re-analyze,
 format helpers, metadata change tracking, etc.).
 """
-# mypy: disable-error-code=attr-defined
+
+from __future__ import annotations
 
 import json
 import os
 from html import escape as html_escape
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QTransform
@@ -26,7 +27,16 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from services.logging_service import get_logger
+from ui.file_details.file_details_utils import find_actual_file_path, is_path_confined
 from ui.theme.styles import show_critical, show_information, show_question, show_warning
+
+if TYPE_CHECKING:
+    from config.config_manager import ConfigManager
+    from db.analysis_db import AnalysisDB
+    from db.metadata_db import MetadataDB
+
+logger = get_logger()
 
 
 class _DialogActionsMixin:
@@ -36,6 +46,26 @@ class _DialogActionsMixin:
     All methods access self.* which resolves correctly via MRO since
     FileDetailsDialog inherits from this mixin alongside QDialog.
     """
+
+    # Attributes declared by the orchestrator class (FileDetailsDialog)
+    analysis_db: AnalysisDB
+    metadata_db: MetadataDB
+    config_manager: ConfigManager
+    file_data: dict[str, Any]
+    is_dark_mode: bool
+    theme_colors: dict[str, str]
+    metadata_inputs: dict[str, Any]
+    original_metadata_values: dict[str, Any]
+    # UI widgets declared by FileDetailsDialog._init_ui
+    delete_btn: Any  # QPushButton
+    open_doc_btn: Any  # QPushButton
+    save_metadata_btn: Any  # QPushButton
+    copy_json_btn: Any  # QPushButton
+    re_analyze_btn: Any  # QPushButton
+    close_btn: Any  # QPushButton
+    image_preview: Any  # ImagePreviewWidget
+    base_pixmap: Any  # QPixmap | None
+    current_rotation: str
 
     def _format_summary(self) -> str:
         """Format summary information as HTML."""
@@ -167,6 +197,22 @@ class _DialogActionsMixin:
             )
             return
 
+        # Validate path is confined to configured source directories (C-2)
+        source_dirs: list[str] = []
+        if self.config_manager:
+            source_dirs = self.config_manager.get_directories()
+        if not is_path_confined(file_path, source_dirs):
+            logger.warning(
+                "Blocked os.startfile: path not under configured source directories: %s",
+                file_path,
+            )
+            show_warning(
+                self,
+                "Access Denied",
+                "The file is not located within a configured source directory.",
+            )
+            return
+
         try:
             # Open file with default system viewer
             os.startfile(file_path)
@@ -194,8 +240,8 @@ class _DialogActionsMixin:
             if value:
                 updated_metadata[field_name] = value
 
-        # Update file_data dictionary
-        self.file_data.update(updated_metadata)
+        # Update file_data immutably (H-5)
+        self.file_data = {**self.file_data, **updated_metadata}
 
         # Save to database - use both databases
         try:
@@ -220,13 +266,9 @@ class _DialogActionsMixin:
                         "document_category": updated_metadata.get("document_category", ""),
                     }
 
-                    # Debug logging before database save
-                    from services.logging_service import get_logger
-
-                    logger = get_logger()
                     logger.debug(
-                        f"[SAVE METADATA] Saving metadata to DB - "
-                        f"rotation_needed: '{metadata.get('rotation_needed')}'"
+                        "[SAVE METADATA] Saving metadata to DB - " "rotation_needed: '%s'",
+                        metadata.get("rotation_needed"),
                     )
 
                     # Update analysis database (legacy)
@@ -240,11 +282,9 @@ class _DialogActionsMixin:
                         "90_ccw": 270,
                         "180": 180,
                     }.get(rotation_needed, 0)
-                    from services.logging_service import get_logger
-
-                    logger = get_logger()
                     logger.debug(
-                        f"Converted rotation_needed to rotation_degrees: {rotation_degrees}"
+                        "Converted rotation_needed to rotation_degrees: %d",
+                        rotation_degrees,
                     )
                     metadata_db.save_rotation(file_path, rotation_degrees)
 
@@ -269,17 +309,18 @@ class _DialogActionsMixin:
                         metadata_db.save_metadata(file_path, metadata_updates)
                         logger.debug("Updated normalized metadata table via MetadataDB (user edit)")
                     except Exception as meta_error:
-                        logger.warning(f"Failed to update normalized metadata: {meta_error}")
+                        logger.warning("Failed to update normalized metadata: %s", meta_error)
 
                     # Reload fresh data from database to ensure file_data is up-to-date
                     fresh_analysis = analysis_db.get_analysis(file_path)
                     if fresh_analysis:
                         logger.debug(
-                            f"Reloaded analysis from DB - rotation_needed: {fresh_analysis.get('rotation_needed')}"
+                            "Reloaded analysis from DB - rotation_needed: %s",
+                            fresh_analysis.get("rotation_needed"),
                         )
 
-                        # Update file_data with fresh values from database
-                        for key in [
+                        # Rebuild file_data immutably with fresh values from database (H-5)
+                        fresh_keys = [
                             "document_type",
                             "company",
                             "document_date",
@@ -290,19 +331,23 @@ class _DialogActionsMixin:
                             "confidence",
                             "output_filename",
                             "document_category",
-                        ]:
-                            if key in fresh_analysis:
-                                self.file_data[key] = fresh_analysis[key]
+                        ]
+                        fresh_updates = {
+                            key: fresh_analysis[key] for key in fresh_keys if key in fresh_analysis
+                        }
+                        self.file_data = {**self.file_data, **fresh_updates}
 
                         logger.debug(
-                            f"Updated file_data - rotation_needed: {self.file_data.get('rotation_needed')}"
+                            "Updated file_data - rotation_needed: %s",
+                            self.file_data.get("rotation_needed"),
                         )
 
                     # CRITICAL: Also reload rotation from metadata table (authoritative source via MetadataDB)
                     fresh_rotation = metadata_db.get_rotation(file_path)
-                    self.file_data["rotation"] = fresh_rotation
+                    self.file_data = {**self.file_data, "rotation": fresh_rotation}
                     logger.debug(
-                        f"Reloaded rotation from image_files: {fresh_rotation}° (authoritative source)"
+                        "Reloaded rotation from image_files: %d° (authoritative source)",
+                        fresh_rotation,
                     )
 
                     # Emit signal so parent can refresh its data
@@ -334,41 +379,20 @@ class _DialogActionsMixin:
         except Exception as e:
             show_critical(self, "Save Failed", f"Failed to save metadata:\n\n{str(e)}")
 
-    def _find_actual_file_path(self, stored_path, filename):
+    def _find_actual_file_path(self, stored_path: str | None, filename: str) -> str | None:
         """Find the actual file path, searching source directories if needed."""
-        # First, check if the stored path exists and is not in a temp folder
-        if stored_path and os.path.exists(stored_path):
-            # Check if it's in a temp folder
-            temp_indicators = ["temp", "tmp", "AppData\\Local\\Temp"]
-            if not any(indicator in stored_path for indicator in temp_indicators):
-                return stored_path
+        # Resolve config_manager: prefer the one stored on self, then walk parent chain
+        config_manager = getattr(self, "config_manager", None)
+        if config_manager is None:
+            parent_widget = self.parent()  # type: ignore[attr-defined]
+            while parent_widget:
+                if hasattr(parent_widget, "config_manager"):
+                    config_manager = parent_widget.config_manager
+                    break
+                parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
 
-        # If stored path doesn't exist or is in temp, search source directories
-        # Traverse parent chain to find config_manager
-        parent_widget = self.parent()
-        config_manager = None
-
-        while parent_widget:
-            if hasattr(parent_widget, "config_manager"):
-                config_manager = parent_widget.config_manager
-                break
-            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
-
-        if config_manager:
-            directories = config_manager.get_directories()
-
-            # Search for the file by name in all source directories
-            for directory in directories:
-                if not os.path.exists(directory):
-                    continue
-
-                for root, _, files in os.walk(directory):
-                    if filename in files:
-                        found_path = os.path.join(root, filename)
-                        if os.path.exists(found_path):
-                            return found_path
-
-        return None
+        source_dirs: list[str] = config_manager.get_directories() if config_manager else []
+        return find_actual_file_path(stored_path, filename, source_dirs)
 
     def _re_analyze(self):
         """Queue this file for re-analysis and close dialog."""
@@ -413,9 +437,9 @@ class _DialogActionsMixin:
         message_layout.addWidget(message_text, 1)
         layout.addLayout(message_layout)
 
-        # Checkbox for deleting physical file (checked by default)
+        # Checkbox for deleting physical file (unchecked by default — safe default, M-7)
         delete_file_checkbox = QCheckBox("Also delete the file from disk")
-        delete_file_checkbox.setChecked(True)
+        delete_file_checkbox.setChecked(False)
         delete_file_checkbox.setStyleSheet("font-weight: 600; color: #DC2626;")
         layout.addWidget(delete_file_checkbox)
 
@@ -481,10 +505,7 @@ class _DialogActionsMixin:
             if delete_physical_file and os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                    from services.logging_service import get_logger
-
-                    logger = get_logger()
-                    logger.info(f"Deleted physical file: {file_path}")
+                    logger.info("Deleted physical file: %s", file_path)
                 except Exception as file_error:
                     # Show warning but don't fail the whole operation
                     show_warning(
@@ -500,10 +521,7 @@ class _DialogActionsMixin:
             self.accept()
 
         except Exception as e:
-            from services.logging_service import get_logger
-
-            logger = get_logger()
-            logger.error(f"Error deleting record: {e}", exc_info=True)
+            logger.error("Error deleting record: %s", e, exc_info=True)
             show_critical(self, "Delete Failed", f"Failed to delete record:\n\n{str(e)}")
 
     # Note: Analysis progress/completion handlers removed - now handled by queue system in AnalysisStatusWindow

@@ -2,12 +2,15 @@
 """Mixin class providing model-loading methods for EnhancedSettingsWindow."""
 
 import json
+import re
 import subprocess
 from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import QComboBox
 
 from ui.theme.styles import show_warning
+
+_MODEL_NAME_PATTERN = re.compile(r"[a-zA-Z0-9._:/-]+")
 
 
 class _ModelLoaderMixin:
@@ -325,9 +328,24 @@ class _ModelLoaderMixin:
 
             # Check if cache is still valid (< 24 hours old)
             if now - last_updated < timedelta(hours=24):
-                # Cache is valid - parse and return models
-                models = json.loads(cached_json)
-                if isinstance(models, list) and len(models) > 0:
+                # Cache is valid - parse and validate models
+                raw_models = json.loads(cached_json)
+
+                # H-11: validate structure
+                if not (
+                    isinstance(raw_models, list)
+                    and all(
+                        isinstance(item, str) and re.fullmatch(r"[a-zA-Z0-9._:/-]+", item)
+                        for item in raw_models
+                    )
+                ):
+                    self._get_logger().error(
+                        f"Cached {provider} model list failed validation; discarding cache."
+                    )
+                    return None
+
+                models: list[str] = raw_models
+                if len(models) > 0:
                     self._get_logger().debug(
                         f"Using cached {provider} models (last updated: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                     )
@@ -361,23 +379,44 @@ class _ModelLoaderMixin:
     # Web fetch helpers
     # ------------------------------------------------------------------
 
-    def _fetch_claude_models_from_web(self) -> list[str]:
-        """Use Claude to search the web for latest vision-capable models"""
+    def _validate_model_names(self, models: list[str], provider: str) -> list[str]:
+        """Filter a list of model name strings through the allowlist pattern.
+
+        Any entry that does not fully match ``[a-zA-Z0-9._:/-]+`` is discarded
+        and logged at WARNING level.
+
+        Args:
+            models: Raw list of model name strings.
+            provider: Provider label used in log messages.
+
+        Returns:
+            List containing only entries that pass the allowlist check.
+        """
+        valid: list[str] = []
+        for name in models:
+            if re.fullmatch(r"[a-zA-Z0-9._:/-]+", name):
+                valid.append(name)
+            else:
+                self._get_logger().warning(
+                    f"[{provider}] Discarding model name with invalid characters: {name!r}"
+                )
+        return valid
+
+    def _fetch_models_from_web(self, provider_name: str, prompt_suffix: str) -> list[str]:
+        """Shared helper: call Claude CLI to fetch model names for a provider.
+
+        Args:
+            provider_name: Human-readable provider label (used in log messages).
+            prompt_suffix: Provider-specific portion of the search prompt.
+
+        Returns:
+            Validated list of model name strings, or an empty list on failure.
+        """
+        prompt = (
+            f"Search the web for the latest {prompt_suffix}\n\n"
+            "Return ONLY a JSON array of model IDs, no other text."
+        )
         try:
-            # Create prompt for Claude to search for latest models
-            prompt = """Search the web for the latest Anthropic Claude vision-capable models.
-Look for official Anthropic documentation or announcements about Claude models that support image input.
-
-Return ONLY a JSON array of model IDs (full model names with dates, like "claude-3-5-sonnet-20241022").
-Include only models that support vision/image inputs.
-Order from newest to oldest.
-
-Example format:
-["claude-3-5-sonnet-20241022", "claude-3-opus-20240229"]
-
-Return ONLY the JSON array, no other text."""
-
-            # Call Claude CLI to search
             result = subprocess.run(
                 ["claude", "--model", "sonnet", "-p", prompt],
                 capture_output=True,
@@ -386,21 +425,31 @@ Return ONLY the JSON array, no other text."""
             )
 
             if result.returncode == 0:
-                # Parse JSON response
                 response = result.stdout.strip()
-                # Extract JSON array from response (might have markdown code fences)
-                if "```json" in response:
+                # Strip markdown code fences if present
+                if "```json" in response or "```" in response:
                     json_start = response.find("[")
                     json_end = response.rfind("]") + 1
                     if json_start >= 0 and json_end > json_start:
                         response = response[json_start:json_end]
-                elif "```" in response:
-                    # Remove code fences
-                    response = response.replace("```json", "").replace("```", "").strip()
+                    else:
+                        response = response.replace("```json", "").replace("```", "").strip()
 
-                models = json.loads(response)
-                if isinstance(models, list) and len(models) > 0:
-                    return models
+                raw_models = json.loads(response)
+
+                # H-11: validate structure and content
+                if not (
+                    isinstance(raw_models, list)
+                    and all(isinstance(item, str) for item in raw_models)
+                ):
+                    self._get_logger().error(
+                        f"[{provider_name}] Model list JSON failed structure validation; "
+                        "expected list[str]. Using empty list."
+                    )
+                    return []
+
+                # C-5: filter through allowlist
+                return self._validate_model_names(raw_models, provider_name)
 
         except (
             subprocess.TimeoutExpired,
@@ -408,8 +457,23 @@ Return ONLY the JSON array, no other text."""
             json.JSONDecodeError,
             FileNotFoundError,
         ) as e:
-            self._get_logger().info(f"Could not fetch Claude models from web: {e}")
+            self._get_logger().info(f"Could not fetch {provider_name} models from web: {e}")
 
+        return []
+
+    def _fetch_claude_models_from_web(self) -> list[str]:
+        """Use Claude to search the web for latest vision-capable Claude models."""
+        models = self._fetch_models_from_web(
+            provider_name="Claude",
+            prompt_suffix=(
+                "Anthropic Claude vision-capable models. "
+                "Look for official Anthropic documentation about Claude models that support image input. "
+                'Return full model IDs with dates (e.g. "claude-3-5-sonnet-20241022"), '
+                "newest first."
+            ),
+        )
+        if models:
+            return models
         # Fallback to curated list
         return [
             "claude-3-5-sonnet-20241022",
@@ -468,54 +532,17 @@ Return ONLY the JSON array, no other text."""
                 self.gemini_model_combo.setCurrentIndex(self.gemini_model_combo.count() - 1)
 
     def _fetch_gemini_models_from_web(self) -> list[str]:
-        """Use Claude to search the web for latest Gemini vision-capable models"""
-        try:
-            # Create prompt for Claude to search for latest Gemini models
-            prompt = """Search the web for the latest Google Gemini vision-capable models.
-Look for official Google AI documentation or announcements about Gemini models that support image/vision inputs.
-
-Return ONLY a JSON array of model IDs (like "gemini-2.0-flash-exp", "gemini-1.5-pro").
-Include only models that support vision/image inputs (multimodal models).
-Order from newest to oldest.
-
-Example format:
-["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash"]
-
-Return ONLY the JSON array, no other text."""
-
-            # Call Claude CLI to search
-            result = subprocess.run(
-                ["claude", "--model", "sonnet", "-p", prompt],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            if result.returncode == 0:
-                # Parse JSON response
-                response = result.stdout.strip()
-                # Extract JSON array from response (might have markdown code fences)
-                if "```json" in response:
-                    json_start = response.find("[")
-                    json_end = response.rfind("]") + 1
-                    if json_start >= 0 and json_end > json_start:
-                        response = response[json_start:json_end]
-                elif "```" in response:
-                    # Remove code fences
-                    response = response.replace("```json", "").replace("```", "").strip()
-
-                models = json.loads(response)
-                if isinstance(models, list) and len(models) > 0:
-                    return models
-
-        except (
-            subprocess.TimeoutExpired,
-            subprocess.CalledProcessError,
-            json.JSONDecodeError,
-            FileNotFoundError,
-        ) as e:
-            self._get_logger().info(f"Could not fetch Gemini models from web: {e}")
-
+        """Use Claude to search the web for latest Gemini vision-capable models."""
+        models = self._fetch_models_from_web(
+            provider_name="Gemini",
+            prompt_suffix=(
+                "Google Gemini vision-capable models. "
+                "Look for official Google AI documentation about Gemini models that support image/vision inputs. "
+                'Return model IDs (e.g. "gemini-2.0-flash-exp"), newest first.'
+            ),
+        )
+        if models:
+            return models
         # Fallback to curated list
         return [
             "gemini-2.0-flash-exp",

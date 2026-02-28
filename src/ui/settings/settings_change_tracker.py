@@ -1,7 +1,23 @@
 # mypy: disable-error-code=attr-defined
 """Mixin class providing change-tracking for EnhancedSettingsWindow."""
 
-import traceback
+SAVE_BUTTON_ENABLED_STYLE = """
+    QPushButton {
+        background-color: #2563EB;
+        color: #FFFFFF;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 10pt;
+        font-weight: 600;
+    }
+    QPushButton:hover {
+        background-color: #1D4ED8;
+    }
+    QPushButton:pressed {
+        background-color: #1E40AF;
+    }
+"""
 
 
 class _ChangeTrackerMixin:
@@ -69,8 +85,7 @@ class _ChangeTrackerMixin:
             self._original_values["close_to_tray"] = self.close_to_tray_checkbox.isChecked()
         except Exception as e:
             self._get_logger().error(f"Error capturing original values: {e}", exc_info=True)
-            # Set empty defaults so the app doesn't crash
-            self._original_values = {}
+            # Keep any partially captured values — partial state is better than none
 
     def _connect_change_signals(self):
         """Connect all input widgets to the change detection method."""
@@ -129,50 +144,13 @@ class _ChangeTrackerMixin:
             if not hasattr(self, "save_button") or not self.save_button:
                 return
 
-            # Debug logging
             self._get_logger().debug(f"_update_save_button_style called with enabled={enabled}")
-            self._get_logger().debug(f"Call stack: {''.join(traceback.format_stack()[-3:-1])}")
 
             current_theme = self.config_manager.get_setting("Theme", "theme", "light")
 
             if enabled:
-                # Enabled style (use theme colors)
-                if current_theme == "dark":
-                    style = """
-                        QPushButton {
-                            background-color: #2563EB;
-                            color: #FFFFFF;
-                            border: none;
-                            border-radius: 6px;
-                            padding: 8px 16px;
-                            font-size: 10pt;
-                            font-weight: 600;
-                        }
-                        QPushButton:hover {
-                            background-color: #1D4ED8;
-                        }
-                        QPushButton:pressed {
-                            background-color: #1E40AF;
-                        }
-                    """
-                else:
-                    style = """
-                        QPushButton {
-                            background-color: #2563EB;
-                            color: #FFFFFF;
-                            border: none;
-                            border-radius: 6px;
-                            padding: 8px 16px;
-                            font-size: 10pt;
-                            font-weight: 600;
-                        }
-                        QPushButton:hover {
-                            background-color: #1D4ED8;
-                        }
-                        QPushButton:pressed {
-                            background-color: #1E40AF;
-                        }
-                    """
+                # Enabled style is identical for both themes
+                style = SAVE_BUTTON_ENABLED_STYLE
             else:
                 # Disabled style (grayed out)
                 if current_theme == "dark":

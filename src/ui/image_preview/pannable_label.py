@@ -54,12 +54,6 @@ class PannableImageLabel(QLabel):
             self.pan_offset += delta
             self.pan_start_pos = event.pos()
             self.pan_changed.emit()
-            parent = self.parent()
-            while parent:
-                if hasattr(parent, "_update_image_preview"):
-                    parent._update_image_preview()
-                    break
-                parent = parent.parent()
             event.accept()
         else:
             super().mouseMoveEvent(event)

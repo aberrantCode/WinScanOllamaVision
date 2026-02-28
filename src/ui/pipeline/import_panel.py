@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -524,6 +525,14 @@ class ImportPanel(QWidget):
         paths = self._selected_paths()
         if not paths:
             return
+        reply = QMessageBox.question(
+            self,
+            "Unregister Files",
+            f"Remove {len(paths)} file record(s) from the database?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         self._image_repo.mark_deleted_batch(paths)
         self._refresh()
 
@@ -608,42 +617,62 @@ class ImportPanel(QWidget):
             current = self._image_repo.get_rotation(p)
             self._image_repo.update_rotation(p, (current - 90) % 360)
 
+    def _is_path_in_source_dirs(self, path: str) -> bool:
+        """Return True if *path* resolves to within at least one configured source directory."""
+        resolved = os.path.realpath(path)
+        try:
+            source_dirs = self.config_manager.get_directories()
+        except Exception as e:
+            get_logger().warning("[ImportPanel] Could not read source directories: %s", e)
+            return False
+        for source_dir in source_dirs:
+            resolved_source = os.path.realpath(source_dir)
+            try:
+                if os.path.commonpath([resolved, resolved_source]) == resolved_source:
+                    return True
+            except ValueError:
+                # commonpath raises ValueError on Windows when paths have different drives
+                continue
+        return False
+
     def _on_open_document(self) -> None:
         """Open selected files with their default application."""
+        import subprocess
         import sys
 
         for p in self._selected_paths():
+            if not self._is_path_in_source_dirs(p):
+                get_logger().warning(
+                    "[ImportPanel] Refused to open %r — not within any configured source directory",
+                    p,
+                )
+                continue
             try:
                 os.startfile(p)  # type: ignore[attr-defined]
             except (OSError, AttributeError):
                 with contextlib.suppress(OSError):
                     if sys.platform == "darwin":
-                        import subprocess
-
-                        subprocess.Popen(["open", p])  # noqa: S603, S607
+                        subprocess.Popen(["open", p])  # noqa: S603,S607
                     else:
-                        import subprocess
-
-                        subprocess.Popen(["xdg-open", p])  # noqa: S603, S607
+                        subprocess.Popen(["xdg-open", p])  # noqa: S603,S607
 
     def _on_open_folder(self) -> None:
         """Open the containing folder(s) for selected files, deduplicating by folder."""
+        import subprocess
         import sys
 
-        folders = {os.path.dirname(p) for p in self._selected_paths()}
+        folders = {
+            os.path.dirname(p) for p in self._selected_paths() if self._is_path_in_source_dirs(p)
+        }
         for folder in folders:
             try:
                 os.startfile(folder)  # type: ignore[attr-defined]
             except (OSError, AttributeError):
                 with contextlib.suppress(OSError):
                     if sys.platform == "darwin":
-                        import subprocess
-
-                        subprocess.Popen(["open", folder])  # noqa: S603, S607
+                        subprocess.Popen(["open", folder])  # noqa: S603,S607
                     else:
-                        import subprocess
-
-                        subprocess.Popen(["xdg-open", folder])  # noqa: S603, S607
+                        subprocess.Popen(["xdg-open", folder])  # noqa: S603,S607
 
     @staticmethod
     def _fmt_size(size_bytes: int) -> str:

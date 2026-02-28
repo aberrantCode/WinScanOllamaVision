@@ -106,7 +106,7 @@ class _SettingsTabProviderMixin:
 
         # Model action buttons
         model_buttons = QHBoxLayout()
-        refresh_ollama_btn = QPushButton("🔄 Refresh")
+        refresh_ollama_btn = QPushButton("Refresh")
         refresh_ollama_btn.clicked.connect(lambda: self._load_ollama_models(force_refresh=True))
         refresh_ollama_btn.setObjectName("compactButton")
         refresh_ollama_btn.setToolTip(
@@ -114,7 +114,7 @@ class _SettingsTabProviderMixin:
         )
         model_buttons.addWidget(refresh_ollama_btn)
 
-        download_btn = QPushButton("📥 Download")
+        download_btn = QPushButton("Download")
         download_btn.clicked.connect(self._download_ollama_model)
         download_btn.setObjectName("compactButton")
         download_btn.setToolTip("Download an Ollama model")
@@ -181,7 +181,7 @@ class _SettingsTabProviderMixin:
         self._apply_combobox_chevron_fix(self.claude_model_combo)
         layout.addWidget(self.claude_model_combo, 0, 1)
 
-        refresh_claude_btn = QPushButton("🔄 Refresh")
+        refresh_claude_btn = QPushButton("Refresh")
         refresh_claude_btn.clicked.connect(lambda: self._load_claude_models(force_refresh=True))
         refresh_claude_btn.setObjectName("compactButton")
         refresh_claude_btn.setToolTip(
@@ -252,7 +252,7 @@ class _SettingsTabProviderMixin:
         self._apply_combobox_chevron_fix(self.gemini_model_combo)
         layout.addWidget(self.gemini_model_combo, 0, 1)
 
-        refresh_gemini_btn = QPushButton("🔄 Refresh")
+        refresh_gemini_btn = QPushButton("Refresh")
         refresh_gemini_btn.clicked.connect(lambda: self._load_gemini_models(force_refresh=True))
         refresh_gemini_btn.setObjectName("compactButton")
         refresh_gemini_btn.setToolTip(

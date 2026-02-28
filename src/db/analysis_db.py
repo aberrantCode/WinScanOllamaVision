@@ -253,6 +253,62 @@ class AnalysisDB:
         """Update image file status."""
         self._image_files.update_status(file_path, status)
 
+    def update_analysis_status(self, file_path: str, status: str) -> None:
+        """Update image status (alias for update_image_status for backward compat)."""
+        self._image_files.update_status(file_path, status)
+
+    def mark_image_deleted(self, file_path: str) -> None:
+        """Soft-delete an image file record (sets status to 'deleted')."""
+        self._image_files.mark_deleted(file_path)
+
+    def delete_metadata_by_path(self, file_path: str) -> None:
+        """Delete metadata record for the given file path."""
+        image_file = self._image_files.get_by_path(file_path)
+        if image_file:
+            self._metadata.delete_by_image_file_id(image_file["id"])
+
+    def get_distinct_field_values(self, field_name: str) -> list[str]:
+        """
+        Get distinct non-empty values for a validated field from the database.
+
+        Only fields in a strict whitelist are accepted to prevent SQL injection.
+        Field routing to the correct table is determined internally.
+
+        Args:
+            field_name: Column name to query (must be in the allowed whitelist).
+
+        Returns:
+            Sorted list of distinct non-empty string values, or [] on error/invalid field.
+        """
+        allowed_columns: dict[str, str] = {
+            "provider_name": "analysis_results",
+            "model_name": "analysis_results",
+            "company": "metadata",
+            "document_type": "metadata",
+            "document_date": "metadata",
+            "document_category": "metadata",
+            "page_number": "metadata",
+            "total_pages": "metadata",
+            "confidence_score": "metadata",
+            "file_path": "image_files",
+        }
+
+        if field_name not in allowed_columns:
+            return []
+
+        table = allowed_columns[field_name]
+        assert self.connection.connection is not None
+        try:
+            query = (
+                f"SELECT DISTINCT {field_name} FROM {table}"
+                f" WHERE {field_name} IS NOT NULL AND {field_name} != ''"
+                f" ORDER BY {field_name}"
+            )
+            result = self.connection.connection.execute(query).fetchall()
+            return [row[0] for row in result if row[0]]
+        except Exception:
+            return []
+
     # ==================== Rotation Methods ====================
     # Note: Rotation is now stored in metadata.rotation column
     # Use RotationRepository for rotation operations
@@ -456,6 +512,30 @@ class AnalysisDB:
         for table in tables_to_purge:
             cursor.execute(f"DELETE FROM {table}")
 
+        self.connection.commit()
+
+    def purge_analysis_results(self) -> None:
+        """
+        Delete all rows from the analysis_results table (preserves schema).
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+        cursor.execute("DELETE FROM analysis_results")
+        self.connection.commit()
+
+    def purge_bundles(self) -> None:
+        """
+        Delete all rows from document_bundles and the bundle_images junction table.
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+        # Remove junction rows first to satisfy foreign-key constraints
+        cursor.execute("DELETE FROM bundle_images")
+        cursor.execute("DELETE FROM document_bundles")
         self.connection.commit()
 
     def close(self):

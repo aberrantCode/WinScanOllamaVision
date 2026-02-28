@@ -174,7 +174,7 @@ def create_document_insights_widget_split(theme_colors) -> tuple:
     type_distribution_layout.setContentsMargins(0, 0, 0, 0)
     type_distribution_layout.setSpacing(6)
     layout.addWidget(type_distribution_container)
-    type_distribution_container.layout = type_distribution_layout  # type: ignore[method-assign,assignment]
+    type_distribution_container._stored_layout = type_distribution_layout  # type: ignore[attr-defined]
 
     return (
         widget,
@@ -212,7 +212,7 @@ def create_company_insights_widget(theme_colors) -> tuple:
     company_distribution_layout.setContentsMargins(0, 0, 0, 0)
     company_distribution_layout.setSpacing(6)
     layout.addWidget(company_distribution_container)
-    company_distribution_container.layout = company_distribution_layout  # type: ignore[method-assign,assignment]
+    company_distribution_container._stored_layout = company_distribution_layout  # type: ignore[attr-defined]
 
     return (widget, company_distribution_container)
 
@@ -290,7 +290,6 @@ def create_collapsible_section(
         toggle_btn.setText("▶" if is_visible else "▼")
         container.updateGeometry()
 
-    header.mousePressEvent = lambda event: toggle_section()  # type: ignore[method-assign,assignment]
     toggle_btn.clicked.connect(toggle_section)
 
     main_layout.addWidget(header)

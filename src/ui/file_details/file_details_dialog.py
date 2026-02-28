@@ -21,9 +21,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.logging_service import get_logger
 from ui.file_details.file_details_dialog_actions import _DialogActionsMixin
 from ui.file_details.file_details_dialog_sections import _DialogSectionsMixin
+from ui.file_details.file_details_utils import get_file_details_theme_colors
 from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
+
+logger = get_logger()
 
 
 class FileDetailsDialog(_DialogSectionsMixin, _DialogActionsMixin, QDialog):
@@ -60,9 +64,6 @@ class FileDetailsDialog(_DialogSectionsMixin, _DialogActionsMixin, QDialog):
         self.setMinimumSize(1050, 800)  # Increased by 50% for better visibility
 
         # Debug logging for rotation persistence tracking
-        from services.logging_service import get_logger
-
-        logger = get_logger()
         logger.debug(
             f"[DIALOG INIT] FileDetailsDialog opened for {file_data.get('filename')} - "
             f"rotation (image_files): {file_data.get('rotation')}, "
@@ -73,7 +74,7 @@ class FileDetailsDialog(_DialogSectionsMixin, _DialogActionsMixin, QDialog):
         self.is_dark_mode = False
         if parent and hasattr(parent, "is_dark_mode"):
             self.is_dark_mode = parent.is_dark_mode
-        self.theme_colors = self._get_theme_colors()
+        self.theme_colors = get_file_details_theme_colors(self.is_dark_mode)
 
         self.accordion_sections: list[QWidget] = []  # Track accordion sections
 
@@ -89,49 +90,26 @@ class FileDetailsDialog(_DialogSectionsMixin, _DialogActionsMixin, QDialog):
                 .lower()
                 .replace(" ", "_")
             )
-            self.default_zoom_percent = int(
-                self.config_manager.get_setting("Theme", "default_zoom_percent_png", "100")
-            )
+            try:
+                self.default_zoom_percent = int(
+                    self.config_manager.get_setting("Theme", "default_zoom_percent_png", "100")
+                )
+            except ValueError:
+                self.default_zoom_percent = 100
         else:
             self.default_zoom_mode = "fit_to_width"
             self.default_zoom_percent = 100
 
-        # Correct the file path if it's in a temp folder
+        # Correct the file path if it's in a temp folder (immutable update)
         stored_path = self.file_data.get("full_path")
         filename = self.file_data.get("filename")
         if filename:
             basename = os.path.basename(filename)
             corrected_path = self._find_actual_file_path(stored_path, basename)
             if corrected_path and os.path.exists(corrected_path):
-                # Update file_data with corrected path
-                self.file_data["full_path"] = corrected_path
+                self.file_data = {**self.file_data, "full_path": corrected_path}
 
         self._init_ui()
-
-    def _get_theme_colors(self):
-        """Return color palette based on current theme"""
-        if self.is_dark_mode:
-            return {
-                "bg_primary": "#0B1120",
-                "bg_secondary": "#151D2F",
-                "text_primary": "#E0E0E0",
-                "text_secondary": "#B0B0B0",
-                "border": "#2A3550",
-                "accent": "#3B82F6",
-                "button_bg": "#1F2A40",
-                "button_hover": "#2A3550",
-            }
-        else:
-            return {
-                "bg_primary": "#FFFFFF",
-                "bg_secondary": "#F9FAFB",
-                "text_primary": "#111827",
-                "text_secondary": "#374151",
-                "border": "#E5E7EB",
-                "accent": "#3B82F6",
-                "button_bg": "#F3F4F6",
-                "button_hover": "#EFF6FF",
-            }
 
     def _init_ui(self):
         """Initialize the user interface with image preview and accordion sections."""
@@ -275,9 +253,6 @@ class FileDetailsDialog(_DialogSectionsMixin, _DialogActionsMixin, QDialog):
 
         # Set splitter proportions (50% image, 50% metadata)
         splitter.setSizes([525, 525])
-
-        # Connect splitter moved signal to rescale image dynamically
-        splitter.splitterMoved.connect(self._on_splitter_moved)
 
         main_layout.addWidget(splitter)
 

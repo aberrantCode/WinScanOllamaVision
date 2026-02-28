@@ -42,11 +42,11 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
         toast_notifier = NotificationService()
 
         def on_discovery_finished(count: int) -> None:
-            get_logger().info(f"Startup discovery finished – {count} new files registered")
+            get_logger().info("Startup discovery finished – %s new files registered", count)
             toast_notifier.show_discovery_toast(count)
 
         def on_discovery_error(error: str) -> None:
-            get_logger().error(f"Startup discovery error: {error}")
+            get_logger().error("Startup discovery error: %s", error)
 
         discovery_worker.finished.connect(on_discovery_finished)
         discovery_worker.error.connect(on_discovery_error)
@@ -152,7 +152,7 @@ if __name__ == "__main__":
         # Initialize AppData directory (settings and database)
         logger.info("Initializing AppData directory...")
         settings_path, db_path = initialize_appdata()
-        logger.info(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
+        logger.info("AppData initialized - Settings: %s, Database: %s", settings_path, db_path)
 
         # Initialize config to get theme preference and app name
         logger.info("Loading configuration...")
@@ -161,14 +161,14 @@ if __name__ == "__main__":
         theme = config_manager.get_setting("Theme", "theme", "dark")
         is_dark_mode = theme == "dark"
         app_name = config_manager.get_setting("GUI", "app_name", "WinScanLLM")
-        logger.info(f"Theme preference: {theme}")
+        logger.info("Theme preference: %s", theme)
 
         app = QApplication(sys.argv)
         logger.info("QApplication instance created.")
 
         # Apply centralized theme stylesheet
         app.setStyleSheet(ThemeManager.get_stylesheet(is_dark_mode))
-        logger.info(f"ThemeManager stylesheet applied (dark_mode={is_dark_mode}).")
+        logger.info("ThemeManager stylesheet applied (dark_mode=%s).", is_dark_mode)
 
         # ── Splash screen ──────────────────────────────────────────────────────
         logger.info("Showing splash screen...")
@@ -181,10 +181,6 @@ if __name__ == "__main__":
         # Runs steps 1-6 in a background thread so the splash animation stays
         # smooth. When the worker finishes it emits init_complete which triggers
         # the transition to the main window.
-
-        # Mutable container so the nested callback can hold references that
-        # survive beyond the function scope.
-        _refs: dict = {}
 
         def _on_init_complete() -> None:
             """
@@ -201,8 +197,9 @@ if __name__ == "__main__":
             pipeline_window = DocumentPipelineWindow(config_manager=config_manager)
             logger.info("DocumentPipelineWindow created.")
 
-            # Keep a strong reference so the window is not garbage-collected
-            _refs["pipeline_window"] = pipeline_window
+            # Keep a strong reference so the window is not garbage-collected;
+            # attaching to app ties GC lifetime to the QApplication instance.
+            app.pipeline_window = pipeline_window  # type: ignore[attr-defined]
 
             # ── Step 7: image scan if enabled ─────────────────────────────
             _start_discovery_if_enabled(pipeline_window, config_manager)
@@ -217,19 +214,22 @@ if __name__ == "__main__":
 
         worker = InitializationWorker(config_manager)
         worker.status_changed.connect(splash.update_status)
-        worker.init_complete.connect(_on_init_complete)
+        # The splash gates on both init completion AND one full animation loop.
+        worker.init_complete.connect(splash.mark_init_done)
+        splash.ready_to_close.connect(_on_init_complete)
         worker.start()
         logger.info("Initialization worker started.")
 
-        # Keep a strong reference to the worker
-        _refs["worker"] = worker
+        # Keep a strong reference to the worker; attaching to app ties GC
+        # lifetime to the QApplication instance.
+        app.worker = worker  # type: ignore[attr-defined]
 
         # ── Event loop ────────────────────────────────────────────────────────
         logger.info("Entering QApplication event loop...")
         exit_code = app.exec()
 
         # DB connections are owned and closed by DocumentPipelineWindow.closeEvent()
-        logger.info(f"Application exited with code {exit_code}.")
+        logger.info("Application exited with code %s.", exit_code)
         sys.exit(exit_code)
 
     except Exception:

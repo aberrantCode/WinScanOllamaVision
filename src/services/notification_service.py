@@ -7,14 +7,6 @@ import contextlib
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from services.logging_service import get_logger
-else:
-    get_logger = None
-
-logger: logging.Logger | None = None
 
 # Try importing windows-toasts at module level
 try:
@@ -34,16 +26,17 @@ class NotificationService:
 
     def __init__(self):
         """Initialize notification service"""
+        self._logger: logging.Logger | None = None
         self._toasts_available = self._check_toasts_available()
 
+    @property
     def _get_logger(self) -> logging.Logger:
         """Get logger instance (lazy initialization)."""
-        global logger
-        if logger is None:
-            from services.logging_service import get_logger as _get_logger
+        if self._logger is None:
+            from services.logging_service import get_logger
 
-            logger = _get_logger()
-        return logger
+            self._logger = get_logger()
+        return self._logger
 
     def _check_toasts_available(self) -> bool:
         """
@@ -56,13 +49,13 @@ class NotificationService:
         if sys.platform != "win32":
             # LoggingService not initialized yet (during tests)
             with contextlib.suppress(RuntimeError):
-                self._get_logger().debug("[TOAST] Not running on Windows, toasts disabled")
+                self._get_logger.debug("[TOAST] Not running on Windows, toasts disabled")
             return False
 
         if not WINDOWS_TOASTS_AVAILABLE:
             # LoggingService not initialized yet (during tests)
             with contextlib.suppress(RuntimeError):
-                self._get_logger().warning(
+                self._get_logger.warning(
                     "[TOAST] windows-toasts not installed, toasts disabled. "
                     "Install with: pip install windows-toasts"
                 )
@@ -81,7 +74,7 @@ class NotificationService:
             True if toast was shown successfully, False otherwise
         """
         if not self._toasts_available:
-            self._get_logger().debug("[TOAST] Toasts not available, skipping notification")
+            self._get_logger.debug("[TOAST] Toasts not available, skipping notification")
             return False
 
         try:
@@ -116,15 +109,15 @@ class NotificationService:
                 if os.path.exists(icon_path):
                     toast.AddImage(ToastDisplayImage.fromPath(icon_path))
             except Exception as e:
-                self._get_logger().debug(f"[TOAST] Could not load icon: {e}")
+                self._get_logger.debug("[TOAST] Could not load icon: %s", e)
 
             # Show toast
             toaster.show_toast(toast)
-            self._get_logger().info(f"[TOAST] Showed discovery toast: {count} new files")
+            self._get_logger.info("[TOAST] Showed discovery toast: %s new files", count)
             return True
 
         except Exception as e:
-            self._get_logger().error(f"[TOAST] Failed to show toast notification: {e}")
+            self._get_logger.error("[TOAST] Failed to show toast notification: %s", e)
             return False
 
 

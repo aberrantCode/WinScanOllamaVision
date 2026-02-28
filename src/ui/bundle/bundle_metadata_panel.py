@@ -6,6 +6,8 @@ handles cross-panel interactions (disabling thumbnail/action-bar in edit mode).
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
@@ -47,9 +49,15 @@ class BundleMetadataPanel(QWidget):
     save_requested = pyqtSignal(dict)
     cancel_requested = pyqtSignal()
 
-    def __init__(self, dark_mode: bool, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        dark_mode: bool,
+        parent: QWidget | None = None,
+        analysis_db: Any | None = None,
+    ) -> None:
         super().__init__(parent)
         self._dark_mode = dark_mode
+        self._analysis_db = analysis_db
 
         # Bundle state (populated by load_bundle())
         self._bundle: dict = {}
@@ -105,6 +113,7 @@ class BundleMetadataPanel(QWidget):
             on_update_filename=self._update_output_filename,
             on_save=self._on_save_btn_clicked,
             on_cancel=self._on_cancel_btn_clicked,
+            analysis_db=self._analysis_db,
         )
         self._metadata_inputs = inputs
         self._save_btn = save_btn
@@ -427,6 +436,7 @@ class BundleMetadataPanel(QWidget):
                     on_update_filename=self._update_output_filename,
                     on_save=self._on_save_btn_clicked,
                     on_cancel=self._on_cancel_btn_clicked,
+                    analysis_db=self._analysis_db,
                 )
                 self._metadata_inputs = inputs
                 self._save_btn = save_btn

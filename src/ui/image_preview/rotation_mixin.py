@@ -33,7 +33,7 @@ class _RotationPersistenceMixin:
             from services.logging_service import get_logger
 
             logger = get_logger()
-            logger.warning(f"Failed to load rotation for {file_path}: {e}")
+            logger.warning("Failed to load rotation for %s: %s", file_path, e)
             return 0
 
     def _save_rotation(self, file_path: str, rotation_degrees: int) -> None:
@@ -56,9 +56,9 @@ class _RotationPersistenceMixin:
             from services.logging_service import get_logger
 
             logger = get_logger()
-            logger.info(f"Saved rotation {rotation_degrees}° for {file_path}")
+            logger.info("Saved rotation %s° for %s", rotation_degrees, file_path)
         except Exception as e:
             from services.logging_service import get_logger
 
             logger = get_logger()
-            logger.error(f"Failed to save rotation for {file_path}: {e}", exc_info=True)
+            logger.error("Failed to save rotation for %s: %s", file_path, e, exc_info=True)

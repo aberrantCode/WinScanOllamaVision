@@ -5,9 +5,10 @@ Provides UI-building methods for accordion sections within FileDetailsDialog.
 These methods are separated for organizational clarity; they access self.* via
 Python's MRO when mixed into FileDetailsDialog.
 """
-# mypy: disable-error-code=attr-defined
 
-from typing import TYPE_CHECKING
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
@@ -26,8 +27,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.logging_service import get_logger
+
 if TYPE_CHECKING:
-    pass
+    from config.config_manager import ConfigManager
+    from db.analysis_db import AnalysisDB
+    from db.metadata_db import MetadataDB
+
+logger = get_logger()
 
 
 class _DialogSectionsMixin:
@@ -37,6 +44,19 @@ class _DialogSectionsMixin:
     All methods access self.* which resolves correctly via MRO since
     FileDetailsDialog inherits from this mixin alongside QDialog.
     """
+
+    # Attributes declared by the orchestrator class (FileDetailsDialog)
+    analysis_db: AnalysisDB
+    metadata_db: MetadataDB
+    config_manager: ConfigManager
+    file_data: dict[str, Any]
+    is_dark_mode: bool
+    theme_colors: dict[str, str]
+    metadata_inputs: dict[str, Any]
+    original_metadata_values: dict[str, Any]
+    accordion_sections: list[QWidget]
+    default_zoom_mode: str
+    default_zoom_percent: int
 
     def _create_accordion_section(
         self, title: str, content_widget, initially_expanded: bool = False
@@ -179,22 +199,20 @@ class _DialogSectionsMixin:
         }
     )
 
-    def _get_distinct_values(self, field_name):
+    def _get_distinct_values(self, field_name: str) -> list[str]:
         """Get distinct values for a field from database.
 
         Args:
-            field_name: Column name to query. Must be in ALLOWED_QUERY_COLUMNS.
+            field_name: Column name to query. Must be in ALLOWED_QUERY_COLUMNS or a
+                recognised MetadataDB shortcut field.
 
         Returns:
             List of distinct non-empty values for the field.
-
-        Raises:
-            ValueError: If field_name is not in the allowed whitelist.
         """
         if not self.metadata_db:
             return []
 
-        # Use MetadataDB methods for known fields
+        # Use MetadataDB convenience methods for the most common fields
         try:
             if field_name == "company":
                 return self.metadata_db.get_unique_companies()
@@ -203,48 +221,24 @@ class _DialogSectionsMixin:
             elif field_name == "document_category":
                 return self.metadata_db.get_unique_categories()
         except Exception as e:
-            from services.logging_service import get_logger
-
-            get_logger().error(f"Error getting distinct values for {field_name}: {e}")
+            logger.error("Error getting distinct values for %s: %s", field_name, e)
             return []
 
-        # Fallback for other fields - route to correct table based on schema
+        # Fallback: delegate raw-SQL query to AnalysisDB (M-1)
         if not self.analysis_db:
             return []
 
-        # Validate against strict whitelist to prevent SQL injection
         if field_name not in self.ALLOWED_QUERY_COLUMNS:
-            from services.logging_service import get_logger
-
-            get_logger().warning(f"Rejected disallowed column name in query: {field_name!r}")
+            logger.warning("Rejected disallowed column name in query: %r", field_name)
             return []
 
         try:
-            # Route field to correct table after Migration 16 schema refactoring
-            if field_name in ("provider_name", "model_name"):
-                # Analysis provenance fields - from analysis_results table
-                table = "analysis_results"
-            elif field_name in ("document_date", "page_number", "total_pages", "confidence_score"):
-                # Document metadata fields - from metadata table
-                table = "metadata"
-            elif field_name == "file_path":
-                # File system fields - from image_files table
-                table = "image_files"
-            else:
-                # Unknown field - skip
-                return []
-
-            # Safe to interpolate now that field_name is validated and table is hardcoded
-            query = f"SELECT DISTINCT {field_name} FROM {table} WHERE {field_name} IS NOT NULL AND {field_name} != '' ORDER BY {field_name}"
-            result = self.analysis_db.connection.execute(query).fetchall()
-            return [row[0] for row in result if row[0]]
+            return self.analysis_db.get_distinct_field_values(field_name)
         except Exception as e:
-            from services.logging_service import get_logger
-
-            get_logger().error(f"Error getting distinct values for {field_name}: {e}")
+            logger.error("Error getting distinct values for %s: %s", field_name, e)
             return []
 
-    def _get_distinct_categories(self):
+    def _get_distinct_categories(self) -> list[str]:
         """Get distinct document categories from metadata table."""
         if not self.metadata_db:
             return []
@@ -252,9 +246,7 @@ class _DialogSectionsMixin:
         try:
             return self.metadata_db.get_unique_categories()
         except Exception as e:
-            from services.logging_service import get_logger
-
-            get_logger().error(f"Error getting distinct categories: {e}")
+            logger.error("Error getting distinct categories: %s", e)
             return []
 
     def _create_metadata_content(self):
@@ -409,10 +401,6 @@ class _DialogSectionsMixin:
             self.metadata_inputs[field_name] = input_widget
 
         # Extract rotation - prioritize user-saved rotation from image_files table
-        from services.logging_service import get_logger
-
-        logger = get_logger()
-
         # ALWAYS get rotation from image_files table (authoritative source via MetadataDB)
         # Never use analysis_results.rotation_needed as it's just for historical reference
         rotation_value = "none"  # Default
@@ -432,13 +420,16 @@ class _DialogSectionsMixin:
                     180: "180",
                 }.get(rotation_degrees, "none")  # Default to "none" if unexpected value
                 logger.debug(
-                    f"[METADATA CONTENT] Loaded rotation from metadata table: {rotation_degrees}° = '{rotation_value}'"
+                    "[METADATA CONTENT] Loaded rotation from metadata table: %d° = '%s'",
+                    rotation_degrees,
+                    rotation_value,
                 )
 
         # Store initial rotation for later application
         self.initial_rotation = rotation_value
         logger.debug(
-            f"[METADATA CONTENT] Set initial_rotation and rotation_value to: '{self.initial_rotation}'"
+            "[METADATA CONTENT] Set initial_rotation and rotation_value to: '%s'",
+            self.initial_rotation,
         )
 
         # Get distinct values from database
@@ -502,13 +493,9 @@ class _DialogSectionsMixin:
         if "rotation_needed" in self.metadata_inputs:
             rotation_dropdown = self.metadata_inputs["rotation_needed"]
 
-            # Debug logging - verify dropdown was set correctly
-            from services.logging_service import get_logger
-
-            logger = get_logger()
             logger.debug(
-                f"[METADATA CONTENT] Rotation dropdown created - "
-                f"currentText: '{rotation_dropdown.currentText()}'"
+                "[METADATA CONTENT] Rotation dropdown created - currentText: '%s'",
+                rotation_dropdown.currentText(),
             )
 
             rotation_dropdown.currentTextChanged.connect(self._apply_rotation)
@@ -516,7 +503,8 @@ class _DialogSectionsMixin:
             # Apply initial rotation if one exists
             if hasattr(self, "initial_rotation") and self.initial_rotation != "none":
                 logger.debug(
-                    f"[METADATA CONTENT] Applying initial rotation: '{self.initial_rotation}'"
+                    "[METADATA CONTENT] Applying initial rotation: '%s'",
+                    self.initial_rotation,
                 )
                 self._apply_rotation(self.initial_rotation)
 
@@ -729,12 +717,6 @@ class _DialogSectionsMixin:
         else:
             # Fallback to fit width
             return pixmap.scaledToWidth(available_width, Qt.TransformationMode.SmoothTransformation)
-
-    def _on_splitter_moved(self, pos, index):
-        """Handle splitter movement - no automatic rescaling with manual zoom controls."""
-        # With manual zoom controls, we don't automatically rescale on splitter movement
-        # Users can use fit buttons (W, H, F) if they want to adjust zoom
-        pass
 
     def resizeEvent(self, event):  # noqa: N802
         """Handle window resize - reposition overlay controls."""

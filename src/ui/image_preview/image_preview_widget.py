@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPainter, QPixmap, QTransform
 from PyQt6.QtWidgets import QSpinBox, QVBoxLayout, QWidget
 
+from config.config_manager import ConfigManager
 from ui.image_preview.enums import ToolbarPosition, ToolbarSize
 from ui.image_preview.pannable_label import PannableImageLabel
 from ui.image_preview.rotation_mixin import _RotationPersistenceMixin
@@ -59,7 +60,7 @@ class ImagePreviewWidget(_ImageToolbarMixin, _RotationPersistenceMixin, QWidget)
         self.config_manager = config_manager
         self.analysis_db = analysis_db
 
-        logger.info(
+        logger.debug(
             f"ImagePreviewWidget init: toolbar_size={toolbar_size.value}, position={toolbar_position.value}"
         )
 
@@ -79,9 +80,8 @@ class ImagePreviewWidget(_ImageToolbarMixin, _RotationPersistenceMixin, QWidget)
     def _get_default_theme(self) -> dict[str, str]:
         """Get theme colors from ThemeManager based on the current app theme."""
         try:
-            from config.config_manager import ConfigManager
-
-            is_dark = ConfigManager().get_setting("Theme", "theme", "dark") == "dark"
+            cm = getattr(self, "config_manager", None) or ConfigManager()
+            is_dark = cm.get_setting("Theme", "theme", "dark") == "dark"
         except Exception:
             is_dark = True
         c = ThemeManager.get_colors(is_dark)
@@ -118,6 +118,10 @@ class ImagePreviewWidget(_ImageToolbarMixin, _RotationPersistenceMixin, QWidget)
 
         # Ensure overlay has correct stacking order
         self.overlay_controls.raise_()
+
+        # Invariant: both components must be set by the time _init_ui returns
+        assert self.image_label is not None, "image_label must be set in _init_ui"
+        assert self.zoom_spinner is not None, "zoom_spinner must be set in _create_overlay_controls"
 
     def resizeEvent(self, event):  # noqa: N802
         """Handle widget resize to reposition toolbar."""
@@ -159,31 +163,37 @@ class ImagePreviewWidget(_ImageToolbarMixin, _RotationPersistenceMixin, QWidget)
             saved_rotation = self._load_saved_rotation(file_path)
             if saved_rotation:
                 self.rotation_angle = saved_rotation
-                logger.info(f"Loaded saved rotation {saved_rotation}° for {file_path}")
+                logger.info("Loaded saved rotation %s° for %s", saved_rotation, file_path)
 
-        logger.info(
-            f"set_pixmap called: pixmap size={pixmap.size()}, apply_fit={apply_fit}, "
-            f"file_path={file_path}, rotation={self.rotation_angle}, widget size={self.size()}"
+        logger.debug(
+            "set_pixmap called: pixmap size=%s, apply_fit=%s, file_path=%s, rotation=%s, widget size=%s",
+            pixmap.size(),
+            apply_fit,
+            file_path,
+            self.rotation_angle,
+            self.size(),
         )
 
         # Show and position toolbar
         if self.overlay_controls:
-            logger.info(
-                f"Showing overlay controls: before_visible={self.overlay_controls.isVisible()}"
+            logger.debug(
+                "Showing overlay controls: before_visible=%s",
+                self.overlay_controls.isVisible(),
             )
 
             self.overlay_controls.show()
             self.overlay_controls.raise_()
             self.overlay_controls.adjustSize()
 
-            logger.info(f"After adjustSize: overlay_size={self.overlay_controls.size()}")
+            logger.debug("After adjustSize: overlay_size=%s", self.overlay_controls.size())
 
             self._position_overlay_controls()
 
-            logger.info(
-                f"After positioning: pos={self.overlay_controls.pos()}, "
-                f"visible={self.overlay_controls.isVisible()}, "
-                f"geometry={self.overlay_controls.geometry()}"
+            logger.debug(
+                "After positioning: pos=%s, visible=%s, geometry=%s",
+                self.overlay_controls.pos(),
+                self.overlay_controls.isVisible(),
+                self.overlay_controls.geometry(),
             )
 
         # Apply initial fit if requested (deferred to allow layout to complete)

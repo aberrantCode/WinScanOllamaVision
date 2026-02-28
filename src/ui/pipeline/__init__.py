@@ -9,14 +9,12 @@ from ui.pipeline.bundle_panel import BundlePanel
 from ui.pipeline.export_panel import ExportPanel
 from ui.pipeline.import_panel import ImportPanel
 from ui.pipeline.stages import (
-    _LINK_STYLE,
     STAGE_ANALYZE,
     STAGE_BUNDLE,
     STAGE_EXPORT,
     STAGE_IMPORT,
     STAGE_LABELS,
     PipelineHeaderWidget,
-    _make_divider,
 )
 from ui.pipeline.window import DocumentPipelineWindow
 
@@ -26,8 +24,6 @@ __all__ = [
     "STAGE_BUNDLE",
     "STAGE_EXPORT",
     "STAGE_LABELS",
-    "_LINK_STYLE",
-    "_make_divider",
     "PipelineHeaderWidget",
     "ImportPanel",
     "AnalyzePanel",
