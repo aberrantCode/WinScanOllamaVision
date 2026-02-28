@@ -89,9 +89,9 @@ class TestImageFileRegistration:
         # Verify record was created
         record = repo.get_by_path("/test/image.jpg")
         assert record is not None
-        assert record["file_path"] == "/test/image.jpg"
+        assert record["file_path"] == os.path.normpath("/test/image.jpg")
         assert record["file_hash"] == "abc123"
-        assert record["directory_path"] == "/test"
+        assert record["directory_path"] == os.path.normpath("/test")
         assert record["filename"] == "image.jpg"
         assert record["file_size"] == 1024
         assert record["status"] == "registered"
@@ -187,7 +187,7 @@ class TestImageFileRetrieval:
         record = repo.get_by_path("/test/image.jpg")
 
         assert record is not None
-        assert record["file_path"] == "/test/image.jpg"
+        assert record["file_path"] == os.path.normpath("/test/image.jpg")
 
     def test_get_by_path_returns_none_for_missing(self, repo):
         """Test get_by_path returns None for missing record."""
@@ -203,7 +203,7 @@ class TestImageFileRetrieval:
         images = repo.get_by_directory("/test")
 
         assert len(images) == 2
-        assert all(img["directory_path"] == "/test" for img in images)
+        assert all(img["directory_path"] == os.path.normpath("/test") for img in images)
         # Should be ordered by filename
         assert images[0]["filename"] == "image1.jpg"
         assert images[1]["filename"] == "image2.jpg"
@@ -220,10 +220,10 @@ class TestImageFileRetrieval:
         analyzed = repo.get_by_status("analyzed")
 
         assert len(registered) == 1
-        assert registered[0]["file_path"] == "/test/image1.jpg"
+        assert registered[0]["file_path"] == os.path.normpath("/test/image1.jpg")
 
         assert len(analyzed) == 1
-        assert analyzed[0]["file_path"] == "/test/image2.jpg"
+        assert analyzed[0]["file_path"] == os.path.normpath("/test/image2.jpg")
 
     def test_get_all_excludes_deleted(self, repo):
         """Test get_all excludes deleted images."""
@@ -236,7 +236,7 @@ class TestImageFileRetrieval:
         all_images = repo.get_all()
 
         assert len(all_images) == 1
-        assert all_images[0]["file_path"] == "/test/image1.jpg"
+        assert all_images[0]["file_path"] == os.path.normpath("/test/image1.jpg")
 
 
 class TestImageFileStatusUpdates:
@@ -581,7 +581,10 @@ class TestImageFileComplexQueries:
         results = repo.get_all_with_analysis()
 
         assert len(results) == 2
-        assert results[0]["file_path"] in ["/test/image1.jpg", "/test/image2.jpg"]
+        assert results[0]["file_path"] in [
+            os.path.normpath("/test/image1.jpg"),
+            os.path.normpath("/test/image2.jpg"),
+        ]
 
     def test_get_all_with_analysis_filters_by_directory(self, repo):
         """Test get_all_with_analysis filters by directory."""
@@ -591,7 +594,7 @@ class TestImageFileComplexQueries:
         results = repo.get_all_with_analysis(directory_filter="/test")
 
         assert len(results) == 1
-        assert results[0]["directory_path"] == "/test"
+        assert results[0]["directory_path"] == os.path.normpath("/test")
 
     def test_get_all_with_analysis_accepts_provider_filter(self, repo):
         """Test get_all_with_analysis accepts provider_filter parameter."""
@@ -611,9 +614,11 @@ class TestImageFileComplexQueries:
         results = repo.get_batch_with_analysis(["/test/image1.jpg", "/test/image2.jpg"])
 
         assert isinstance(results, dict)
-        assert "/test/image1.jpg" in results
-        assert "/test/image2.jpg" in results
-        assert results["/test/image1.jpg"]["file_path"] == "/test/image1.jpg"
+        assert os.path.normpath("/test/image1.jpg") in results
+        assert os.path.normpath("/test/image2.jpg") in results
+        assert results[os.path.normpath("/test/image1.jpg")]["file_path"] == os.path.normpath(
+            "/test/image1.jpg"
+        )
 
     def test_get_batch_with_analysis_returns_empty_for_empty_list(self, repo):
         """Test get_batch_with_analysis returns empty dict for empty list."""

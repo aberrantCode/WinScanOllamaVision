@@ -156,35 +156,6 @@ class TestAnalysisDBCore:
         # Simply verify no exception was raised and bundle still exists
         assert bundle_id > 0
 
-    def test_save_rotation_preference(self, db):
-        # NOTE: Rotation is now stored in metadata table, not rotation_preferences table.
-        # The test needs to verify rotation is saved correctly via the metadata system.
-
-        # First need to create an image file and analysis
-        file_path = "/test/img.jpg"
-        db.save_analysis(
-            file_path=file_path,
-            file_hash="hash123",
-            provider_name="ollama",
-            model_name="test-model",
-            analysis_data={"rotation": 90},
-            raw_response="{}",
-            processing_time_ms=100,
-        )
-
-        # Act - save rotation preference (uses legacy method signature)
-        db.save_rotation_preference(file_path, 90, "manual")
-
-        # Assert - get_rotation_preference uses old rotation_preferences table query
-        # Since that table doesn't exist, we verify via metadata table instead
-        cursor = db.connection.connection.cursor()
-        result = cursor.execute(
-            "SELECT rotation FROM metadata WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
-            (file_path,),
-        ).fetchone()
-        assert result is not None
-        assert result[0] == 90
-
     def test_log_action(self, db):
         # Act
         db.log_action("test_action", "Test details", file_path="/file.jpg")
@@ -313,8 +284,8 @@ class TestAnalysisDBCore:
 
         # Assert
         assert isinstance(bundled_paths, set)
-        assert "/test/p1.jpg" in bundled_paths
-        assert "/test/p2.jpg" in bundled_paths
+        assert os.path.normpath("/test/p1.jpg") in bundled_paths
+        assert os.path.normpath("/test/p2.jpg") in bundled_paths
 
     def test_get_bundled_file_paths_returns_empty_set_when_no_bundles(self, db):
         # Act
@@ -345,10 +316,10 @@ class TestAnalysisDBCore:
         bundled_paths = db.get_bundled_file_paths()
 
         # Assert - only accepted and completed should be included
-        assert "/accepted.jpg" in bundled_paths
-        assert "/completed.jpg" in bundled_paths
-        assert "/suggested.jpg" not in bundled_paths
-        assert "/rejected.jpg" not in bundled_paths
+        assert os.path.normpath("/accepted.jpg") in bundled_paths
+        assert os.path.normpath("/completed.jpg") in bundled_paths
+        assert os.path.normpath("/suggested.jpg") not in bundled_paths
+        assert os.path.normpath("/rejected.jpg") not in bundled_paths
 
     def test_update_bundle_pdf_path_delegates_to_repository(self, db):
         # Arrange - create image file first
@@ -435,15 +406,16 @@ class TestAnalysisDBCore:
 
         # Assert - verify only one image_file record exists
         cursor = db.connection.connection.cursor()
+        norm_path = os.path.normpath(file_path)
         count = cursor.execute(
-            "SELECT COUNT(*) FROM image_files WHERE file_path = ?", (file_path,)
+            "SELECT COUNT(*) FROM image_files WHERE file_path = ?", (norm_path,)
         ).fetchone()[0]
         assert count == 1
 
         # Verify two analysis_results records exist
         analysis_count = cursor.execute(
             "SELECT COUNT(*) FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
-            (file_path,),
+            (norm_path,),
         ).fetchone()[0]
         assert analysis_count == 2
 
@@ -472,7 +444,7 @@ class TestAnalysisDBCore:
         # Assert
         assert result is not None
         assert "file_path" in result
-        assert result["file_path"] == file_path
+        assert result["file_path"] == os.path.normpath(file_path)
 
     def test_get_analysis_with_metadata_returns_none_when_not_exists(self, db):
         """Test get_analysis_with_metadata returns None for non-existent file."""
@@ -517,7 +489,7 @@ class TestAnalysisDBCore:
             SELECT company FROM metadata
             WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)
             """,
-            (file_path,),
+            (os.path.normpath(file_path),),
         ).fetchone()
         assert result is not None
         assert result[0] == "Updated Corp"
@@ -574,32 +546,10 @@ class TestAnalysisDBCore:
         # Assert
         cursor = db.connection.connection.cursor()
         result = cursor.execute(
-            "SELECT status FROM image_files WHERE file_path = ?", (file_path,)
+            "SELECT status FROM image_files WHERE file_path = ?", (os.path.normpath(file_path),)
         ).fetchone()
         assert result is not None
         assert result[0] == "processed"
-
-    def test_get_rotation_preference_returns_preference(self, db):
-        """Test get_rotation_preference returns rotation data (lines 261-265)."""
-        # Arrange
-        file_path = "/test/rotated.jpg"
-        db.save_rotation_preference(file_path, 90, "manual")
-
-        # Act
-        result = db.get_rotation_preference(file_path)
-
-        # Assert
-        assert result is not None
-        assert result["rotation_degrees"] == 90
-        assert result["rotation_source"] == "manual"
-
-    def test_get_rotation_preference_returns_none_when_not_exists(self, db):
-        """Test get_rotation_preference returns None for non-existent file."""
-        # Act
-        result = db.get_rotation_preference("/nonexistent.jpg")
-
-        # Assert
-        assert result is None
 
     def test_get_all_errors_delegates_to_error_repository(self, db):
         """Test get_all_errors delegates to error repository (line 293)."""

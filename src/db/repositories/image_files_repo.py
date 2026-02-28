@@ -5,6 +5,7 @@ Manages image file registration, status transitions, and lifecycle tracking.
 """
 
 import logging
+import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
@@ -62,6 +63,11 @@ class ImageFilesRepository:
         Returns:
             ID of registered image file
         """
+        # Normalize paths to use consistent separators (backslashes on Windows)
+        # This prevents duplicate entries with C:/ vs C:\ paths
+        file_path = os.path.normpath(file_path)
+        directory_path = os.path.normpath(directory_path)
+
         self.conn.execute(
             """
             INSERT OR REPLACE INTO image_files (
@@ -100,6 +106,8 @@ class ImageFilesRepository:
         Returns:
             Image file dict if found, None otherwise
         """
+        # Normalize path for consistent lookups
+        file_path = os.path.normpath(file_path)
         return self.conn.fetch_one_dict(
             "SELECT * FROM image_files WHERE file_path = ?", (file_path,)
         )
@@ -114,6 +122,7 @@ class ImageFilesRepository:
         Returns:
             List of image file dicts
         """
+        directory_path = os.path.normpath(directory_path)
         return self.conn.fetch_all_dicts(
             "SELECT * FROM image_files WHERE directory_path = ? ORDER BY filename",
             (directory_path,),
@@ -153,6 +162,9 @@ class ImageFilesRepository:
             file_path: Path to image file
             status: New status (registered, analyzing, analyzed, bundled, deleted)
         """
+        # Normalize path for consistent lookups
+        file_path = os.path.normpath(file_path)
+
         self.conn.execute(
             """
             UPDATE image_files
@@ -179,6 +191,7 @@ class ImageFilesRepository:
         Args:
             file_path: Path to image file
         """
+        file_path = os.path.normpath(file_path)
         self.conn.execute(
             """
             UPDATE image_files
@@ -206,6 +219,7 @@ class ImageFilesRepository:
             file_path: Path to image file
             file_hash: New SHA-256 hash
         """
+        file_path = os.path.normpath(file_path)
         self.conn.execute(
             """
             UPDATE image_files
@@ -232,6 +246,7 @@ class ImageFilesRepository:
         Args:
             file_path: Path to image file
         """
+        file_path = os.path.normpath(file_path)
         self.conn.execute(
             """
             UPDATE image_files
@@ -320,6 +335,7 @@ class ImageFilesRepository:
         if not file_paths:
             return 0
 
+        file_paths = [os.path.normpath(p) for p in file_paths]
         placeholders = ",".join("?" * len(file_paths))
         # Column names from internal code, values parameterized - safe from injection
         query = f"""
@@ -448,7 +464,7 @@ class ImageFilesRepository:
 
         if directory_filter:
             query += " AND img.directory_path = ?"
-            params.append(directory_filter)
+            params.append(os.path.normpath(directory_filter))
 
         if provider_filter:
             query += " AND ar.provider_name = ?"
@@ -476,6 +492,7 @@ class ImageFilesRepository:
         if not file_paths:
             return {}
 
+        file_paths = [os.path.normpath(p) for p in file_paths]
         # Create placeholders for IN clause
         placeholders = ",".join("?" * len(file_paths))
 
@@ -567,3 +584,66 @@ class ImageFilesRepository:
             stats[f"status_{row['status']}"] = row["count"]
 
         return stats
+
+    def set_ignored(self, file_path: str, ignored: bool) -> None:
+        """
+        Set ignore status for an image.
+
+        Args:
+            file_path: Path to image file
+            ignored: True to ignore, False to un-ignore
+        """
+        self.conn.execute(
+            "UPDATE image_files SET is_ignored = ? WHERE file_path = ?", (ignored, file_path)
+        )
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError as e:
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+
+    def get_ignored_count(self) -> int:
+        """
+        Get count of ignored images.
+
+        Returns:
+            Number of ignored images
+        """
+        result = self.conn.fetch_one_dict(
+            "SELECT COUNT(*) as count FROM image_files WHERE is_ignored = 1"
+        )
+        return result.get("count", 0) if result else 0
+
+    def set_ignored_batch(self, file_paths: list[str], ignored: bool) -> int:
+        """
+        Set ignore status for multiple images (batch operation).
+
+        Args:
+            file_paths: List of file paths
+            ignored: True to ignore, False to un-ignore
+
+        Returns:
+            Number of rows affected
+        """
+        if not file_paths:
+            return 0
+
+        placeholders = ",".join("?" * len(file_paths))
+        # Column names from internal code, values parameterized - safe from injection
+        query = f"""
+            UPDATE image_files
+            SET is_ignored = ?
+            WHERE file_path IN ({placeholders})
+        """  # nosec B608
+
+        params = [ignored] + file_paths
+        cursor = self.conn.execute(query, tuple(params))
+
+        try:
+            self.conn.commit()
+            return cursor.rowcount if cursor else 0
+        except sqlite3.OperationalError as e:
+            self._get_logger().error(f"[IMAGE FILES REPO] Database locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e

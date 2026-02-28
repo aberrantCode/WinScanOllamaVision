@@ -359,6 +359,126 @@ class TestLoggingService:
         assert "/home/user" in service.log_file_path
         assert "AppData" in service.log_file_path
 
+    def test_initialize_fallback_to_temp_on_permission_error(self):
+        """initialize() falls back to tempdir when makedirs raises PermissionError."""
+        service = LoggingService()
+
+        with (
+            patch("os.makedirs", side_effect=PermissionError("no access")),
+            patch("services.logging_service.RotatingFileHandler") as mock_handler,
+        ):
+            mock_handler.return_value.level = 20
+            service.initialize(app_name="TestApp")
+
+        # log_file_path should be in a temp-like location
+        assert service.log_file_path is not None
+        assert "WinScanLLM_app.log" in service.log_file_path
+
+    def test_initialize_raises_runtime_error_on_makedirs_oserror(self):
+        """initialize() raises RuntimeError when makedirs raises OSError (non-Permission)."""
+        service = LoggingService()
+
+        with (
+            patch("os.makedirs", side_effect=OSError("disk full")),
+            pytest.raises(RuntimeError, match="Failed to initialize logging service"),
+        ):
+            service.initialize(app_name="TestApp")
+
+    def test_initialize_forces_console_on_file_handler_permission_error(self, temp_appdata):
+        """initialize() forces console output when RotatingFileHandler raises PermissionError."""
+        service = LoggingService()
+
+        with (
+            patch.dict(os.environ, {"APPDATA": temp_appdata}),
+            patch(
+                "services.logging_service.RotatingFileHandler",
+                side_effect=PermissionError("locked"),
+            ),
+        ):
+            service.initialize(app_name="TestApp")
+
+        # Should still have a logger (via console fallback)
+        assert service.logger is not None
+        # Should have a StreamHandler (console fallback)
+        handler_types = [type(h).__name__ for h in service.logger.handlers]
+        assert "StreamHandler" in handler_types
+
+    def test_initialize_forces_console_on_file_handler_oserror(self, temp_appdata):
+        """initialize() forces console output when RotatingFileHandler raises OSError."""
+        service = LoggingService()
+
+        with (
+            patch.dict(os.environ, {"APPDATA": temp_appdata}),
+            patch("services.logging_service.RotatingFileHandler", side_effect=OSError("io error")),
+        ):
+            service.initialize(app_name="TestApp")
+
+        assert service.logger is not None
+        handler_types = [type(h).__name__ for h in service.logger.handlers]
+        assert "StreamHandler" in handler_types
+
+    def test_initialize_with_console_output_true_adds_stream_handler(self, temp_appdata):
+        """initialize(console_output=True) adds a StreamHandler alongside the file handler."""
+        service = LoggingService()
+
+        with patch.dict(os.environ, {"APPDATA": temp_appdata}):
+            service.initialize(app_name="TestApp", console_output=True)
+
+        handler_types = [type(h).__name__ for h in service.logger.handlers]
+        assert "StreamHandler" in handler_types
+        assert "RotatingFileHandler" in handler_types
+
+    def test_initialize_with_console_output_uses_console_level(self, temp_appdata):
+        """initialize(console_output=True, console_level=DEBUG) sets console handler to DEBUG."""
+        service = LoggingService()
+
+        with patch.dict(os.environ, {"APPDATA": temp_appdata}):
+            service.initialize(
+                app_name="TestApp",
+                log_level=logging.INFO,
+                console_output=True,
+                console_level=logging.DEBUG,
+            )
+
+        stream_handlers = [
+            h for h in service.logger.handlers if type(h).__name__ == "StreamHandler"
+        ]
+        assert len(stream_handlers) == 1
+        assert stream_handlers[0].level == logging.DEBUG
+
+    def test_initialize_console_only_logs_warning(self, temp_appdata):
+        """When file handler fails, console-only mode logs a warning."""
+        service = LoggingService()
+
+        with (
+            patch.dict(os.environ, {"APPDATA": temp_appdata}),
+            patch(
+                "services.logging_service.RotatingFileHandler", side_effect=PermissionError("no")
+            ),
+        ):
+            service.initialize(app_name="TestApp")
+
+        # Logger should be working in console-only mode
+        assert service.logger is not None
+
+    def test_clear_log_file_handles_open_exception(self, temp_appdata):
+        """clear_log_file() calls error() when open() raises an exception."""
+        service = LoggingService()
+
+        with patch.dict(os.environ, {"APPDATA": temp_appdata}):
+            service.initialize(app_name="TestApp")
+
+        error_calls = []
+        original_error = service.error
+        service.error = lambda msg, exc_info=False: error_calls.append(msg)
+
+        with patch("builtins.open", side_effect=OSError("file locked")):
+            service.clear_log_file()
+
+        service.error = original_error
+        assert len(error_calls) == 1
+        assert "Failed to clear log file" in error_calls[0]
+
 
 class TestGetLoggerFunction:
     """Tests for get_logger convenience function"""

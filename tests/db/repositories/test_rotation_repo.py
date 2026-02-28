@@ -201,59 +201,6 @@ class TestGet:
         assert result == 0
 
 
-class TestSavePreference:
-    """Test save_preference() method for legacy rotation_preferences table."""
-
-    def test_save_preference_creates_record(self, repo, temp_file):
-        """Test saving rotation preference to rotation_preferences table."""
-        repo.save_preference(temp_file, 90, "manual")
-
-        # Verify record was created
-        cursor = repo.conn.connection.cursor()
-        cursor.execute(
-            "SELECT rotation_degrees, rotation_source FROM rotation_preferences WHERE file_path = ?",
-            (temp_file,),
-        )
-        record = cursor.fetchone()
-
-        assert record is not None
-        assert record[0] == 90  # rotation_degrees
-        assert record[1] == "manual"  # rotation_source
-
-    def test_save_preference_replaces_existing_record(self, repo, temp_file):
-        """Test INSERT OR REPLACE behavior."""
-        # Save initial preference
-        repo.save_preference(temp_file, 90, "ai_suggestion")
-
-        # Replace with new preference
-        repo.save_preference(temp_file, 180, "manual")
-
-        # Verify only one record exists with updated values
-        cursor = repo.conn.connection.cursor()
-        cursor.execute(
-            "SELECT rotation_degrees, rotation_source FROM rotation_preferences WHERE file_path = ?",
-            (temp_file,),
-        )
-        records = cursor.fetchall()
-
-        assert len(records) == 1
-        assert records[0][0] == 180
-        assert records[0][1] == "manual"
-
-    def test_save_preference_with_ai_suggestion(self, repo, temp_file):
-        """Test saving AI-suggested rotation."""
-        repo.save_preference(temp_file, 270, "ai_suggestion")
-
-        cursor = repo.conn.connection.cursor()
-        cursor.execute(
-            "SELECT rotation_source FROM rotation_preferences WHERE file_path = ?",
-            (temp_file,),
-        )
-        source = cursor.fetchone()[0]
-
-        assert source == "ai_suggestion"
-
-
 class TestComputeFileHash:
     """Test _compute_file_hash() static method."""
 
@@ -311,24 +258,3 @@ class TestIntegration:
         # Retrieve updated rotation
         updated_rotation = repo.get(temp_file)
         assert updated_rotation == 270
-
-    def test_save_preference_workflow(self, repo):
-        """Test rotation preference workflow."""
-        file_path = "/test/image.jpg"
-
-        # Save AI suggestion
-        repo.save_preference(file_path, 90, "ai_suggestion")
-
-        # User manually overrides
-        repo.save_preference(file_path, 180, "manual")
-
-        # Verify final state
-        cursor = repo.conn.connection.cursor()
-        cursor.execute(
-            "SELECT rotation_degrees, rotation_source FROM rotation_preferences WHERE file_path = ?",
-            (file_path,),
-        )
-        record = cursor.fetchone()
-
-        assert record[0] == 180
-        assert record[1] == "manual"

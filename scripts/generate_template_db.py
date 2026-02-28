@@ -25,7 +25,7 @@ print("Template database created successfully!")
 print("\nDatabase schema includes:")
 print("- MetadataDB tables: original_files, archived_files, schema_version")
 print("- AnalysisDB tables: analysis_results, llm_providers, source_directories,")
-print("                     document_bundles, rotation_preferences, audit_trail")
+print("                     document_bundles, audit_trail, metadata")
 
 # Close databases
 metadata_db.close()

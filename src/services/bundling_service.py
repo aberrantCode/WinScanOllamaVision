@@ -315,7 +315,7 @@ class BundlingService:
 
         logger = get_logger()
         if not os.path.exists(pdf_path):
-            logger.warning(f"PDF path does not exist: {pdf_path}")
+            logger.warning("PDF path does not exist: %s", pdf_path)
 
         # Save PDF path
         self.analysis_db.update_bundle_pdf_path(bundle_id, pdf_path)

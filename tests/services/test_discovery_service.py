@@ -13,6 +13,15 @@ from db.analysis_db import AnalysisDB
 from services.discovery_service import DiscoveryService
 
 
+@pytest.fixture(autouse=True)
+def patch_discovery_service_logger():
+    """Prevent DiscoveryService from calling LoggingService (whose singleton may be reset by
+    test_logging_service.py tests). Patching the module-level logger makes _get_logger()
+    return the mock directly without touching the singleton."""
+    with patch("services.discovery_service.logger", MagicMock()):
+        yield
+
+
 @pytest.fixture
 def temp_image_dir():
     """Create temporary directory with test images"""
@@ -271,3 +280,271 @@ def test_discover_images_updates_last_seen(
 
     # Verify update_last_seen was called for each existing file
     assert mock_repo.update_last_seen.call_count == 4
+
+
+# ---------------------------------------------------------------------------
+# Exception handlers inside the glob loop (lines 92-106)
+# ---------------------------------------------------------------------------
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_glob_permission_error_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """When glob.glob raises PermissionError for an extension, the service continues."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+    mock_repo.register.return_value = 1
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+
+    # Raise PermissionError on the first glob call, succeed on the rest
+    original_glob = __import__("glob").glob
+    call_count = [0]
+
+    def glob_side_effect(pattern, recursive=False):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise PermissionError("no read access")
+        return original_glob(pattern, recursive=recursive)
+
+    with patch("services.discovery_service.glob") as mock_glob_module:
+        mock_glob_module.glob.side_effect = glob_side_effect
+        # Should not raise; should continue processing remaining extensions
+        count = service.discover_images([temp_image_dir])
+
+    # Some files may still be found via the other extensions
+    assert isinstance(count, int)
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_glob_oserror_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """When glob.glob raises OSError for an extension, the service continues."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+    mock_repo.register.return_value = 1
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+
+    with patch("services.discovery_service.glob") as mock_glob_module:
+        mock_glob_module.glob.side_effect = OSError("i/o error")
+        count = service.discover_images([temp_image_dir])
+
+    assert count == 0  # All globs failed, no files found
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_glob_generic_exception_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """When glob.glob raises a generic Exception, the service continues."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+    mock_repo.register.return_value = 1
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+
+    with patch("services.discovery_service.glob") as mock_glob_module:
+        mock_glob_module.glob.side_effect = RuntimeError("unexpected glob failure")
+        count = service.discover_images([temp_image_dir])
+
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# Exception handlers in the file-registration block
+# ---------------------------------------------------------------------------
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_registration_file_not_found_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """FileNotFoundError during os.stat() is caught; remaining files are processed."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None  # All files are new
+
+    call_count = [0]
+    original_stat = __import__("os").stat
+
+    def stat_side_effect(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise FileNotFoundError("file vanished")
+        return original_stat(path)
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+
+    with patch("os.stat", side_effect=stat_side_effect):
+        count = service.discover_images([temp_image_dir])
+
+    # First file fails stat, remaining files succeed
+    assert count == 3  # 4 files total, 1 fails
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_registration_permission_error_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """PermissionError during os.stat() is caught; remaining files are processed."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+
+    call_count = [0]
+    original_stat = __import__("os").stat
+
+    def stat_side_effect(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise PermissionError("access denied")
+        return original_stat(path)
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+
+    with patch("os.stat", side_effect=stat_side_effect):
+        count = service.discover_images([temp_image_dir])
+
+    assert count == 3
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_registration_oserror_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """OSError during os.stat() is caught; remaining files are processed."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+
+    call_count = [0]
+    original_stat = __import__("os").stat
+
+    def stat_side_effect(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise OSError("i/o error")
+        return original_stat(path)
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+
+    with patch("os.stat", side_effect=stat_side_effect):
+        count = service.discover_images([temp_image_dir])
+
+    assert count == 3
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_registration_sqlite_error_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """sqlite3.Error from repo.register() is caught; remaining files are processed."""
+    import sqlite3
+
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+
+    call_count = [0]
+
+    def register_side_effect(**kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise sqlite3.Error("constraint violation")
+        return 1
+
+    mock_repo.register.side_effect = register_side_effect
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+    count = service.discover_images([temp_image_dir])
+
+    assert count == 3  # 4 files, first registration fails
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_registration_generic_exception_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """Generic Exception from repo.register() is caught; remaining files are processed."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+    mock_repo.get_by_path.return_value = None
+
+    call_count = [0]
+
+    def register_side_effect(**kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise ValueError("unexpected register error")
+        return 1
+
+    mock_repo.register.side_effect = register_side_effect
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+    count = service.discover_images([temp_image_dir])
+
+    assert count == 3
+
+
+# ---------------------------------------------------------------------------
+# Outer file-processing exception handlers (lines 200-206)
+# ---------------------------------------------------------------------------
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_outer_sqlite_error_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """sqlite3.Error from get_by_path() is caught; the loop continues with next file."""
+    import sqlite3
+
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+
+    call_count = [0]
+
+    def get_by_path_side_effect(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise sqlite3.Error("db locked")
+        return None  # File is new for the rest
+
+    mock_repo.get_by_path.side_effect = get_by_path_side_effect
+    mock_repo.register.return_value = 1
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+    count = service.discover_images([temp_image_dir])
+
+    # First file's get_by_path raises, so it's skipped; the other 3 files are registered
+    assert count == 3
+
+
+@patch("services.discovery_service.ImageFilesRepository")
+def test_discover_images_outer_generic_exception_continues(
+    mock_repo_class, temp_image_dir, mock_config, mock_analysis_db
+):
+    """Generic Exception from get_by_path() is caught; the loop continues."""
+    mock_repo = MagicMock()
+    mock_repo_class.return_value = mock_repo
+
+    call_count = [0]
+
+    def get_by_path_side_effect(path):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("unexpected db error")
+        return None
+
+    mock_repo.get_by_path.side_effect = get_by_path_side_effect
+    mock_repo.register.return_value = 1
+
+    service = DiscoveryService(mock_config, mock_analysis_db)
+    count = service.discover_images([temp_image_dir])
+
+    assert count == 3

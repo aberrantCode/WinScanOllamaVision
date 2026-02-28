@@ -1,9 +1,109 @@
 import argparse
 import logging
+import os
 import sys
+from pathlib import Path
 
 # Import only LoggingService first, before any modules that use it
 from services.logging_service import LoggingService, get_logger
+
+# ---------------------------------------------------------------------------
+# Helper functions — defined before __main__ so they are available when
+# _on_init_complete is called from within app.exec() via Qt signal delivery.
+# ---------------------------------------------------------------------------
+
+
+def _start_discovery_if_enabled(window, config_manager) -> None:
+    """
+    Start a one-shot startup discovery scan if enabled in settings.
+
+    Runs in the background; results are committed to the database so the
+    pipeline's Import panel reflects newly registered files on next refresh.
+    """
+    from PyQt6.QtCore import QTimer
+
+    from services.discovery_worker import DiscoveryWorker
+    from services.notification_service import NotificationService
+
+    scan_on_startup = config_manager.get_bool("SourceDirectories", "scan_on_startup", True)
+    if not scan_on_startup:
+        get_logger().info("Scan on startup disabled")
+        return
+
+    directories = config_manager.get_directories()
+    if not directories:
+        get_logger().info("No directories configured for startup discovery")
+        return
+
+    get_logger().info("Scan on startup enabled – triggering discovery")
+
+    def start_discovery() -> None:
+        discovery_worker = DiscoveryWorker(config_manager, directories)
+        toast_notifier = NotificationService()
+
+        def on_discovery_finished(count: int) -> None:
+            get_logger().info("Startup discovery finished – %s new files registered", count)
+            toast_notifier.show_discovery_toast(count)
+
+        def on_discovery_error(error: str) -> None:
+            get_logger().error("Startup discovery error: %s", error)
+
+        discovery_worker.finished.connect(on_discovery_finished)
+        discovery_worker.error.connect(on_discovery_error)
+        discovery_worker.start()
+        get_logger().info("Startup discovery worker started")
+
+        # Prevent garbage collection by attaching to the window
+        window._startup_discovery_worker = discovery_worker  # type: ignore[attr-defined]
+
+    # Delay by 500 ms so the window finishes rendering first
+    QTimer.singleShot(500, start_discovery)
+
+
+def _start_periodic_scheduler(window, config_manager) -> None:
+    """Initialize and start the periodic discovery scheduler if enabled."""
+    discovery_enabled = config_manager.get_bool("Discovery", "enabled", True)
+    if not discovery_enabled:
+        get_logger().info("Periodic discovery disabled")
+        return
+
+    get_logger().info("Periodic discovery enabled – initializing scheduler")
+
+    from services.discovery_scheduler import DiscoveryScheduler
+
+    discovery_scheduler = DiscoveryScheduler(config_manager)
+    discovery_scheduler.start()
+    get_logger().info("Discovery scheduler started")
+
+    # Attach to the window to prevent garbage collection
+    window._discovery_scheduler = discovery_scheduler  # type: ignore[attr-defined]
+
+
+def _seed_default_source_directory(config_manager) -> None:  # type: ignore[no-untyped-def]
+    """
+    If no source directories are configured, add ~/Pictures/Scans as the default.
+
+    Creates the directory on disk if it does not already exist so the discovery
+    scanner can immediately traverse it on first run.
+    """
+    if config_manager.get_directories():
+        return  # already configured — nothing to do
+
+    default_dir = Path.home() / "Pictures" / "Scans"
+    default_path = os.path.normpath(str(default_dir))
+
+    try:
+        default_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        get_logger().warning("Could not create default scan directory %s: %s", default_path, e)
+
+    config_manager.add_directory(default_path)
+    get_logger().info("No source directories configured — added default: %s", default_path)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Parse command-line arguments
@@ -40,11 +140,8 @@ if __name__ == "__main__":
 
     from config.appdata_manager import initialize_appdata
     from config.config_manager import ConfigManager
-    from db.analysis_db import AnalysisDB
-    from db.metadata_db import MetadataDB
-    from services.analysis_service import AnalysisService
-    from ui.gui import StartupWindow
-    from ui.theme_manager import ThemeManager
+    from ui.startup import InitializationWorker, SplashScreen
+    from ui.theme.theme_manager import ThemeManager
 
     try:
         logger.info("=" * 80)
@@ -55,163 +152,84 @@ if __name__ == "__main__":
         # Initialize AppData directory (settings and database)
         logger.info("Initializing AppData directory...")
         settings_path, db_path = initialize_appdata()
-        logger.info(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
+        logger.info("AppData initialized - Settings: %s, Database: %s", settings_path, db_path)
 
-        # Initialize config to get theme preference
+        # Initialize config to get theme preference and app name
         logger.info("Loading configuration...")
         config_manager = ConfigManager()
+        _seed_default_source_directory(config_manager)
         theme = config_manager.get_setting("Theme", "theme", "dark")
         is_dark_mode = theme == "dark"
-        logger.info(f"Theme preference: {theme}")
+        app_name = config_manager.get_setting("GUI", "app_name", "WinScanLLM")
+        logger.info("Theme preference: %s", theme)
 
         app = QApplication(sys.argv)
         logger.info("QApplication instance created.")
 
         # Apply centralized theme stylesheet
         app.setStyleSheet(ThemeManager.get_stylesheet(is_dark_mode))
-        logger.info(f"ThemeManager stylesheet applied (dark_mode={is_dark_mode}).")
+        logger.info("ThemeManager stylesheet applied (dark_mode=%s).", is_dark_mode)
 
-        logger.info("Creating StartupWindow...")
-        startup_window = StartupWindow()
-        logger.info("StartupWindow instance created.")
+        # ── Splash screen ──────────────────────────────────────────────────────
+        logger.info("Showing splash screen...")
+        splash = SplashScreen(app_name, is_dark_mode=is_dark_mode)
+        splash.center_on_screen()
+        splash.show()
+        app.processEvents()  # Ensure the splash is painted before the worker starts
 
-        # Initialize analysis service
-        logger.info("Initializing AnalysisService...")
-        analysis_db = AnalysisDB()
-        metadata_db = MetadataDB()
-        analysis_service = AnalysisService(config_manager, analysis_db, metadata_db)
-        logger.info("AnalysisService initialized.")
+        # ── Initialization worker ──────────────────────────────────────────────
+        # Runs steps 1-6 in a background thread so the splash animation stays
+        # smooth. When the worker finishes it emits init_complete which triggers
+        # the transition to the main window.
 
-        # Store analysis_service in window for manual button access
-        startup_window.analysis_service = analysis_service
+        def _on_init_complete() -> None:
+            """
+            Called on the main thread when the initialization worker finishes.
 
-        logger.info("Showing StartupWindow...")
-        startup_window.show()
-        logger.info("StartupWindow.show() called.")
+            Closes the splash and opens the Document Pipeline window directly.
+            """
+            logger.info("Initialization complete – opening Document Pipeline")
 
-        # Discovery on startup (if enabled)
-        scan_on_startup = config_manager.get_bool("SourceDirectories", "scan_on_startup", True)
-        if scan_on_startup:
-            logger.info("Scan on startup enabled - triggering discovery")
-            from PyQt6.QtCore import QTimer
+            from ui.pipeline import DocumentPipelineWindow
 
-            from services.discovery_scheduler import DiscoveryScheduler
-            from services.discovery_worker import DiscoveryWorker
-            from ui.toast_notifier import ToastNotifier
+            # The pipeline window creates and owns its own DB connections when
+            # none are supplied, and closes them automatically on exit.
+            pipeline_window = DocumentPipelineWindow(config_manager=config_manager)
+            logger.info("DocumentPipelineWindow created.")
 
-            # Get directories from config (not database)
-            directories = config_manager.get_directories()
+            # Keep a strong reference so the window is not garbage-collected;
+            # attaching to app ties GC lifetime to the QApplication instance.
+            app.pipeline_window = pipeline_window  # type: ignore[attr-defined]
 
-            if directories:
+            # ── Step 7: image scan if enabled ─────────────────────────────
+            _start_discovery_if_enabled(pipeline_window, config_manager)
 
-                def start_discovery():
-                    """Start discovery after window is fully rendered"""
-                    # Show status message on startup window
-                    startup_window._show_status_label("🔍 Discovering new files...")
+            # Start periodic background discovery scheduler if enabled
+            _start_periodic_scheduler(pipeline_window, config_manager)
 
-                    # Create discovery worker
-                    discovery_worker = DiscoveryWorker(config_manager, directories)
-                    toast_notifier = ToastNotifier()
+            # Close splash and show the pipeline
+            splash.close()
+            pipeline_window.show()
+            logger.info("DocumentPipelineWindow shown.")
 
-                    def on_discovery_finished(count):
-                        """Handle startup discovery completion"""
-                        logger.info(f"Startup discovery finished - {count} new files registered")
+        worker = InitializationWorker(config_manager)
+        worker.status_changed.connect(splash.update_status)
+        # The splash gates on both init completion AND one full animation loop.
+        worker.init_complete.connect(splash.mark_init_done)
+        splash.ready_to_close.connect(_on_init_complete)
+        worker.start()
+        logger.info("Initialization worker started.")
 
-                        # Update status label with result
-                        if count == 0:
-                            startup_window._show_status_label(
-                                "✓ Discovery complete - No new files found"
-                            )
-                        elif count == 1:
-                            startup_window._show_status_label(
-                                "✓ Discovery complete - 1 new file found"
-                            )
-                        else:
-                            startup_window._show_status_label(
-                                f"✓ Discovery complete - {count} new files found"
-                            )
+        # Keep a strong reference to the worker; attaching to app ties GC
+        # lifetime to the QApplication instance.
+        app.worker = worker  # type: ignore[attr-defined]
 
-                        # Show toast notification
-                        toast_notifier.show_discovery_toast(count)
-
-                        # Check if auto-analyze is enabled
-                        auto_analyze = config_manager.get_bool(
-                            "Discovery", "auto_analyze_after_discovery", False
-                        )
-
-                        if auto_analyze and count > 0:
-                            logger.info("Auto-analyze enabled - launching analysis")
-                            # Hide discovery status before launching analysis
-                            QTimer.singleShot(2000, startup_window._hide_status_label)
-                            # Trigger analysis on newly discovered files
-                            startup_window.manual_analyze_documents()
-                        else:
-                            # Hide status after 5 seconds
-                            QTimer.singleShot(5000, startup_window._hide_status_label)
-
-                    def on_discovery_error(error):
-                        """Handle startup discovery error"""
-                        logger.error(f"Startup discovery error: {error}")
-                        startup_window._show_status_label(f"⚠ Discovery error: {error[:50]}")
-                        # Hide error message after 10 seconds
-                        QTimer.singleShot(10000, startup_window._hide_status_label)
-
-                    # Connect signals
-                    discovery_worker.finished.connect(on_discovery_finished)
-                    discovery_worker.error.connect(on_discovery_error)
-
-                    # Start discovery worker
-                    discovery_worker.start()
-                    logger.info("Startup discovery worker started")
-
-                    # Store reference to prevent garbage collection
-                    startup_window._startup_discovery_worker = discovery_worker
-
-                # Delay discovery start to ensure window is fully rendered (500ms)
-                QTimer.singleShot(500, start_discovery)
-            else:
-                logger.info("No directories configured for startup discovery")
-        else:
-            logger.info("Scan on startup disabled")
-
-        # Initialize periodic discovery scheduler (if enabled)
-        discovery_enabled = config_manager.get_bool("Discovery", "enabled", True)
-        if discovery_enabled:
-            logger.info("Periodic discovery enabled - initializing scheduler")
-            from services.discovery_scheduler import DiscoveryScheduler
-
-            discovery_scheduler = DiscoveryScheduler(config_manager)
-
-            # Start scheduler
-            discovery_scheduler.start()
-            logger.info("Discovery scheduler started")
-
-            # Store reference in startup window to prevent garbage collection
-            startup_window._discovery_scheduler = discovery_scheduler  # type: ignore[attr-defined]
-        else:
-            logger.info("Periodic discovery disabled")
-
-        # Check for unanalyzed files and optionally start analysis
-        # DISABLED: User can now use the "Analyze Documents" button to manually trigger analysis
-        # def check_unanalyzed():
-        #     try:
-        #         logger.info("Checking for unanalyzed files...")
-        #         startup_window.check_for_unanalyzed_files(analysis_service)
-        #         logger.info("Unanalyzed files check complete.")
-        #     except Exception as e:
-        #         logger.error(f"Error checking for unanalyzed files: {e}", exc_info=True)
-        #
-        # QTimer.singleShot(1000, check_unanalyzed)  # Increased to 1 second to ensure window is fully rendered
-
+        # ── Event loop ────────────────────────────────────────────────────────
         logger.info("Entering QApplication event loop...")
         exit_code = app.exec()
 
-        # Cleanup
-        logger.info("Cleaning up resources...")
-        analysis_db.close()
-        metadata_db.close()
-
-        logger.info(f"Application exited with code {exit_code}.")
+        # DB connections are owned and closed by DocumentPipelineWindow.closeEvent()
+        logger.info("Application exited with code %s.", exit_code)
         sys.exit(exit_code)
 
     except Exception:

@@ -1,10 +1,12 @@
 """Repository for normalized user-approved metadata."""
 
 import logging
+import os
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from db.connection import DatabaseConnection
+from services.metadata_normalizer import MetadataNormalizer
 
 if TYPE_CHECKING:
     from services.logging_service import get_logger
@@ -131,6 +133,25 @@ class MetadataRepository:
         if not filtered_updates:
             return
 
+        # Normalize each field using MetadataNormalizer
+        normalizer = MetadataNormalizer()
+        field_normalizers = {
+            "company": normalizer.normalize_company,
+            "document_type": normalizer.normalize_document_type,
+            "document_category": normalizer.normalize_document_type,
+            "document_date": normalizer.normalize_date,
+            "rotation": normalizer.normalize_rotation,
+            "is_blank": normalizer.normalize_boolean,
+            "tax_related": normalizer.normalize_boolean,
+            "belongs_to_same_doc": normalizer.normalize_boolean,
+            "page_number": normalizer.normalize_page_number,
+            "total_pages": normalizer.normalize_page_number,
+            "confidence_score": normalizer.normalize_confidence,
+        }
+        for field, normalize_fn in field_normalizers.items():
+            if field in filtered_updates:
+                filtered_updates[field] = normalize_fn(filtered_updates[field])
+
         # Build INSERT columns and values
         columns = ["image_file_id"] + list(filtered_updates.keys())
         placeholders = ["?"] * len(columns)
@@ -188,6 +209,7 @@ class MetadataRepository:
         Returns:
             Metadata dictionary or None
         """
+        file_path = os.path.normpath(file_path)
         return self.conn.fetch_one_dict(
             """
             SELECT m.*
@@ -301,7 +323,7 @@ class MetadataRepository:
 
         if directory_filter:
             query += " AND img.directory_path = ?"
-            params.append(directory_filter)
+            params.append(os.path.normpath(directory_filter))
 
         query += " ORDER BY m.updated_at DESC"
 

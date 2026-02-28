@@ -9,14 +9,11 @@ from PIL import Image
 class FileService:
     def __init__(self, config_manager):
         self.config_manager = config_manager
-        self.scan_folder = self.config_manager.get_setting("DocumentProcessing", "scan_folder")
-        self.organized_folder = os.path.join(
-            self.scan_folder,
-            self.config_manager.get_setting("DocumentProcessing", "organized_subfolder"),
-        )
-
-        os.makedirs(self.scan_folder, exist_ok=True)
-        os.makedirs(self.organized_folder, exist_ok=True)
+        # Callers are responsible for setting these before using any file-operation methods.
+        # FileService is not instantiated by active application code; these attributes exist
+        # only to satisfy type checking for the legacy method bodies below.
+        self.scan_folder: str = ""
+        self.organized_folder: str = ""
 
     def _get_image_files(self) -> list[str]:
         """Scans the scan_folder for PNG and TIFF files."""

@@ -265,10 +265,41 @@ class MetadataDB:
 
         return titles
 
+    def get_unique_categories(self) -> list[str]:
+        """Get list of unique document categories."""
+        return self._metadata.get_unique_categories()
+
     def invalidate_field_history_cache(self) -> None:
         """Clear field history cache."""
         self._companies_cache = None
         self._titles_cache = None
+
+    def purge_all_data(self) -> None:
+        """
+        Delete all metadata rows from all tables (preserves schema).
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+        # Delete child tables first to satisfy foreign-key constraints
+        cursor.execute("DELETE FROM archived_metadata")
+        cursor.execute("DELETE FROM metadata")
+        cursor.execute("DELETE FROM image_files")
+        self.connection.commit()
+        self.invalidate_field_history_cache()
+
+    def purge_cache(self) -> None:
+        """
+        Delete all rows from the metadata table only (cached per-page metadata).
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+        cursor.execute("DELETE FROM metadata")
+        self.connection.commit()
+        self.invalidate_field_history_cache()
 
     def get_schema_version(self) -> int:
         """Get current database schema version."""

@@ -116,7 +116,6 @@ class ConfigManager:
         # Default Document Processing settings
         if "DocumentProcessing" not in self.config:
             self.config["DocumentProcessing"] = {
-                "scan_folder": os.path.join(os.path.expanduser("~"), "Pictures", "Scans"),
                 "organized_subfolder": "ORGANIZED",
                 "title_keywords": "Invoice, Statement, Bill, Receipt, Report, Contract, Agreement",
                 "auto_approval": "false",
@@ -124,9 +123,8 @@ class ConfigManager:
 
         # Source directories configuration
         if "SourceDirectories" not in self.config:
-            default_scan_folder = os.path.join(os.path.expanduser("~"), "Pictures", "Scans")
             self.config["SourceDirectories"] = {
-                "directories": json.dumps([default_scan_folder]),
+                "directories": json.dumps([]),
                 "scan_on_startup": "true",
             }
 
@@ -173,6 +171,10 @@ class ConfigManager:
         if "AuditTrail" not in self.config:
             self.config["AuditTrail"] = {"enabled": "false"}
 
+        # Logging settings
+        if "Logging" not in self.config:
+            self.config["Logging"] = {"log_sql_statements": "false"}
+
         # Default GUI settings (can be expanded later)
         if "GUI" not in self.config:
             self.config["GUI"] = {
@@ -181,6 +183,7 @@ class ConfigManager:
                 "window_height": "768",
                 "auto_start_analysis": "false",
                 "confirm_before_exit": "true",
+                "persist_rotation": "true",
             }
 
     def _save_config(self):

@@ -133,23 +133,16 @@ class AnalysisService:
 
         directories = self.analysis_db.get_active_directories()
         if not directories:
-            # Fall back to scan folder from DocumentProcessing
-            scan_folder = self.config.get_setting("DocumentProcessing", "scan_folder")
-            self._log(f"[SCAN] No active directories, using scan_folder: {scan_folder}")
-            if scan_folder and os.path.exists(scan_folder):
-                directories = [scan_folder]
-            else:
-                self._log("[SCAN] No directories found to scan")
-                return {
-                    "total_files": 0,
-                    "analyzed": 0,
-                    "cached": 0,
-                    "errors": 0,
-                    "skipped": 0,
-                    "message": "No source directories configured",
-                }
-        else:
-            self._log(f"[SCAN] Active directories: {directories}")
+            self._log("[SCAN] No source directories configured")
+            return {
+                "total_files": 0,
+                "analyzed": 0,
+                "cached": 0,
+                "errors": 0,
+                "skipped": 0,
+                "message": "No source directories configured",
+            }
+        self._log(f"[SCAN] Active directories: {directories}")
 
         stats = {
             "total_files": 0,
@@ -174,6 +167,10 @@ class AnalysisService:
                 image_files_set.update(glob.glob(os.path.join(directory, ext)))
             image_files = sorted(image_files_set)
             all_files.extend([(directory, f) for f in image_files])
+
+        # Filter out ignored files (single database query for efficiency)
+        ignored_files = self._get_ignored_files()
+        all_files = [(dir, f) for dir, f in all_files if f not in ignored_files]
 
         stats["total_files"] = len(all_files)
         self._log(f"[SCAN] Starting analysis of {stats['total_files']} files")
@@ -272,6 +269,9 @@ class AnalysisService:
 
         # File needs analysis
         try:
+            # Update status to "analyzing"
+            self.analysis_db.update_image_status(image_path, "analyzing")
+
             self._log(f"[ANALYSIS] Starting analysis for: {os.path.basename(image_path)}")
             provider = self._get_provider()
             self._log(f"[ANALYSIS] Provider obtained: {provider.provider_name}")
@@ -290,6 +290,8 @@ class AnalysisService:
             if not result["success"]:
                 error_msg = result.get("error", "Unknown error")
                 self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
+                # Update status to "error"
+                self.analysis_db.update_image_status(image_path, "error")
                 return {"success": False, "cached": False, "skipped": False, "error": error_msg}
 
             # Save analysis to database
@@ -312,6 +314,9 @@ class AnalysisService:
                 processing_time_ms=result["processing_time_ms"],
             )
 
+            # Update status to "analyzed"
+            self.analysis_db.update_image_status(image_path, "analyzed")
+
             self._log("[ANALYSIS] Successfully saved to database")
             return {
                 "success": True,
@@ -328,6 +333,8 @@ class AnalysisService:
                 f"[ANALYSIS EXCEPTION] Error analyzing {os.path.basename(image_path)}: {str(e)}"
             )
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
+            # Update status to "error"
+            self.analysis_db.update_image_status(image_path, "error")
             return {"success": False, "cached": False, "skipped": False, "error": str(e)}
 
     def _log(self, message: str):
@@ -448,6 +455,28 @@ class AnalysisService:
                 progress_callback(f"Analysis failed for {filename}")
 
         return result
+
+    def _get_ignored_files(self) -> set[str]:
+        """
+        Get set of file paths that are marked as ignored.
+
+        Returns:
+            Set of file paths to ignore during analysis
+        """
+        from db.repositories.image_files_repo import ImageFilesRepository
+
+        image_repo = ImageFilesRepository(self.analysis_db.connection)
+
+        # Get all images
+        all_images = image_repo.get_all()
+
+        # Filter to only ignored ones
+        ignored_paths = {img["file_path"] for img in all_images if img.get("is_ignored", False)}
+
+        if ignored_paths:
+            self._log(f"[SCAN] Filtering out {len(ignored_paths)} ignored file(s)")
+
+        return ignored_paths
 
 
 # Example usage

@@ -81,31 +81,27 @@ class TestFullWorkflow:
     def analysis_db(self, temp_db_dir):
         """Create test AnalysisDB with guaranteed cleanup.
 
-        Note: patch context remains active during test execution via yield.
+        Note: Explicitly passes db_path to prevent writing to production database.
         """
         db_path = os.path.join(temp_db_dir, "analysis.db")
-        with patch("config.appdata_manager.AppDataManager") as mock_appdata:
-            mock_appdata.return_value.get_analysis_db_path.return_value = db_path
-            db = AnalysisDB()
-            try:
-                yield db  # Patch remains active here during test execution
-            finally:
-                db.close()  # Cleanup before exiting patch context
+        db = AnalysisDB(db_path=db_path)  # FIX: Pass db_path explicitly
+        try:
+            yield db
+        finally:
+            db.close()  # Cleanup after test
 
     @pytest.fixture
     def metadata_db(self, temp_db_dir):
         """Create test MetadataDB with guaranteed cleanup.
 
-        Note: patch context remains active during test execution via yield.
+        Note: Explicitly passes db_path to prevent writing to production database.
         """
         db_path = os.path.join(temp_db_dir, "metadata.db")
-        with patch("config.appdata_manager.AppDataManager") as mock_appdata:
-            mock_appdata.return_value.get_metadata_db_path.return_value = db_path
-            db = MetadataDB()
-            try:
-                yield db  # Patch remains active here during test execution
-            finally:
-                db.close()  # Cleanup before exiting patch context
+        db = MetadataDB(db_path=db_path)  # FIX: Pass db_path explicitly
+        try:
+            yield db
+        finally:
+            db.close()  # Cleanup after test
 
     @patch("services.analysis_service.get_logger")
     @patch("services.analysis_service.ProviderFactory")
@@ -323,25 +319,13 @@ class TestFullWorkflow:
         assert stats2["analyzed"] == 0
         assert stats2["cached"] == 3
 
-    @patch("os.makedirs")
-    @patch("os.path.exists")
-    def test_file_service_initialization_creates_directories(
-        self, mock_exists, mock_makedirs, config_manager, temp_dir
-    ):
-        """Test that FileService creates required directories"""
-        # Arrange
-        mock_exists.return_value = False
+    def test_file_service_initialization(self, config_manager):
+        """Test that FileService initializes with default attribute values."""
+        svc = FileService(config_manager)
 
-        # Act
-        FileService(config_manager)
-
-        # Assert
-        assert mock_makedirs.call_count == 2
-        calls = [call[0][0] for call in mock_makedirs.call_args_list]
-        # Check that both the scan folder (temp_dir) and organized folder were created
-        assert temp_dir in calls
-        expected_organized = os.path.join(temp_dir, "organized")
-        assert expected_organized in calls
+        assert svc.config_manager is config_manager
+        assert svc.scan_folder == ""
+        assert svc.organized_folder == ""
 
     def test_database_integration(self, analysis_db, metadata_db, test_images):
         """Test AnalysisDB and MetadataDB working together"""
@@ -374,7 +358,7 @@ class TestFullWorkflow:
         assert analysis is not None
         assert analysis["file_hash"] == file_hash
         assert metadata_result is not None
-        assert metadata_result["company"] == "TestCo"
+        assert metadata_result["company"] == "Testco"
 
     @patch("services.analysis_service.get_logger")
     @patch("services.analysis_service.ProviderFactory")

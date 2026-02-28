@@ -22,6 +22,7 @@ from db.repositories import (
     RotationRepository,
 )
 from db.schema import create_all_tables
+from services.metadata_normalizer import MetadataNormalizer
 
 
 class AnalysisDB:
@@ -98,11 +99,13 @@ class AnalysisDB:
             model_options=None,
         )
 
-        # Save normalized metadata to metadata table
+        # Normalize and save metadata to metadata table
+        normalizer = MetadataNormalizer()
+        normalized_metadata = normalizer.normalize(analysis_data)
         self._metadata.create_from_analysis(
             image_file_id=image_file_id,
             analysis_result_id=analysis_id,
-            normalized_metadata=analysis_data,
+            normalized_metadata=normalized_metadata,
             output_filename=analysis_data.get("output_filename"),
             document_category=analysis_data.get("document_category"),
         )
@@ -121,7 +124,7 @@ class AnalysisDB:
         """Retrieve analysis results with normalized metadata for a file."""
         # Get all data in one query using the efficient join
         results = self._image_files.get_batch_with_analysis([file_path])
-        return results.get(file_path)
+        return results.get(os.path.normpath(file_path))
 
     def update_analysis_metadata(self, file_path: str, metadata: dict[str, Any]) -> None:
         """Update metadata fields for an existing analysis."""
@@ -250,21 +253,87 @@ class AnalysisDB:
         """Update image file status."""
         self._image_files.update_status(file_path, status)
 
-    # ==================== Rotation Methods ====================
+    def update_analysis_status(self, file_path: str, status: str) -> None:
+        """Update image status (alias for update_image_status for backward compat)."""
+        self._image_files.update_status(file_path, status)
 
-    def save_rotation_preference(
-        self, file_path: str, rotation_degrees: int, rotation_source: str
-    ) -> None:
-        """Save rotation preference for a file."""
-        self._rotation.save_preference(file_path, rotation_degrees, rotation_source)
+    def mark_image_deleted(self, file_path: str) -> None:
+        """Soft-delete an image file record (sets status to 'deleted')."""
+        self._image_files.mark_deleted(file_path)
 
-    def get_rotation_preference(self, file_path: str) -> dict[str, Any] | None:
-        """Get rotation preference for a file."""
+    def delete_metadata_by_path(self, file_path: str) -> None:
+        """Delete metadata record for the given file path."""
+        image_file = self._image_files.get_by_path(file_path)
+        if image_file:
+            self._metadata.delete_by_image_file_id(image_file["id"])
+
+    def get_distinct_field_values(self, field_name: str) -> list[str]:
+        """
+        Get distinct non-empty values for a validated field from the database.
+
+        Only fields in a strict whitelist are accepted to prevent SQL injection.
+        Field routing to the correct table is determined internally.
+
+        Args:
+            field_name: Column name to query (must be in the allowed whitelist).
+
+        Returns:
+            Sorted list of distinct non-empty string values, or [] on error/invalid field.
+        """
+        allowed_columns: dict[str, str] = {
+            "provider_name": "analysis_results",
+            "model_name": "analysis_results",
+            "company": "metadata",
+            "document_type": "metadata",
+            "document_date": "metadata",
+            "document_category": "metadata",
+            "page_number": "metadata",
+            "total_pages": "metadata",
+            "confidence_score": "metadata",
+            "file_path": "image_files",
+        }
+
+        if field_name not in allowed_columns:
+            return []
+
+        table = allowed_columns[field_name]
         assert self.connection.connection is not None
-        cursor = self.connection.connection.cursor()
-        cursor.execute("SELECT * FROM rotation_preferences WHERE file_path = ?", (file_path,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        try:
+            query = (
+                f"SELECT DISTINCT {field_name} FROM {table}"
+                f" WHERE {field_name} IS NOT NULL AND {field_name} != ''"
+                f" ORDER BY {field_name}"
+            )
+            result = self.connection.connection.execute(query).fetchall()
+            return [row[0] for row in result if row[0]]
+        except Exception:
+            return []
+
+    # ==================== Rotation Methods ====================
+    # Note: Rotation is now stored in metadata.rotation column
+    # Use RotationRepository for rotation operations
+
+    def get_image_rotation(self, file_path: str) -> int:
+        """
+        Get rotation angle for an image file.
+
+        Args:
+            file_path: Absolute path to image file
+
+        Returns:
+            Rotation angle in degrees (0, 90, 180, 270)
+        """
+        return self._rotation.get(file_path)
+
+    def save_image_rotation(self, file_path: str, rotation_degrees: int) -> None:
+        """
+        Save rotation angle for an image file.
+
+        Args:
+            file_path: Absolute path to image file
+            rotation_degrees: Rotation angle in degrees (0, 90, 180, 270)
+        """
+        self._rotation.save(file_path, rotation_degrees)
 
     # ==================== Audit Trail Methods ====================
 
@@ -417,6 +486,57 @@ class AnalysisDB:
         return {row[0]: row[1] for row in cursor.fetchall()}
 
     # ==================== Utility Methods ====================
+
+    def purge_all_data(self) -> None:
+        """
+        Delete all data from all tables (preserves schema).
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+
+        # Delete data from all tables in dependency order (child tables first)
+        tables_to_purge = [
+            "bundle_images",  # References document_bundles and image_files
+            "pdf_image_pages",  # References pdf_files and image_files
+            "analysis_errors",  # References image_files
+            "analysis_results",  # References image_files
+            "document_bundles",  # No foreign key dependencies
+            "pdf_files",  # No foreign key dependencies
+            "image_files",  # Referenced by many tables
+            "audit_trail",  # No foreign key dependencies
+            "source_directories",  # No foreign key dependencies
+        ]
+
+        for table in tables_to_purge:
+            cursor.execute(f"DELETE FROM {table}")
+
+        self.connection.commit()
+
+    def purge_analysis_results(self) -> None:
+        """
+        Delete all rows from the analysis_results table (preserves schema).
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+        cursor.execute("DELETE FROM analysis_results")
+        self.connection.commit()
+
+    def purge_bundles(self) -> None:
+        """
+        Delete all rows from document_bundles and the bundle_images junction table.
+
+        WARNING: This is destructive and cannot be undone!
+        """
+        assert self.connection.connection is not None
+        cursor = self.connection.connection.cursor()
+        # Remove junction rows first to satisfy foreign-key constraints
+        cursor.execute("DELETE FROM bundle_images")
+        cursor.execute("DELETE FROM document_bundles")
+        self.connection.commit()
 
     def close(self):
         """Close database connection."""

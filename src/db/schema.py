@@ -35,7 +35,7 @@ def _get_logger() -> logging.Logger:
 
 def _execute_sql(cursor: sqlite3.Cursor, query: str, params: tuple = ()) -> sqlite3.Cursor:
     """
-    Execute SQL with debug logging.
+    Execute SQL with optional debug logging (controlled by Logging.log_sql_statements config).
 
     Args:
         cursor: Database cursor
@@ -45,15 +45,26 @@ def _execute_sql(cursor: sqlite3.Cursor, query: str, params: tuple = ()) -> sqli
     Returns:
         Cursor with results
     """
-    # Log SQL statement at DEBUG level
-    if params:  # pragma: no cover
-        _get_logger().debug(f"SQL (schema): {query.strip()[:200]}... | Params: {params}")
-    else:
-        # Truncate long CREATE TABLE statements for readability
-        log_query = query.strip()
-        if len(log_query) > 200:
-            log_query = log_query[:200] + "..."
-        _get_logger().debug(f"SQL (schema): {log_query}")
+    # Check if SQL logging is enabled in configuration
+    try:
+        from config.config_manager import ConfigManager
+
+        config = ConfigManager()
+        log_sql = config.get_bool("Logging", "log_sql_statements", default=False)
+    except Exception:
+        # If config unavailable, default to not logging
+        log_sql = False
+
+    # Log SQL statement at DEBUG level if enabled
+    if log_sql:
+        if params:  # pragma: no cover
+            _get_logger().debug(f"SQL (schema): {query.strip()[:200]}... | Params: {params}")
+        else:
+            # Truncate long CREATE TABLE statements for readability
+            log_query = query.strip()
+            if len(log_query) > 200:
+                log_query = log_query[:200] + "..."
+            _get_logger().debug(f"SQL (schema): {log_query}")
 
     return cursor.execute(query, params)
 
@@ -353,20 +364,6 @@ def _create_core_tables(conn: DatabaseConnection) -> None:
     """,
     )
 
-    # Rotation preferences - Rotation tracking (legacy table for compatibility)
-    _execute_sql(
-        cursor,
-        """
-        CREATE TABLE IF NOT EXISTS rotation_preferences (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT UNIQUE NOT NULL,
-            rotation_degrees INTEGER NOT NULL,
-            rotation_source TEXT NOT NULL,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """,
-    )
-
 
 def _create_junction_tables(conn: DatabaseConnection) -> None:
     """Create junction tables for many-to-many relationships."""
@@ -639,6 +636,72 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         conn.commit()
         _get_logger().info("Migration 16 completed successfully")
         current_version = 16
+
+    # Migration 17: Add is_ignored field to image_files table
+    if current_version < 17:
+        _get_logger().info("Running Migration 17: Add is_ignored field to image_files table")
+
+        # Check if column already exists
+        columns_info = cursor.execute("PRAGMA table_info(image_files)").fetchall()
+        column_names = [col[1] for col in columns_info]
+
+        if "is_ignored" not in column_names:
+            _execute_sql(
+                cursor,
+                """
+                ALTER TABLE image_files
+                ADD COLUMN is_ignored BOOLEAN DEFAULT 0
+            """,
+            )
+            _get_logger().info("Added is_ignored column to image_files table")
+
+        # Create index for efficient filtering
+        _execute_sql(
+            cursor,
+            """
+            CREATE INDEX IF NOT EXISTS idx_image_files_ignored
+            ON image_files(is_ignored)
+        """,
+        )
+
+        _execute_sql(
+            cursor,
+            """
+            INSERT INTO schema_version (version, description)
+            VALUES (17, 'Add is_ignored field for excluding images from analysis')
+        """,
+        )
+
+        conn.commit()
+        _get_logger().info("Migration 17 completed successfully")
+        current_version = 17
+
+    # Migration 18: Drop legacy rotation_preferences table
+    if current_version < 18:
+        _get_logger().info("Running Migration 18: Drop legacy rotation_preferences table")
+
+        # Check if table exists
+        table_exists = cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='rotation_preferences'"
+        ).fetchone()
+
+        if table_exists:
+            _execute_sql(cursor, "DROP TABLE rotation_preferences")
+            _get_logger().info(
+                "Dropped rotation_preferences table (rotation now stored in metadata.rotation)"
+            )
+
+        _execute_sql(
+            cursor,
+            """
+            INSERT INTO schema_version (version, description)
+            VALUES (18, 'Drop legacy rotation_preferences table (rotation stored in metadata)')
+        """,
+        )
+
+        conn.commit()
+        _get_logger().info("Migration 18 completed successfully")
+        current_version = 18
 
 
 def get_schema_version(conn: DatabaseConnection) -> int:
