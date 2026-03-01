@@ -1,9 +1,10 @@
 """Orchestrator widget: navigation state machine for the bundle review workflow.
 
-Composes BundleThumbnailPanel, BundlePreviewPanel, and BundleMetadataPanel
+Composes BundleThumbnailPanel, ImagePreviewWidget, and BundleMetadataPanel
 into a QWidget (not QDialog) that can be embedded in a parent layout.
 """
 
+import contextlib
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
@@ -24,7 +25,6 @@ from ui.bundle.bundle_action_bar import BundleActionBar
 from ui.bundle.bundle_header import BundleHeaderWidget
 from ui.bundle.bundle_metadata_panel import BundleMetadataPanel
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
-from ui.bundle.bundle_preview_panel import BundlePreviewPanel
 from ui.bundle.bundle_review_helpers import (
     complete_pdf_conversion,
     show_completion_summary,
@@ -32,6 +32,7 @@ from ui.bundle.bundle_review_helpers import (
 )
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
+from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.theme.styles import show_confirm, show_critical, show_information, show_warning
 
 
@@ -171,7 +172,12 @@ class BundleReviewWidget(QWidget):
         content_layout.addWidget(self.thumbnail_panel)
 
         # Center panel - Large preview (takes remaining space)
-        self.preview_panel = BundlePreviewPanel(dark_mode=self.dark_mode, parent=self)
+        self.preview_panel = ImagePreviewWidget(
+            parent=self,
+            toolbar_size=ToolbarSize.COMPACT,
+            toolbar_position=ToolbarPosition.BOTTOM_CENTER,
+            config_manager=self.config_manager,
+        )
         content_layout.addWidget(self.preview_panel, stretch=1)
 
         # Right panel - Metadata (fixed width)
@@ -193,14 +199,7 @@ class BundleReviewWidget(QWidget):
             "on_skip": self._on_skip_bundle,
             "on_reject": self._on_reject_bundle,
             "on_accept": self._on_accept_bundle,
-            "on_zoom_in": self._on_zoom_in,
-            "on_zoom_out": self._on_zoom_out,
-            "on_zoom_changed": self._on_zoom_changed,
-            "on_fit_width": self._on_fit_width,
-            "on_fit_height": self._on_fit_height,
-            "on_fit_window": self._on_fit_window,
-            "on_rotate_ccw": self._on_rotate_ccw,
-            "on_rotate_cw": self._on_rotate_cw,
+            "on_accept_export": self._on_accept_export_bundle,
         }
         self._action_bar = BundleActionBar(
             self.dark_mode,
@@ -216,13 +215,13 @@ class BundleReviewWidget(QWidget):
         bundle = self.bundles[self.current_bundle_index]
         self.page_order = list(range(len(bundle.get("file_paths", []))))
         self.current_page_index = 0
-        self.preview_panel.reset_rotation()
+        self.preview_panel.rotation_angle = 0
 
         # Apply default zoom from config instead of hardcoded 100
         if self.default_zoom_mode == "custom_%":
-            self.preview_panel.set_zoom(self.default_zoom_percent)
+            self.preview_panel.set_zoom_level(self.default_zoom_percent)
         else:
-            self.preview_panel.set_zoom(100)  # Will be recalculated by fit methods
+            self.preview_panel.set_zoom_level(100)  # Will be recalculated by fit methods
 
         self._update_header()
         self._populate_thumbnails()
@@ -290,76 +289,22 @@ class BundleReviewWidget(QWidget):
                 )
                 painter.end()
 
-        self.preview_panel.display_page(pixmap, self.current_page_index + 1, len(self.page_order))
-
-    def _on_zoom_in(self):
-        """Zoom in."""
-        new_zoom = min(400, self.preview_panel.zoom_level + 25)
-        self._action_bar.zoom_spinner.setValue(new_zoom)
-
-    def _on_zoom_out(self):
-        """Zoom out."""
-        new_zoom = max(25, self.preview_panel.zoom_level - 25)
-        self._action_bar.zoom_spinner.setValue(new_zoom)
-
-    def _on_zoom_changed(self, value: int):
-        """Propagate zoom change to the preview panel."""
-        self.preview_panel.set_zoom(value)
-
-    def _on_fit_width(self):
-        """Fit image to preview panel width."""
-        size = self.preview_panel.get_original_pixel_size(rotation_adjusted=True)
-        if size is None:
-            return
-        image_width = size[0]
-        container_width = self.preview_panel.get_container_size()[0] - 40
-        if image_width > 0:
-            zoom = max(25, min(400, int(container_width / image_width * 100)))
-            self._action_bar.zoom_spinner.setValue(zoom)
-
-    def _on_fit_height(self):
-        """Fit image to preview panel height."""
-        size = self.preview_panel.get_original_pixel_size(rotation_adjusted=True)
-        if size is None:
-            return
-        image_height = size[1]
-        container_height = self.preview_panel.get_container_size()[1] - 100
-        if image_height > 0:
-            zoom = max(25, min(400, int(container_height / image_height * 100)))
-            self._action_bar.zoom_spinner.setValue(zoom)
-
-    def _on_fit_window(self):
-        """Fit image to preview panel (both width and height)."""
-        size = self.preview_panel.get_original_pixel_size(rotation_adjusted=True)
-        if size is None:
-            return
-        image_width, image_height = size
-        container_width = self.preview_panel.get_container_size()[0] - 40
-        container_height = self.preview_panel.get_container_size()[1] - 100
-        if image_width > 0 and image_height > 0:
-            zoom_w = int(container_width / image_width * 100)
-            zoom_h = int(container_height / image_height * 100)
-            zoom = max(25, min(400, min(zoom_w, zoom_h)))
-            self._action_bar.zoom_spinner.setValue(zoom)
+        self.preview_panel.set_pixmap(
+            pixmap,
+            apply_fit="width",
+            file_path=file_path if not self.prototype_mode else None,
+        )
 
     def _apply_default_zoom(self):
-        """Apply the default zoom mode from config settings."""
+        """Apply the default zoom mode from config settings via the preview widget."""
         if self.default_zoom_mode == "fit_to_width":
-            self._on_fit_width()
+            self.preview_panel.fit_to_width()
         elif self.default_zoom_mode == "fit_to_height":
-            self._on_fit_height()
+            self.preview_panel.fit_to_height()
         elif self.default_zoom_mode == "fit_to_window":
-            self._on_fit_window()
+            self.preview_panel.fit_to_window()
         elif self.default_zoom_mode == "custom_%":
-            self.preview_panel.set_zoom(self.default_zoom_percent)
-
-    def _on_rotate_ccw(self):
-        """Rotate counter-clockwise."""
-        self.preview_panel.rotate_ccw()
-
-    def _on_rotate_cw(self):
-        """Rotate clockwise."""
-        self.preview_panel.rotate_cw()
+            self.preview_panel.set_zoom_level(self.default_zoom_percent)
 
     def _get_pdf_filename(self, filename: str) -> str:
         """Get final PDF filename with .PDF extension enforced."""
@@ -415,6 +360,23 @@ class BundleReviewWidget(QWidget):
         raw_filename = self.metadata_panel.get_output_filename().strip()
         metadata["output_filename"] = self._get_pdf_filename(raw_filename)
         self._show_pdf_conversion(bundle, metadata)
+
+    def _on_accept_export_bundle(self):
+        """Accept bundle, convert to PDF, and immediately open the output folder."""
+        import os
+
+        bundle = self.bundles[self.current_bundle_index]
+        metadata = self.metadata_panel.get_metadata()
+        raw_filename = self.metadata_panel.get_output_filename().strip()
+        metadata["output_filename"] = self._get_pdf_filename(raw_filename)
+        metadata["_open_after_export"] = True
+        self._show_pdf_conversion(bundle, metadata)
+
+        # After conversion completes the helper will open the output directory
+        output_dir = self._pdf_converter.determine_output_directory(bundle)
+        if output_dir and os.path.isdir(output_dir):
+            with contextlib.suppress(Exception):
+                os.startfile(output_dir)  # type: ignore[attr-defined]
 
     def _determine_output_directory(self, bundle: dict) -> str:
         """Determine output directory based on configuration strategy."""
@@ -680,7 +642,6 @@ class BundleReviewWidget(QWidget):
         self._action_bar.apply_theme(self.dark_mode)
         self._action_bar.update_nav_state(self.current_bundle_index, len(self.bundles))
         self.thumbnail_panel.apply_theme(self.dark_mode)
-        self.preview_panel.apply_theme(self.dark_mode)
         self.metadata_panel.apply_theme(self.dark_mode)
         self.update()
         self._populate_thumbnails()

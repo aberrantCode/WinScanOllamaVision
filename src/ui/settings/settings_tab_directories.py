@@ -2,8 +2,9 @@
 """Directories tab mixin for EnhancedSettingsWindow."""
 
 import os
+from typing import cast
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QObject, QSize
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -203,7 +204,7 @@ class _SettingsTabDirectoriesMixin:
         layout.addWidget(export_info_label)
 
         # Radio buttons in a group
-        self._export_radio_group = QButtonGroup(self)
+        self._export_radio_group = QButtonGroup(cast(QObject, self))
 
         # --- Static location radio ---
         self.export_static_radio = QRadioButton("Static location – all PDFs go to one fixed folder")
@@ -291,7 +292,9 @@ class _SettingsTabDirectoriesMixin:
         current_path = self.export_static_path_edit.text()
         if not os.path.isdir(current_path):
             current_path = os.path.expanduser("~")
-        directory = QFileDialog.getExistingDirectory(self, "Select Export Folder", current_path)
+        directory = QFileDialog.getExistingDirectory(
+            cast(QWidget, self), "Select Export Folder", current_path
+        )
         if directory:
             self.export_static_path_edit.setText(directory)
 

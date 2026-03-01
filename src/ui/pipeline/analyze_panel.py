@@ -294,7 +294,7 @@ class AnalyzePanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidget(analytics_row)
         scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(220)
+        scroll.setFixedHeight(280)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(scroll.Shape.NoFrame)
@@ -340,10 +340,10 @@ class AnalyzePanel(QWidget):
             get_logger().warning(f"[AnalyzePanel] analytics refresh failed: {e}")
             return
 
-        analyzed = [r for r in raw_data if r.get("analysis_id") is not None]
+        analyzed = [r for r in raw_data if r.get("analyzed_at") is not None]
         total = len(raw_data)
         n_analyzed = len(analyzed)
-        n_errors = sum(1 for r in raw_data if r.get("status") == "error")
+        n_errors = sum(1 for r in raw_data if r.get("had_error"))
 
         # Quality metrics
         confidences = [
@@ -351,15 +351,11 @@ class AnalyzePanel(QWidget):
         ]
         avg_conf = (sum(confidences) / len(confidences) * 100) if confidences else None
         if self._avg_conf_label:
-            self._avg_conf_label.setText(
-                f"Average Confidence: {avg_conf:.1f}%"
-                if avg_conf is not None
-                else "Average Confidence: —"
-            )
+            self._avg_conf_label.setText(f"{avg_conf:.1f}%" if avg_conf is not None else "—")
 
         error_rate = (n_errors / total * 100) if total > 0 else 0.0
         if self._error_rate_label:
-            self._error_rate_label.setText(f"Error Rate: {error_rate:.1f}%")
+            self._error_rate_label.setText(f"{error_rate:.1f}%")
 
         # Metadata completeness bars
         fields = ["company", "document_type", "document_date", "page_number"]
@@ -373,9 +369,9 @@ class AnalyzePanel(QWidget):
 
         # Document insights
         if self._docs_created_label:
-            self._docs_created_label.setText(f"Documents Created: {n_analyzed}")
+            self._docs_created_label.setText(str(n_analyzed))
         if self._pages_archived_label:
-            self._pages_archived_label.setText(f"Pages Archived: {n_analyzed}")
+            self._pages_archived_label.setText(str(n_analyzed))
 
         if self._avg_pages_label:
             companies: dict[str, int] = {}
@@ -384,14 +380,10 @@ class AnalyzePanel(QWidget):
                 companies[comp] = companies.get(comp, 0) + 1
             unique_docs = len(companies)
             avg_pgs = (n_analyzed / unique_docs) if unique_docs > 0 else 0
-            self._avg_pages_label.setText(
-                f"Avg Pages per Document: {avg_pgs:.1f}"
-                if unique_docs > 0
-                else "Avg Pages per Document: —"
-            )
+            self._avg_pages_label.setText(f"{avg_pgs:.1f}" if unique_docs > 0 else "—")
 
         if self._bundle_acceptance_label:
-            self._bundle_acceptance_label.setText("Bundle Acceptance Rate: —")
+            self._bundle_acceptance_label.setText("—")
 
         # Type distribution
         if self._type_dist_container:
@@ -456,7 +448,7 @@ class AnalyzePanel(QWidget):
 
             image_status = row.get("status", "registered")
             status = status_mapping.get(image_status, image_status.title())
-            has_analysis = row.get("analysis_id") is not None
+            has_analysis = row.get("analyzed_at") is not None
             if (
                 image_status == ImageStatus.ANALYZED.value
                 and has_analysis
