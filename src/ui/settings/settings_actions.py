@@ -1,11 +1,14 @@
 # mypy: disable-error-code=attr-defined
 """Action handler mixin for EnhancedSettingsWindow."""
 
+from typing import cast
+
 from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QMessageBox,
     QPlainTextEdit,
+    QWidget,
 )
 
 from ui.settings.settings_workers import PromptComparisonDialog, PromptOptimizationThread
@@ -81,7 +84,7 @@ class _SettingsActionsMixin:
         self.optimization_prompt_edit = prompt_edit
 
         # Create and show progress dialog
-        progress = QMessageBox(self)
+        progress = QMessageBox(cast(QWidget, self))
         progress.setWindowTitle("Optimizing Prompt")
         progress.setText(
             "Sending prompt to LLM for optimization...\n\nThis may take 10-60 seconds."

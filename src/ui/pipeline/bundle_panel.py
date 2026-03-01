@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
     from ui.bundle.bundle_review_widget import BundleReviewWidget
@@ -58,6 +58,9 @@ class BundlePanel(QWidget):
         self._stat_avg_pages_lbl: QLabel | None = None
         self._stat_doc_types_lbl: QLabel | None = None
         self._stat_completeness_lbl: QLabel | None = None
+        # Bundles waiting for the user to click "Start Review"
+        self._pending_bundles: list[dict] = []
+        self._start_review_btn: QPushButton | None = None
 
         self._build_ui()
 
@@ -98,9 +101,43 @@ class BundlePanel(QWidget):
         )
         ph_layout.addWidget(self._placeholder_status)
 
-        # ── Stats grid (shown while bundles load / before workflow launches)
+        # ── Stats grid inside a collapsible section (collapsed by default)
         self._bundle_stats_widget = self._build_stats_grid(c)
-        ph_layout.addWidget(self._bundle_stats_widget)
+        from ui.pipeline.analyze_status_helpers import create_collapsible_section
+
+        c_ext = {**c, "tab_hover_bg": c.get("bg_hover", "#E5E7EB")}
+        stats_section = create_collapsible_section(
+            c_ext, "Bundle Statistics", self._bundle_stats_widget, initially_expanded=False
+        )
+        ph_layout.addWidget(stats_section)
+
+        # ── Start Review button (hidden until bundles are ready)
+        self._start_review_btn = QPushButton("Start Review →")
+        self._start_review_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {c['accent']};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 32px;
+                font-size: 11pt;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: {c.get('accent_hover', c['accent'])};
+            }}
+            """
+        )
+        self._start_review_btn.setFixedHeight(48)
+        self._start_review_btn.setVisible(False)
+        self._start_review_btn.clicked.connect(self._on_start_review)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(self._start_review_btn)
+        btn_row.addStretch()
+        ph_layout.addSpacing(16)
+        ph_layout.addLayout(btn_row)
 
         ph_layout.addStretch()
         self._placeholder_page = placeholder
@@ -164,32 +201,48 @@ class BundlePanel(QWidget):
             self._stat_completeness_lbl.setText(f"{completeness_pct}%" if completeness_pct else "—")
 
     def refresh_bundle_count(self) -> None:
-        """Load bundles from the DB and (re)build the embedded workflow widget."""
+        """Load bundles from the DB, show the analytics page, and wait for user input.
+
+        If the embedded review workflow is already running (e.g. user navigated
+        away and back) we jump straight to it rather than rebuilding.
+        """
+        # If a workflow is already live, go directly to it.
+        if self._embedded_workflow is not None and self._content_stack is not None:
+            self._content_stack.setCurrentWidget(self._embedded_workflow)
+            return
+
+        if self._content_stack:
+            self._content_stack.setCurrentIndex(0)
+
         try:
             bundles = self._bundling_service.generate_bundle_recommendations()
         except Exception as e:
             get_logger().warning(f"[Pipeline BundlePanel] could not load bundles: {e}")
             self._placeholder_status.setText("Could not load bundles — see log for details.")
-            if self._content_stack:
-                self._content_stack.setCurrentIndex(0)
+            if self._start_review_btn:
+                self._start_review_btn.setVisible(False)
             return
 
         if not bundles:
             self._placeholder_status.setText(
                 "No bundles found. Run analysis first, then return here."
             )
-            if self._content_stack:
-                self._content_stack.setCurrentIndex(0)
+            if self._start_review_btn:
+                self._start_review_btn.setVisible(False)
             return
 
         n = len(bundles)
         self._placeholder_status.setText(f"{n} bundle{'s' if n != 1 else ''} ready to review.")
 
-        # Compute and display pre-load stats
+        # Compute and display stats — user reads them before clicking Start Review.
         stats = self._compute_bundle_stats(bundles)
         self.update_bundle_stats(stats)
 
-        self._load_embedded_workflow(bundles)
+        # Store bundles and surface the CTA button.
+        self._pending_bundles = bundles
+        if self._start_review_btn:
+            self._start_review_btn.setVisible(True)
+            self._start_review_btn.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _compute_bundle_stats(self, bundles: list[dict]) -> dict:
         """Derive summary stats from bundle recommendations for the stats grid."""
@@ -247,6 +300,13 @@ class BundlePanel(QWidget):
             return
         self._content_stack.addWidget(workflow)  # index 1
         self._content_stack.setCurrentWidget(workflow)
+
+    def _on_start_review(self) -> None:
+        """Called when the user clicks 'Start Review →' on the analytics page."""
+        if self._start_review_btn:
+            self._start_review_btn.setVisible(False)
+        self._load_embedded_workflow(self._pending_bundles)
+        self._pending_bundles = []
 
     def _on_workflow_completed(self, stats: dict) -> None:
         self._workflow_stats = stats

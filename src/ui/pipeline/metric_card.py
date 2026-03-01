@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
 
 
-def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
+def create_metric_card(theme_colors, title: str, value: str, font_size: int = 26) -> QFrame:
     """Create a metric card with title and value"""
     card = QFrame()
     card.setStyleSheet(f"""
@@ -25,7 +25,7 @@ def create_metric_card(theme_colors, title: str, value: str) -> QFrame:
     value_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
     value_label.setStyleSheet(f"""
         color: {theme_colors["text_primary"]};
-        font-size: 26pt;
+        font-size: {font_size}pt;
         font-weight: 700;
         background-color: transparent;
         border: none;
