@@ -35,9 +35,10 @@ class PipelineHeaderWidget(QWidget):
     """
     Horizontal stage rail showing four pipeline stages as connected nodes.
 
-    Completed stages: filled green node.
-    Active stage: filled blue node, bold label.
-    Pending stages: hollow node, dimmed label.
+    Completed stages: filled green node with checkmark.
+    Active stage:    filled blue node, bold label.
+    Skipped stages:  filled amber node with dash icon (intentionally bypassed).
+    Pending stages:  hollow node, dimmed label.
     """
 
     stage_clicked = pyqtSignal(int)  # emitted when user clicks a stage node
@@ -52,6 +53,7 @@ class PipelineHeaderWidget(QWidget):
         super().__init__(parent)
         self._current_stage = STAGE_IMPORT
         self._completed: set[int] = set()
+        self._skipped: set[int] = set()
         self._bg_color = QColor("#0B1120")
         self.setFixedHeight(58)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -64,10 +66,17 @@ class PipelineHeaderWidget(QWidget):
     # ------------------------------------------------------------------
     # Public API
 
-    def set_stage(self, stage: int, completed: set[int] | None = None) -> None:
+    def set_stage(
+        self,
+        stage: int,
+        completed: set[int] | None = None,
+        skipped: set[int] | None = None,
+    ) -> None:
         self._current_stage = stage
         if completed is not None:
             self._completed = completed
+        if skipped is not None:
+            self._skipped = skipped
         self.update()
 
     def mark_complete(self, stage: int) -> None:
@@ -94,31 +103,32 @@ class PipelineHeaderWidget(QWidget):
         xs = [int(w * (i + 0.5) / n) for i in range(n)]
 
         # Colors
-        col_complete = QColor("#10B981")
-        col_active = QColor("#3B82F6")
-        col_pending = QColor("#4A4A4A")
+        col_complete = QColor("#10B981")  # green
+        col_active = QColor("#3B82F6")  # blue
+        col_skipped = QColor("#F59E0B")  # amber — intentionally bypassed
+        col_pending = QColor("#4A4A4A")  # grey
         col_line = QColor("#4A4A4A")
 
-        # Connecting lines (drawn behind nodes)
+        # Connecting lines (drawn behind nodes).
+        # A line touching a skipped node turns amber; otherwise green if source
+        # is complete, grey if not yet travelled.
         for i in range(n - 1):
             x1, x2 = xs[i], xs[i + 1]
-            painter.setPen(QPen(col_complete if i in self._completed else col_line, 2))
+            if i in self._skipped or (i + 1) in self._skipped:
+                line_col = col_skipped
+            elif i in self._completed:
+                line_col = col_complete
+            else:
+                line_col = col_line
+            painter.setPen(QPen(line_col, 2))
             painter.drawLine(x1 + node_w // 2, y_center, x2 - node_w // 2, y_center)
 
-        # Stage nodes
+        # Stage nodes.  Priority: active > complete > skipped > pending.
         for i, label in enumerate(STAGE_LABELS):
             x = xs[i]
             rx, ry = x - node_w // 2, y_center - node_h // 2
 
-            if i in self._completed:
-                painter.setBrush(col_complete)
-                painter.setPen(QPen(col_complete, 2))
-                painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
-                # Checkmark
-                painter.setPen(QPen(QColor("white"), 2))
-                painter.drawLine(x - 6, y_center, x - 2, y_center + 4)
-                painter.drawLine(x - 2, y_center + 4, x + 6, y_center - 4)
-            elif i == self._current_stage:
+            if i == self._current_stage:
                 painter.setBrush(col_active)
                 painter.setPen(QPen(col_active, 2))
                 painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
@@ -128,6 +138,21 @@ class PipelineHeaderWidget(QWidget):
                 f.setBold(True)
                 painter.setFont(f)
                 painter.drawText(rx, ry, node_w, node_h, Qt.AlignmentFlag.AlignCenter, label)
+            elif i in self._completed:
+                painter.setBrush(col_complete)
+                painter.setPen(QPen(col_complete, 2))
+                painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
+                # Checkmark
+                painter.setPen(QPen(QColor("white"), 2))
+                painter.drawLine(x - 6, y_center, x - 2, y_center + 4)
+                painter.drawLine(x - 2, y_center + 4, x + 6, y_center - 4)
+            elif i in self._skipped:
+                painter.setBrush(col_skipped)
+                painter.setPen(QPen(col_skipped, 2))
+                painter.drawRoundedRect(rx, ry, node_w, node_h, corner_r, corner_r)
+                # Dash icon — "intentionally skipped"
+                painter.setPen(QPen(QColor("white"), 2))
+                painter.drawLine(x - 7, y_center, x + 7, y_center)
             else:
                 painter.setBrush(QColor("transparent"))
                 painter.setPen(QPen(col_pending, 2))

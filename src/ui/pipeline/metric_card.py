@@ -4,8 +4,15 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
 
 
-def create_metric_card(theme_colors, title: str, value: str, font_size: int = 26) -> QFrame:
-    """Create a metric card with title and value"""
+def create_metric_card(
+    theme_colors, title: str, value: str, font_size: int = 26
+) -> tuple[QFrame, QLabel]:
+    """Create a metric card with value above title.
+
+    Returns:
+        (card, value_label) — the card frame and the label displaying the value,
+        so callers can update the value without a fragile findChild lookup.
+    """
     card = QFrame()
     card.setStyleSheet(f"""
         QFrame {{
@@ -47,4 +54,4 @@ def create_metric_card(theme_colors, title: str, value: str, font_size: int = 26
     """)
     card_layout.addWidget(title_label)
 
-    return card
+    return card, value_label

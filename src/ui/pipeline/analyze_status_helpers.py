@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.pipeline.metric_card import create_metric_card
 from ui.theme.styles import (
     get_distribution_bar_style,
     get_progress_bar_style,
@@ -51,11 +50,10 @@ def create_completeness_bar(theme_colors, key: str, label: str) -> QWidget:
     return container
 
 
-def create_quality_metrics_widget(theme_colors) -> tuple:
-    """Create quality metrics section content.
+def create_completeness_section(theme_colors) -> tuple:
+    """Create Metadata Completeness list section: title + progress bars.
 
-    Returns: (widget, avg_conf_label, error_rate_label, completeness_bars_dict)
-    The returned labels are the *value* labels inside their metric cards.
+    Returns: (widget, completeness_bars_dict)
     """
     widget = QWidget()
     widget.setStyleSheet(f"""
@@ -68,23 +66,18 @@ def create_quality_metrics_widget(theme_colors) -> tuple:
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(8)
 
-    # Scalar metrics as compact cards
-    cards_row = QHBoxLayout()
-    cards_row.setSpacing(8)
-    avg_conf_card = create_metric_card(theme_colors, "Avg Confidence", "—", font_size=16)
-    error_rate_card = create_metric_card(theme_colors, "Error Rate", "—", font_size=16)
-    avg_confidence_label = avg_conf_card.findChild(QLabel, "avg_confidence_value")
-    error_rate_label = error_rate_card.findChild(QLabel, "error_rate_value")
-    cards_row.addWidget(avg_conf_card)
-    cards_row.addWidget(error_rate_card)
-    layout.addLayout(cards_row)
-
-    completeness_label = QLabel("Metadata Completeness")
-    completeness_label.setStyleSheet(
+    title = QLabel("Metadata Completeness")
+    title.setStyleSheet(
         f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600;"
-        " margin-top: 4px; border: none;"
+        " border: none;"
     )
-    layout.addWidget(completeness_label)
+    layout.addWidget(title)
+
+    bars_container = QWidget()
+    bars_container.setStyleSheet("background-color: transparent; border: none;")
+    bars_layout = QVBoxLayout(bars_container)
+    bars_layout.setContentsMargins(0, 0, 0, 0)
+    bars_layout.setSpacing(4)
 
     completeness_bars = {}
     metadata_fields = [
@@ -96,9 +89,11 @@ def create_quality_metrics_widget(theme_colors) -> tuple:
     for key, label in metadata_fields:
         bar_widget = create_completeness_bar(theme_colors, key, label)
         completeness_bars[key] = bar_widget
-        layout.addWidget(bar_widget)
+        bars_layout.addWidget(bar_widget)
 
-    return widget, avg_confidence_label, error_rate_label, completeness_bars
+    layout.addWidget(bars_container)
+    layout.addStretch()
+    return widget, completeness_bars
 
 
 def create_distribution_bar(theme_colors, label: str, count: int, total: int) -> QWidget:
@@ -128,12 +123,10 @@ def create_distribution_bar(theme_colors, label: str, count: int, total: int) ->
     return container
 
 
-def create_document_insights_widget_split(theme_colors) -> tuple:
-    """Create document insights section WITHOUT company distribution.
+def create_type_dist_section(theme_colors) -> tuple:
+    """Create Document Types list section: title + distribution bar container.
 
-    Returns: (widget, docs_created_label, pages_archived_label, avg_pages_label,
-              bundle_acceptance_label, type_dist_container)
-    The returned labels are the *value* labels inside their metric cards.
+    Returns: (widget, type_distribution_container)
     """
     widget = QWidget()
     widget.setStyleSheet(f"""
@@ -146,50 +139,23 @@ def create_document_insights_widget_split(theme_colors) -> tuple:
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(8)
 
-    # Row 1: Docs Created, Pages Archived
-    row1 = QHBoxLayout()
-    row1.setSpacing(8)
-    docs_card = create_metric_card(theme_colors, "Docs Created", "0", font_size=16)
-    pages_card = create_metric_card(theme_colors, "Pages Archived", "0", font_size=16)
-    docs_created_label = docs_card.findChild(QLabel, "docs_created_value")
-    pages_archived_label = pages_card.findChild(QLabel, "pages_archived_value")
-    row1.addWidget(docs_card)
-    row1.addWidget(pages_card)
-    layout.addLayout(row1)
-
-    # Row 2: Avg Pages / Doc, Bundle Acceptance
-    row2 = QHBoxLayout()
-    row2.setSpacing(8)
-    avg_card = create_metric_card(theme_colors, "Avg Pages / Doc", "—", font_size=16)
-    bundle_card = create_metric_card(theme_colors, "Bundle Acceptance", "—", font_size=16)
-    avg_pages_label = avg_card.findChild(QLabel, "avg_pages_/_doc_value")
-    bundle_acceptance_label = bundle_card.findChild(QLabel, "bundle_acceptance_value")
-    row2.addWidget(avg_card)
-    row2.addWidget(bundle_card)
-    layout.addLayout(row2)
-
-    type_dist_title = QLabel("Document Types")
-    type_dist_title.setStyleSheet(
+    title = QLabel("Document Types")
+    title.setStyleSheet(
         f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600;"
-        " margin-top: 4px; border: none;"
+        " border: none;"
     )
-    layout.addWidget(type_dist_title)
+    layout.addWidget(title)
 
     type_distribution_container = QWidget()
+    type_distribution_container.setStyleSheet("background-color: transparent; border: none;")
     type_distribution_layout = QVBoxLayout(type_distribution_container)
     type_distribution_layout.setContentsMargins(0, 0, 0, 0)
     type_distribution_layout.setSpacing(4)
     layout.addWidget(type_distribution_container)
     type_distribution_container._stored_layout = type_distribution_layout  # type: ignore[attr-defined]
 
-    return (
-        widget,
-        docs_created_label,
-        pages_archived_label,
-        avg_pages_label,
-        bundle_acceptance_label,
-        type_distribution_container,
-    )
+    layout.addStretch()
+    return widget, type_distribution_container
 
 
 def create_company_insights_widget(theme_colors) -> tuple:
@@ -205,21 +171,22 @@ def create_company_insights_widget(theme_colors) -> tuple:
     """)
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(16, 16, 16, 16)
-    layout.setSpacing(12)
+    layout.setSpacing(8)
 
     company_dist_title = QLabel("Top 5 Companies:")
     company_dist_title.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 11pt; font-weight: 600; border: none;"
+        f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600; border: none;"
     )
     layout.addWidget(company_dist_title)
 
     company_distribution_container = QWidget()
     company_distribution_layout = QVBoxLayout(company_distribution_container)
     company_distribution_layout.setContentsMargins(0, 0, 0, 0)
-    company_distribution_layout.setSpacing(6)
+    company_distribution_layout.setSpacing(4)
     layout.addWidget(company_distribution_container)
     company_distribution_container._stored_layout = company_distribution_layout  # type: ignore[attr-defined]
 
+    layout.addStretch()
     return (widget, company_distribution_container)
 
 
@@ -298,8 +265,15 @@ def create_collapsible_section(
         container.updateGeometry()
 
     toggle_btn.clicked.connect(toggle_section)
-    # Clicking anywhere on the header toggles the section
-    header.mousePressEvent = lambda event: toggle_section()  # type: ignore[assignment]
+    # Clicking anywhere on the header row (left-click only) toggles the section
+
+    def _header_mouse_press(event) -> None:  # type: ignore[no-untyped-def]
+        from PyQt6.QtCore import Qt as _Qt
+
+        if event and event.button() == _Qt.MouseButton.LeftButton:
+            toggle_section()
+
+    header.mousePressEvent = _header_mouse_press  # type: ignore[assignment]
 
     main_layout.addWidget(header)
     main_layout.addWidget(content_frame)
