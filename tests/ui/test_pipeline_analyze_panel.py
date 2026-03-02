@@ -401,7 +401,7 @@ def test_refresh_analytics_section_updates_confidence_label(
     """_refresh_analytics_section updates the confidence label when data is available."""
     mock_analysis_db.get_analyzed_pages.return_value = [
         {
-            "analysis_id": 1,
+            "analyzed_at": "2024-01-01T00:00:00",
             "confidence_score": 0.80,
             "status": "analyzed",
             "document_type": "Invoice",
@@ -410,7 +410,7 @@ def test_refresh_analytics_section_updates_confidence_label(
             "page_number": 1,
         },
         {
-            "analysis_id": 2,
+            "analyzed_at": "2024-02-01T00:00:00",
             "confidence_score": 0.60,
             "status": "analyzed",
             "document_type": "Statement",
@@ -433,7 +433,7 @@ def test_refresh_analytics_updates_error_rate(
     """_refresh_analytics_section computes error rate from status field."""
     mock_analysis_db.get_analyzed_pages.return_value = [
         {
-            "analysis_id": 1,
+            "analyzed_at": "2024-01-01T00:00:00",
             "confidence_score": 0.9,
             "status": "analyzed",
             "document_type": "Invoice",
@@ -442,7 +442,8 @@ def test_refresh_analytics_updates_error_rate(
             "page_number": 1,
         },
         {
-            "analysis_id": None,
+            "analyzed_at": None,
+            "had_error": True,
             "confidence_score": None,
             "status": "error",
             "document_type": None,

@@ -71,11 +71,13 @@ class BundleActionBar(QWidget):
         self._accept_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._accept_btn.setStyleSheet(self._success_tool_btn_style(theme))
 
-        accept_menu = QMenu(self._accept_btn)
-        export_action = accept_menu.addAction("✓  Accept && Export Now")
-        assert export_action is not None
+        self._accept_menu = QMenu(self._accept_btn)
+        self._accept_menu.setStyleSheet(self._menu_style(theme))
+        export_action = self._accept_menu.addAction("✓  Accept && Export Now")
+        if export_action is None:
+            raise RuntimeError("QMenu.addAction returned None — cannot wire Accept & Export Now")
         export_action.triggered.connect(callbacks["on_accept_export"])
-        self._accept_btn.setMenu(accept_menu)
+        self._accept_btn.setMenu(self._accept_menu)
         self._accept_btn.clicked.connect(callbacks["on_accept"])
         layout.addWidget(self._accept_btn)
 
@@ -98,6 +100,7 @@ class BundleActionBar(QWidget):
         self._skip_btn.setStyleSheet(self._warning_btn_style(theme))
         self._reject_btn.setStyleSheet(self._danger_btn_style(theme))
         self._accept_btn.setStyleSheet(self._success_tool_btn_style(theme))
+        self._accept_menu.setStyleSheet(self._menu_style(theme))
 
     # ------------------------------------------------------------------
     # Style helpers
@@ -164,7 +167,7 @@ class BundleActionBar(QWidget):
             color: white;
             border: none;
             border-radius: 6px;
-            padding: 10px 16px;
+            padding: 10px 6px 10px 16px;
             font-weight: 600;
         }}
         QToolButton:hover {{
@@ -178,5 +181,26 @@ class BundleActionBar(QWidget):
         }}
         QToolButton::menu-button:hover {{
             background: {theme["success_hover"]};
+        }}
+        """
+
+    @staticmethod
+    def _menu_style(theme: dict) -> str:
+        return f"""
+        QMenu {{
+            background: {theme["bg_secondary"]};
+            color: {theme["text_primary"]};
+            border: 1px solid {theme["border"]};
+            border-radius: 6px;
+            padding: 4px 0px;
+        }}
+        QMenu::item {{
+            padding: 8px 20px;
+            font-weight: 600;
+        }}
+        QMenu::item:selected {{
+            background: {theme["success"]};
+            color: white;
+            border-radius: 4px;
         }}
         """

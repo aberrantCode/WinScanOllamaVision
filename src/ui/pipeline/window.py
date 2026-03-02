@@ -100,6 +100,7 @@ class DocumentPipelineWindow(QMainWindow):
 
         self._current_stage = STAGE_IMPORT
         self._completed_stages: set[int] = set()
+        self._skipped_stages: set[int] = set()
         self._settings_window: EnhancedSettingsWindow | None = None
 
         self._build_ui()
@@ -260,13 +261,17 @@ class DocumentPipelineWindow(QMainWindow):
     def _go_to_stage(self, stage: int) -> None:
         stage = max(STAGE_IMPORT, min(STAGE_EXPORT, stage))
 
-        # Mark the current stage complete when moving forward
         if stage > self._current_stage:
+            # Complete the stage we're leaving
             self._completed_stages.add(self._current_stage)
+            self._skipped_stages.discard(self._current_stage)
+            # Any stages we jump over become "skipped"
+            for s in range(self._current_stage + 1, stage):
+                self._skipped_stages.add(s)
 
         self._current_stage = stage
         self.stack.setCurrentIndex(stage)
-        self.header.set_stage(stage, self._completed_stages)
+        self.header.set_stage(stage, self._completed_stages, self._skipped_stages)
         self._update_footer_buttons(stage)
 
         # Trigger stage-specific refresh

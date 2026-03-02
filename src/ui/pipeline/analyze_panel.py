@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -79,7 +78,6 @@ class AnalyzePanel(QWidget):
         self.abort_btn: QPushButton | None = None
         self.status_lbl: QLabel | None = None
         self.progress_bar: QProgressBar | None = None
-        self.stats_lbl: QLabel | None = None
         self.file_grid: FileDetailsGrid | None = None
         self.image_preview: ImagePreviewWidget | None = None
         self._content_splitter: QSplitter | None = None
@@ -131,6 +129,23 @@ class AnalyzePanel(QWidget):
         toolbar.addWidget(self.status_lbl)
         toolbar.addStretch()
 
+        self._select_all_btn = QPushButton("Select All")
+        self._select_all_btn.setFlat(True)
+        self._select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_all_btn.setStyleSheet(_LINK_STYLE.format(self._c().get("accent", "#3B82F6")))
+        self._select_all_btn.clicked.connect(self._on_select_all)
+        toolbar.addWidget(self._select_all_btn)
+
+        self._deselect_btn = QPushButton("Deselect")
+        self._deselect_btn.setFlat(True)
+        self._deselect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._deselect_btn.setStyleSheet(
+            _LINK_STYLE.format(self._c().get("text_secondary", "#9CA3AF"))
+        )
+        self._deselect_btn.setVisible(False)
+        self._deselect_btn.clicked.connect(self._on_deselect)
+        toolbar.addWidget(self._deselect_btn)
+
         self.start_btn = QPushButton("▶  Start Analysis")
         self.start_btn.setStyleSheet(
             "QPushButton { background-color: #10B981; color: white; font-weight: 600; "
@@ -178,34 +193,6 @@ class AnalyzePanel(QWidget):
         self.progress_bar.setVisible(False)
         root.addWidget(self.progress_bar)
 
-        # ── Stats row (stats label left, selection actions right)
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(10)
-
-        self.stats_lbl = QLabel("—")
-        self.stats_lbl.setStyleSheet(f"font-size: 9pt; color: {self._c()['text_tertiary']};")
-        stats_row.addWidget(self.stats_lbl)
-        stats_row.addStretch()
-
-        self._select_all_btn = QPushButton("Select All")
-        self._select_all_btn.setFlat(True)
-        self._select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._select_all_btn.setStyleSheet(_LINK_STYLE.format(self._c().get("accent", "#3B82F6")))
-        self._select_all_btn.clicked.connect(self._on_select_all)
-        stats_row.addWidget(self._select_all_btn)
-
-        self._deselect_btn = QPushButton("Deselect")
-        self._deselect_btn.setFlat(True)
-        self._deselect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._deselect_btn.setStyleSheet(
-            _LINK_STYLE.format(self._c().get("text_secondary", "#9CA3AF"))
-        )
-        self._deselect_btn.setVisible(False)
-        self._deselect_btn.clicked.connect(self._on_deselect)
-        stats_row.addWidget(self._deselect_btn)
-
-        root.addLayout(stats_row)
-
         # ── Analytics section (collapsible, collapsed by default)
         self._analytics_section = self._build_analytics_section()
         root.addWidget(self._analytics_section)
@@ -242,65 +229,76 @@ class AnalyzePanel(QWidget):
         # ── Footer navigation
 
     def _build_analytics_section(self) -> QWidget:
-        """Build a collapsible analytics section with quality and document insights."""
+        """Build a collapsible analytics section.
+
+        Row 1 — six metric cards spanning the full width.
+        Row 2 — three list sections (Metadata Completeness, Document Types, Top 5 Companies).
+        """
         from ui.pipeline.analyze_status_helpers import (
             create_collapsible_section,
             create_company_insights_widget,
-            create_document_insights_widget_split,
-            create_quality_metrics_widget,
+            create_completeness_section,
+            create_type_dist_section,
         )
+        from ui.pipeline.metric_card import create_metric_card
 
         # create_collapsible_section uses 'tab_hover_bg' which is not in ThemeManager;
         # map it to bg_hover so the helper receives a complete palette.
         c = {**self._c(), "tab_hover_bg": self._c().get("bg_hover", "#E5E7EB")}
 
-        # Quality metrics panel
-        quality_widget, avg_conf_lbl, error_rate_lbl, completeness_bars = (
-            create_quality_metrics_widget(c)
-        )
+        # ── Row 1: metric cards ────────────────────────────────────────
+        avg_conf_card, avg_conf_lbl = create_metric_card(c, "Avg Confidence", "—", font_size=16)
+        error_rate_card, error_rate_lbl = create_metric_card(c, "Error Rate", "—", font_size=16)
+        docs_card, docs_lbl = create_metric_card(c, "Docs Created", "0", font_size=16)
+        pages_card, pages_lbl = create_metric_card(c, "Pages Archived", "0", font_size=16)
+        avg_pages_card, avg_pages_lbl = create_metric_card(c, "Avg Pages / Doc", "—", font_size=16)
+        bundle_card, bundle_lbl = create_metric_card(c, "Bundle Acceptance", "—", font_size=16)
+
         self._avg_conf_label = avg_conf_lbl
         self._error_rate_label = error_rate_lbl
+        self._docs_created_label = docs_lbl
+        self._pages_archived_label = pages_lbl
+        self._avg_pages_label = avg_pages_lbl
+        self._bundle_acceptance_label = bundle_lbl
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(8)
+        for card in (
+            avg_conf_card,
+            error_rate_card,
+            docs_card,
+            pages_card,
+            avg_pages_card,
+            bundle_card,
+        ):
+            cards_row.addWidget(card, stretch=1)
+
+        # ── Row 2: list sections ───────────────────────────────────────
+        completeness_widget, completeness_bars = create_completeness_section(c)
         self._completeness_bars = completeness_bars
 
-        # Document insights panel (without company distribution)
-        (
-            doc_widget,
-            docs_created_lbl,
-            pages_archived_lbl,
-            avg_pages_lbl,
-            bundle_acceptance_lbl,
-            type_dist_container,
-        ) = create_document_insights_widget_split(c)
-        self._docs_created_label = docs_created_lbl
-        self._pages_archived_label = pages_archived_lbl
-        self._avg_pages_label = avg_pages_lbl
-        self._bundle_acceptance_label = bundle_acceptance_lbl
+        type_dist_widget, type_dist_container = create_type_dist_section(c)
         self._type_dist_container = type_dist_container
 
-        # Company insights panel
         company_widget, company_dist_container = create_company_insights_widget(c)
         self._company_dist_container = company_dist_container
 
-        # Combine into a horizontal row inside a scroll area
-        analytics_row = QWidget()
-        analytics_row.setStyleSheet("background-color: transparent;")
-        row_layout = QHBoxLayout(analytics_row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
-        row_layout.addWidget(quality_widget, stretch=1)
-        row_layout.addWidget(doc_widget, stretch=1)
-        row_layout.addWidget(company_widget, stretch=1)
+        lists_row = QHBoxLayout()
+        lists_row.setSpacing(8)
+        lists_row.addWidget(completeness_widget, stretch=1)
+        lists_row.addWidget(type_dist_widget, stretch=1)
+        lists_row.addWidget(company_widget, stretch=1)
 
-        scroll = QScrollArea()
-        scroll.setWidget(analytics_row)
-        scroll.setWidgetResizable(True)
-        scroll.setFixedHeight(280)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(scroll.Shape.NoFrame)
+        # ── Outer content widget ───────────────────────────────────────
+        content = QWidget()
+        content.setStyleSheet("background-color: transparent;")
+        outer = QVBoxLayout(content)
+        outer.setContentsMargins(0, 4, 0, 0)
+        outer.setSpacing(8)
+        outer.addLayout(cards_row)
+        outer.addLayout(lists_row)
 
-        section = create_collapsible_section(c, "Analytics", scroll, initially_expanded=False)
-        return section
+        return create_collapsible_section(c, "Analytics", content, initially_expanded=False)
 
     def _clear_and_repopulate_dist(
         self,
@@ -312,7 +310,7 @@ class AnalyzePanel(QWidget):
         """Clear a distribution container and repopulate it with bar widgets.
 
         The container's ``_stored_layout`` attribute is a ``QVBoxLayout``
-        instance set by ``create_document_insights_widget_split`` / similar
+        instance set by ``create_type_dist_section`` / similar
         helpers to avoid shadowing the ``layout()`` method.
         """
         from PyQt6.QtWidgets import QVBoxLayout
@@ -413,14 +411,6 @@ class AnalyzePanel(QWidget):
             return
 
         self.file_grid.refresh_data(data)
-
-        total = len(data)
-        analyzed = sum(1 for r in data if r.get("status") in ("Analyzed", "analyzed"))
-        if self.stats_lbl:
-            self.stats_lbl.setText(
-                f"Total: {total}  ·  Analyzed: {analyzed}  ·  Pending: {total - analyzed}"
-            )
-
         self._refresh_analytics_section()
 
     def _transform_data_for_grid(self, db_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -634,7 +624,6 @@ class AnalyzePanel(QWidget):
         self._stats["cached"] += stats.get("cached", 0)
         self._stats["errors"] += stats.get("errors", 0)
         self._stats["total_files"] += stats.get("total_files", 0)
-        self._update_stats_label()
 
         if self.progress_bar:
             total = stats.get("total_files", 0)
@@ -661,15 +650,6 @@ class AnalyzePanel(QWidget):
             self.status_lbl.setText("Analysis complete.")
         if self.progress_bar:
             self.progress_bar.setVisible(False)
-
-    def _update_stats_label(self) -> None:
-        if not self.stats_lbl:
-            return
-        s = self._stats
-        self.stats_lbl.setText(
-            f"Analyzed: {s['analyzed']}  ·  Cached: {s['cached']}  "
-            f"·  Errors: {s['errors']}  ·  Total: {s['total_files']}"
-        )
 
     def shutdown(self) -> None:
         """Stop the analysis worker gracefully. Called by the parent window on close."""

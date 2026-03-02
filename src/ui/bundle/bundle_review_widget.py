@@ -5,6 +5,7 @@ into a QWidget (not QDialog) that can be embedded in a parent layout.
 """
 
 import contextlib
+import os
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
@@ -22,7 +23,6 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.bundle.bundle_action_bar import BundleActionBar
-from ui.bundle.bundle_header import BundleHeaderWidget
 from ui.bundle.bundle_metadata_panel import BundleMetadataPanel
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
 from ui.bundle.bundle_review_helpers import (
@@ -32,8 +32,10 @@ from ui.bundle.bundle_review_helpers import (
 )
 from ui.bundle.bundle_stylesheet import build_bundle_stylesheet
 from ui.bundle.bundle_thumbnail_panel import BundleThumbnailPanel
+from ui.file_details.file_details_utils import is_path_confined
 from ui.image_preview import ImagePreviewWidget, ToolbarPosition, ToolbarSize
 from ui.theme.styles import show_confirm, show_critical, show_information, show_warning
+from ui.theme.theme_manager import ThemeManager
 
 
 class BundleReviewWidget(QWidget):
@@ -46,6 +48,8 @@ class BundleReviewWidget(QWidget):
     workflow_completed = pyqtSignal(dict)  # stats
     bundle_accepted = pyqtSignal(dict)  # bundle data
     bundle_rejected = pyqtSignal(dict)  # bundle data
+    # Emitted on every bundle navigation: (bundle_index, total, bundle, accepted, rejected, skipped)
+    bundle_changed = pyqtSignal(int, int, dict, int, int, int)
 
     def __init__(
         self,
@@ -139,20 +143,6 @@ class BundleReviewWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Header with progress
-        bundle = self.bundles[self.current_bundle_index]
-        self._header_widget = BundleHeaderWidget(
-            self.dark_mode,
-            bundle,
-            self.current_bundle_index,
-            len(self.bundles),
-            len(self.accepted_bundles),
-            len(self.rejected_bundles),
-            len(self.skipped_bundles),
-            parent=self,
-        )
-        main_layout.addWidget(self._header_widget)
-
         # Three-panel layout (static widths, no splitter)
         content_container = QWidget()
         content_layout = QHBoxLayout(content_container)
@@ -232,12 +222,12 @@ class BundleReviewWidget(QWidget):
         QTimer.singleShot(300, self._apply_default_zoom)
 
     def _update_header(self):
-        """Update header and nav button state for the current bundle."""
+        """Emit bundle_changed so the parent panel can update its status labels."""
         bundle = self.bundles[self.current_bundle_index]
-        self._header_widget.refresh(
-            bundle,
+        self.bundle_changed.emit(
             self.current_bundle_index,
             len(self.bundles),
+            bundle,
             len(self.accepted_bundles),
             len(self.rejected_bundles),
             len(self.skipped_bundles),
@@ -308,8 +298,6 @@ class BundleReviewWidget(QWidget):
 
     def _get_pdf_filename(self, filename: str) -> str:
         """Get final PDF filename with .PDF extension enforced."""
-        import os
-
         name_without_ext = os.path.splitext(filename)[0]
         name_without_ext = BundleMetadataPanel._sanitize_filename(name_without_ext)
         return f"{name_without_ext}.PDF"
@@ -362,21 +350,17 @@ class BundleReviewWidget(QWidget):
         self._show_pdf_conversion(bundle, metadata)
 
     def _on_accept_export_bundle(self):
-        """Accept bundle, convert to PDF, and immediately open the output folder."""
-        import os
+        """Accept bundle, convert to PDF, then open the output folder.
 
+        The folder is opened inside ``_complete_pdf_conversion`` *after* the PDF
+        has been written, not here where ``_show_pdf_conversion`` has not yet run.
+        """
         bundle = self.bundles[self.current_bundle_index]
         metadata = self.metadata_panel.get_metadata()
         raw_filename = self.metadata_panel.get_output_filename().strip()
         metadata["output_filename"] = self._get_pdf_filename(raw_filename)
         metadata["_open_after_export"] = True
         self._show_pdf_conversion(bundle, metadata)
-
-        # After conversion completes the helper will open the output directory
-        output_dir = self._pdf_converter.determine_output_directory(bundle)
-        if output_dir and os.path.isdir(output_dir):
-            with contextlib.suppress(Exception):
-                os.startfile(output_dir)  # type: ignore[attr-defined]
 
     def _determine_output_directory(self, bundle: dict) -> str:
         """Determine output directory based on configuration strategy."""
@@ -413,6 +397,34 @@ class BundleReviewWidget(QWidget):
             on_accepted=_on_accepted,
             on_next_or_complete=_on_next_or_complete,
         )
+
+        # Open output folder now that the PDF has been written (C-1 fix: deferred from
+        # _on_accept_export_bundle where the conversion had not yet run).
+        if metadata.get("_open_after_export"):
+            self._open_output_dir_if_safe(bundle)
+
+    def _open_output_dir_if_safe(self, bundle: dict) -> None:
+        """Open the PDF output directory in the file explorer.
+
+        Validates the resolved path against configured source/output directories
+        before calling os.startfile to prevent opening arbitrary paths.
+        """
+        from services.logging_service import get_logger
+
+        output_dir = self._pdf_converter.determine_output_directory(bundle)
+        if not output_dir or not os.path.isdir(output_dir):
+            return
+
+        source_dirs = self.config_manager.get_directories() if self.config_manager else []
+        if not is_path_confined(output_dir, source_dirs):
+            get_logger().warning(
+                "Blocked os.startfile: output dir not under configured directories: %s",
+                output_dir,
+            )
+            return
+
+        with contextlib.suppress(Exception):
+            os.startfile(output_dir)  # type: ignore[attr-defined]
 
     def _show_completion_summary(self) -> None:
         """Show workflow completion summary."""
@@ -629,23 +641,18 @@ class BundleReviewWidget(QWidget):
     def _update_all_component_styles(self) -> None:
         """Update all component styles based on current theme."""
         self.setStyleSheet(build_bundle_stylesheet(self.dark_mode))
-        bundle = self.bundles[self.current_bundle_index]
-        self._header_widget.apply_theme(self.dark_mode)
-        self._header_widget.refresh(
-            bundle,
-            self.current_bundle_index,
-            len(self.bundles),
-            len(self.accepted_bundles),
-            len(self.rejected_bundles),
-            len(self.skipped_bundles),
-        )
         self._action_bar.apply_theme(self.dark_mode)
         self._action_bar.update_nav_state(self.current_bundle_index, len(self.bundles))
         self.thumbnail_panel.apply_theme(self.dark_mode)
+        c = ThemeManager.get_colors(self.dark_mode)
+        self.preview_panel.update_theme(
+            {**c, "button_bg": c["bg_tertiary"], "button_hover": c["bg_hover"]}
+        )
         self.metadata_panel.apply_theme(self.dark_mode)
         self.update()
         self._populate_thumbnails()
         self._display_current_page()
+        self._update_header()
 
     def _on_metadata_changed(self) -> None:
         """Disable cross-panel interaction while user is editing metadata."""
