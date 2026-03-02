@@ -119,7 +119,7 @@ jobs:
           pyinstaller --onefile --windowed --name WinScanOllamaVision src/main.py
 
       - name: Upload executable
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: executable-${{ matrix.os }}
           path: dist/
