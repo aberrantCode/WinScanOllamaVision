@@ -219,6 +219,22 @@ class _DialogActionsMixin:
         except Exception as e:
             show_critical(self, "Error Opening File", f"Failed to open file:\n\n{str(e)}")
 
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        """Coerce a value to int, returning None on non-numeric input.
+
+        Used to defend metadata-save against stored strings like ``"N/A"`` or
+        ``"unknown"`` that the LLM might return for page fields. A raw int()
+        would raise ValueError and abort the entire save, taking rotation
+        and legacy-analysis writes with it.
+        """
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _save_metadata(self):
         """Save edited metadata back to the database."""
         # Collect values from all metadata input fields
@@ -240,8 +256,11 @@ class _DialogActionsMixin:
             if value:
                 updated_metadata[field_name] = value
 
-        # Update file_data immutably (H-5)
-        self.file_data = {**self.file_data, **updated_metadata}
+        # NOTE: self.file_data was previously mutated here BEFORE the DB
+        # write. If the write failed, the dialog's in-memory state then
+        # diverged from the database — closing and reopening the dialog
+        # showed values that were never persisted. Defer the merge until
+        # after a successful write (see the fresh_updates section below).
 
         # Save to database - use both databases
         try:
@@ -294,12 +313,8 @@ class _DialogActionsMixin:
                             "company": metadata.get("company"),
                             "document_type": metadata.get("document_type"),
                             "document_date": metadata.get("document_date"),
-                            "page_number": int(metadata["page_number"])
-                            if metadata.get("page_number")
-                            else None,
-                            "total_pages": int(metadata["total_pages"])
-                            if metadata.get("total_pages")
-                            else None,
+                            "page_number": self._safe_int(metadata.get("page_number")),
+                            "total_pages": self._safe_int(metadata.get("total_pages")),
                             "rotation": rotation_degrees,
                             "tax_related": metadata.get("tax_related", False),
                             "output_filename": metadata.get("output_filename"),
@@ -310,6 +325,10 @@ class _DialogActionsMixin:
                         logger.debug("Updated normalized metadata table via MetadataDB (user edit)")
                     except Exception as meta_error:
                         logger.warning("Failed to update normalized metadata: %s", meta_error)
+
+                    # All writes have succeeded — now it is safe to merge the
+                    # user-entered values into the dialog's in-memory state.
+                    self.file_data = {**self.file_data, **updated_metadata}
 
                     # Reload fresh data from database to ensure file_data is up-to-date
                     fresh_analysis = analysis_db.get_analysis(file_path)
@@ -381,11 +400,15 @@ class _DialogActionsMixin:
 
     def _find_actual_file_path(self, stored_path: str | None, filename: str) -> str | None:
         """Find the actual file path, searching source directories if needed."""
-        # Resolve config_manager: prefer the one stored on self, then walk parent chain
+        # Resolve config_manager: prefer the one stored on self, then walk
+        # parent chain. Cap the walk depth so a buggy parent() override that
+        # returns self (or a cycle) cannot hang the UI thread.
         config_manager = getattr(self, "config_manager", None)
         if config_manager is None:
             parent_widget = self.parent()  # type: ignore[attr-defined]
-            while parent_widget:
+            for _ in range(32):  # Qt widget hierarchies are nowhere near this deep
+                if parent_widget is None:
+                    break
                 if hasattr(parent_widget, "config_manager"):
                     config_manager = parent_widget.config_manager
                     break
@@ -503,16 +526,36 @@ class _DialogActionsMixin:
 
             # 3. Delete physical file if checkbox was checked
             if delete_physical_file and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    logger.info("Deleted physical file: %s", file_path)
-                except Exception as file_error:
-                    # Show warning but don't fail the whole operation
+                # Path confinement check — mirrors the guard on os.startfile in
+                # _view_document. Deletion is strictly more dangerous than
+                # opening, so it must enforce the same invariant: the path
+                # must lie under a configured source directory.
+                source_dirs: list[str] = (
+                    self.config_manager.get_directories() if self.config_manager else []
+                )
+                if not is_path_confined(file_path, source_dirs):
+                    logger.warning(
+                        "Blocked os.remove: path not under configured source directories: %s",
+                        file_path,
+                    )
                     show_warning(
                         self,
-                        "File Deletion Failed",
-                        f"Database record deleted, but failed to delete the physical file:\n\n{str(file_error)}",
+                        "Access Denied",
+                        "The database record was removed, but the file on disk was NOT "
+                        "deleted because it is not located within a configured source "
+                        "directory.",
                     )
+                else:
+                    try:
+                        os.remove(file_path)
+                        logger.info("Deleted physical file: %s", file_path)
+                    except Exception as file_error:
+                        # Show warning but don't fail the whole operation
+                        show_warning(
+                            self,
+                            "File Deletion Failed",
+                            f"Database record deleted, but failed to delete the physical file:\n\n{str(file_error)}",
+                        )
 
             # 4. Emit signal to notify parent to refresh
             self.record_deleted.emit(file_path)
@@ -616,6 +659,17 @@ class _DialogActionsMixin:
         """Handle metadata field changes - update save button state."""
         self._update_save_button_state()
 
+    @staticmethod
+    def _normalized_eq(a: Any, b: Any) -> bool:
+        """Treat None and '' (and other falsy equivalents) as equal.
+
+        Used by _has_unsaved_changes to avoid flagging a field that went
+        from stored NULL to empty string (or vice versa) as a user edit.
+        """
+        if not a and not b:
+            return True
+        return bool(a == b)
+
     def _has_unsaved_changes(self):
         """Check if current metadata values differ from original values."""
         for field_name, widget in self.metadata_inputs.items():
@@ -630,8 +684,7 @@ class _DialogActionsMixin:
             else:
                 continue
 
-            # Compare current to original (handle None and empty string as equivalent)
-            if original_value != current_value and not (not original_value and not current_value):
+            if not self._normalized_eq(original_value, current_value):
                 return True
 
         return False

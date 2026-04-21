@@ -404,7 +404,11 @@ class _ModelLoaderMixin:
         """
         valid: list[str] = []
         for name in models:
-            if re.fullmatch(r"[a-zA-Z0-9._:/-]+", name):
+            # Route through the module-level compiled pattern so tests and
+            # production enforce the exact same allowlist. A previous inline
+            # re.fullmatch(...) literal here could silently drift from
+            # _MODEL_NAME_PATTERN, producing a false-confidence test suite.
+            if _MODEL_NAME_PATTERN.fullmatch(name):
                 valid.append(name)
             else:
                 self._get_logger().warning(
