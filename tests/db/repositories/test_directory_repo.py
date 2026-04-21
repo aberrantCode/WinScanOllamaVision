@@ -101,16 +101,21 @@ class TestAdd:
 
     def test_add_handles_operational_error(self, repo):
         """Test add handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.add("/test/dir")
 
     def test_add_handles_generic_error(self, repo):
         """Test add handles generic sqlite3.Error."""
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to add directory"):
-                repo.add("/test/dir")
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to add directory"),
+        ):
+            repo.add("/test/dir")
 
 
 class TestGetActive:
@@ -189,18 +194,23 @@ class TestRemove:
         """Test remove handles OperationalError."""
         repo.add("/test/dir")
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.remove("/test/dir")
 
     def test_remove_handles_generic_error(self, repo):
         """Test remove handles generic sqlite3.Error."""
         repo.add("/test/dir")
 
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to remove directory"):
-                repo.remove("/test/dir")
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to remove directory"),
+        ):
+            repo.remove("/test/dir")
 
 
 class TestUpdateScanInfo:
@@ -276,18 +286,23 @@ class TestUpdateScanInfo:
         """Test update_scan_info handles OperationalError."""
         repo.add("/test/dir")
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_scan_info("/test/dir", file_count=100)
 
     def test_update_scan_info_handles_generic_error(self, repo):
         """Test update_scan_info handles generic sqlite3.Error."""
         repo.add("/test/dir")
 
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to update scan info"):
-                repo.update_scan_info("/test/dir", file_count=100)
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to update scan info"),
+        ):
+            repo.update_scan_info("/test/dir", file_count=100)
 
 
 class TestEdgeCases:

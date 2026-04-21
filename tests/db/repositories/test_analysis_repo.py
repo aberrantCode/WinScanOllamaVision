@@ -181,9 +181,12 @@ class TestAnalysisSave:
     def test_save_handles_operational_error(self, repo, sample_image_file_id):
         """Test save handles OperationalError by attempting to insert with read-only database."""
         # Mock execute to raise OperationalError
-        with patch.object(
-            repo.conn, "execute", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database operation failed"):
+        with (
+            patch.object(
+                repo.conn, "execute", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database operation failed"),
+        ):
             repo.save(
                 image_file_id=sample_image_file_id,
                 provider_name="ollama",
@@ -197,9 +200,10 @@ class TestAnalysisSave:
     def test_save_handles_generic_error(self, repo, sample_image_file_id):
         """Test save handles generic sqlite3.Error."""
         # Mock execute to raise generic Error
-        with patch.object(
-            repo.conn, "execute", side_effect=sqlite3.Error("Generic database error")
-        ), pytest.raises(sqlite3.Error, match="Failed to save analysis"):
+        with (
+            patch.object(repo.conn, "execute", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to save analysis"),
+        ):
             repo.save(
                 image_file_id=sample_image_file_id,
                 provider_name="ollama",
@@ -553,17 +557,22 @@ class TestAnalysisDeletion:
     def test_delete_by_image_file_id_handles_operational_error(self, repo, sample_image_file_id):
         """Test delete handles OperationalError."""
         # Mock execute to raise OperationalError
-        with patch.object(
-            repo.conn, "execute", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        with (
+            patch.object(
+                repo.conn, "execute", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="database is locked"),
+        ):
             repo.delete_by_image_file_id(sample_image_file_id)
 
     def test_delete_by_image_file_id_handles_generic_error(self, repo, sample_image_file_id):
         """Test delete handles generic sqlite3.Error."""
         # Mock execute to raise generic Error
-        with patch.object(repo.conn, "execute", side_effect=sqlite3.Error("Generic delete error")):
-            with pytest.raises(sqlite3.Error, match="Generic delete error"):
-                repo.delete_by_image_file_id(sample_image_file_id)
+        with (
+            patch.object(repo.conn, "execute", side_effect=sqlite3.Error("Generic delete error")),
+            pytest.raises(sqlite3.Error, match="Generic delete error"),
+        ):
+            repo.delete_by_image_file_id(sample_image_file_id)
 
 
 class TestAnalysisEdgeCases:
@@ -713,9 +722,12 @@ class TestAnalysisEdgeCases:
         )
 
         # Mock commit to raise OperationalError
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.delete_by_image_file_id(sample_image_file_id)
 
     def test_delete_commit_handles_generic_error(self, repo, sample_image_file_id):
@@ -732,6 +744,8 @@ class TestAnalysisEdgeCases:
         )
 
         # Mock commit to raise generic Error
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic commit error")):
-            with pytest.raises(sqlite3.Error, match="Failed to delete analysis records"):
-                repo.delete_by_image_file_id(sample_image_file_id)
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic commit error")),
+            pytest.raises(sqlite3.Error, match="Failed to delete analysis records"),
+        ):
+            repo.delete_by_image_file_id(sample_image_file_id)

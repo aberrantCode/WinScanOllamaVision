@@ -129,16 +129,21 @@ class TestLogAction:
 
     def test_log_action_handles_operational_error(self, repo):
         """Test log_action handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.log_action("test", "Test details")
 
     def test_log_action_handles_generic_error(self, repo):
         """Test log_action handles generic sqlite3.Error."""
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to save audit log"):
-                repo.log_action("test", "Test details")
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to save audit log"),
+        ):
+            repo.log_action("test", "Test details")
 
 
 class TestEdgeCases:

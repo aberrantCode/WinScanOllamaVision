@@ -140,9 +140,12 @@ class TestRegister:
 
     def test_register_handles_operational_error(self, repo, sample_bundle_id):
         """Test register handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.register(
                 pdf_path="/test/error.pdf",
                 pdf_filename="error.pdf",
@@ -152,14 +155,16 @@ class TestRegister:
 
     def test_register_handles_generic_error(self, repo, sample_bundle_id):
         """Test register handles generic sqlite3.Error."""
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to register PDF file"):
-                repo.register(
-                    pdf_path="/test/error.pdf",
-                    pdf_filename="error.pdf",
-                    bundle_id=sample_bundle_id,
-                    page_count=1,
-                )
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to register PDF file"),
+        ):
+            repo.register(
+                pdf_path="/test/error.pdf",
+                pdf_filename="error.pdf",
+                bundle_id=sample_bundle_id,
+                page_count=1,
+            )
 
 
 class TestGetByPath:
@@ -288,9 +293,12 @@ class TestUpdateGenerationStatus:
             page_count=1,
         )
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_generation_status("/test/status.pdf", "failed")
 
     def test_update_generation_status_handles_generic_error(self, repo, sample_bundle_id):
@@ -302,9 +310,11 @@ class TestUpdateGenerationStatus:
             page_count=1,
         )
 
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to update generation status"):
-                repo.update_generation_status("/test/status.pdf", "failed")
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to update generation status"),
+        ):
+            repo.update_generation_status("/test/status.pdf", "failed")
 
 
 class TestUpdateSearchability:
@@ -375,9 +385,12 @@ class TestUpdateSearchability:
             page_count=1,
         )
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_searchability("/test/searchable.pdf", True)
 
     def test_update_searchability_handles_generic_error_when_column_exists(
@@ -396,9 +409,11 @@ class TestUpdateSearchability:
             page_count=1,
         )
 
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")):
-            with pytest.raises(sqlite3.Error, match="Failed to update searchability"):
-                repo.update_searchability("/test/searchable.pdf", True)
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("Generic database error")),
+            pytest.raises(sqlite3.Error, match="Failed to update searchability"),
+        ):
+            repo.update_searchability("/test/searchable.pdf", True)
 
 
 class TestGetAll:

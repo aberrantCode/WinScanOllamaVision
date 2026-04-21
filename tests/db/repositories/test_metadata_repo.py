@@ -944,9 +944,12 @@ class TestMetadataLinkToPdf:
         conn.commit()
 
         # Mock commit to raise OperationalError
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.link_to_pdf([image_id], pdf_id)
 
     def test_link_to_pdf_handles_database_error(self, repo, image_repo, conn):
@@ -968,9 +971,11 @@ class TestMetadataLinkToPdf:
         conn.commit()
 
         # Mock commit to raise generic Error
-        with patch.object(repo.conn, "commit", side_effect=sqlite3.Error("constraint violation")):
-            with pytest.raises(sqlite3.Error, match="Failed to link images to PDF"):
-                repo.link_to_pdf([image_id], pdf_id)
+        with (
+            patch.object(repo.conn, "commit", side_effect=sqlite3.Error("constraint violation")),
+            pytest.raises(sqlite3.Error, match="Failed to link images to PDF"),
+        ):
+            repo.link_to_pdf([image_id], pdf_id)
 
 
 class TestMetadataCreateFromAnalysisEdgeCases:
