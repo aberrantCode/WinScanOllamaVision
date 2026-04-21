@@ -244,6 +244,104 @@ def test_save_metadata_warns_when_no_databases():
     assert "analysis_db" in warning_msg or "metadata_db" in warning_msg
 
 
+def test_save_metadata_middle_failure_aborts_cleanly_no_silent_partial_save():
+    """
+    Partial-save invariant lock (H-1).
+
+    _save_metadata() performs three sequential writes against two databases:
+      1. analysis_db.update_analysis_metadata()
+      2. metadata_db.save_rotation()
+      3. metadata_db.save_metadata()
+
+    A prior revision wrapped write #3 in its own try/except that swallowed
+    the error to a logger.warning — execution continued and the user saw
+    "Metadata saved successfully!" even when the normalized-metadata table
+    was never written. That made real bugs invisible.
+
+    This test simulates write #2 (save_rotation) failing and locks in the
+    four invariants that MUST hold on a mid-failure:
+
+        A) show_critical is called (user sees the failure)
+        B) show_information ("Success!") is NOT called
+        C) metadata_saved signal is NOT emitted
+        D) file_data is NOT merged with the user's in-flight edits
+
+    A future refactor that re-introduces a middle-swallow will break (A/B).
+    A future refactor that emits-then-fails will break (C). A future
+    refactor that merges before persisting will break (D). These four are
+    the precise contract a subsequent save_metadata reviewer cares about.
+    """
+    from PyQt6.QtWidgets import QApplication, QComboBox, QLineEdit
+
+    QApplication.instance() or QApplication([])
+
+    # Include one text input (company) AND a rotation combo so all three
+    # writes get triggered and save_rotation is reached.
+    company_edit = QLineEdit()
+    company_edit.setText("NewCompanyValue")
+    rotation_combo = QComboBox()
+    rotation_combo.addItem("90_cw")
+    rotation_combo.setCurrentText("90_cw")
+
+    analysis_db = MagicMock()
+    analysis_db.get_analysis.return_value = {
+        "company": "OldCompany",
+        "rotation_needed": "none",
+    }
+    metadata_db = MagicMock()
+    # Force middle-write failure
+    metadata_db.save_rotation.side_effect = RuntimeError("simulated DB lock contention mid-save")
+
+    original_file_data = {
+        "full_path": "/source/docs/test.png",
+        "filename": "test.png",
+        "company": "OldCompany",
+    }
+
+    host = TestableDialogActions(
+        analysis_db=analysis_db,
+        metadata_db=metadata_db,
+        file_data=dict(original_file_data),
+    )
+    host.metadata_inputs = {
+        "company": company_edit,
+        "rotation_needed": rotation_combo,
+    }
+
+    with (
+        patch("ui.file_details.file_details_dialog_actions.show_critical") as mock_critical,
+        patch("ui.file_details.file_details_dialog_actions.show_information") as mock_info,
+    ):
+        # Must not raise; the outer catch in _save_metadata handles the error
+        host._save_metadata()
+
+    # Invariant A — user sees the failure
+    mock_critical.assert_called_once()
+    critical_args = mock_critical.call_args[0]
+    assert "Save Failed" in critical_args[1]
+    assert "simulated DB lock contention" in critical_args[2]
+
+    # Invariant B — no lying "Success!" toast
+    mock_info.assert_not_called()
+
+    # Invariant C — signal not emitted (no false downstream refresh)
+    assert host.metadata_saved.last is None
+
+    # Invariant D — file_data is not polluted with unsaved edits
+    assert host.file_data["company"] == "OldCompany", (
+        "file_data must NOT be merged with the user's in-flight edits when "
+        "the save failed mid-way — otherwise closing & re-opening the "
+        "dialog would show values that were never persisted."
+    )
+
+    # Sanity — the first write did happen (and cannot be rolled back across
+    # separate DB objects). This is documented current behaviour and the
+    # reason we show_critical instead of pretending nothing happened.
+    analysis_db.update_analysis_metadata.assert_called_once()
+    # Third write should never have been attempted
+    metadata_db.save_metadata.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # _delete_record tests
 # ---------------------------------------------------------------------------
