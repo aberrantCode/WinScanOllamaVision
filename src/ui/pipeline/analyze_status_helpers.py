@@ -19,10 +19,55 @@ from ui.theme.styles import (
     get_progress_bar_style,
 )
 
+# ---------------------------------------------------------------------------
+# Style helpers
+# ---------------------------------------------------------------------------
 
-def create_completeness_bar(theme_colors, key: str, label: str) -> QWidget:
-    """Create a metadata completeness progress bar"""
-    container = QWidget()
+
+def _card_style(theme_colors: dict) -> str:
+    """Return the stylesheet for a rounded card-style QWidget.
+
+    Used by every section in this module. Previously duplicated inline
+    across three call sites; centralising makes future theme tweaks a
+    single-file change.
+    """
+    return f"QWidget {{ background-color: {theme_colors['bg_secondary']}; border-radius: 8px; }}"
+
+
+# ---------------------------------------------------------------------------
+# Typed container widgets
+# ---------------------------------------------------------------------------
+#
+# Previously this module attached Python-side attributes (``.label``,
+# ``.bar``, ``._stored_layout``) to generic QWidget instances. That is
+# fragile: when Qt deletes the underlying C++ widget (parent-child
+# destruction, layout reshuffles) the Python object survives with
+# attribute references that may point at dead Qt objects. Dedicated
+# subclasses with declared fields make ownership explicit and satisfy
+# the type checker without ``# type: ignore[attr-defined]`` annotations.
+
+
+class CompletenessBarWidget(QWidget):
+    """A labelled progress bar for one metadata-completeness field."""
+
+    label: QLabel
+    bar: QProgressBar
+
+
+class _DistContainerWidget(QWidget):
+    """QWidget that owns its inner QVBoxLayout explicitly for later repopulation."""
+
+    _stored_layout: QVBoxLayout
+
+
+# ---------------------------------------------------------------------------
+# Widget builders
+# ---------------------------------------------------------------------------
+
+
+def create_completeness_bar(theme_colors: dict, key: str, label: str) -> CompletenessBarWidget:
+    """Create a metadata completeness progress bar."""
+    container = CompletenessBarWidget()
     container.setStyleSheet("background-color: transparent; border: none;")
     layout = QVBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -44,24 +89,20 @@ def create_completeness_bar(theme_colors, key: str, label: str) -> QWidget:
     bar.setStyleSheet(get_progress_bar_style(0))
     layout.addWidget(bar)
 
-    container.label = text_label  # type: ignore[attr-defined]
-    container.bar = bar  # type: ignore[attr-defined]
-
+    container.label = text_label
+    container.bar = bar
     return container
 
 
-def create_completeness_section(theme_colors) -> tuple:
+def create_completeness_section(
+    theme_colors: dict,
+) -> tuple[QWidget, dict[str, CompletenessBarWidget]]:
     """Create Metadata Completeness list section: title + progress bars.
 
     Returns: (widget, completeness_bars_dict)
     """
     widget = QWidget()
-    widget.setStyleSheet(f"""
-        QWidget {{
-            background-color: {theme_colors["bg_secondary"]};
-            border-radius: 8px;
-        }}
-    """)
+    widget.setStyleSheet(_card_style(theme_colors))
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(8)
@@ -78,25 +119,25 @@ def create_completeness_section(theme_colors) -> tuple:
     bars_layout.setContentsMargins(0, 0, 0, 0)
     bars_layout.setSpacing(4)
 
-    completeness_bars = {}
+    completeness_bars: dict[str, CompletenessBarWidget] = {}
     metadata_fields = [
         ("company", "Company"),
         ("document_type", "Document Type"),
         ("document_date", "Document Date"),
         ("page_number", "Page Number"),
     ]
-    for key, label in metadata_fields:
-        bar_widget = create_completeness_bar(theme_colors, key, label)
+    for key, field_label in metadata_fields:
+        bar_widget = create_completeness_bar(theme_colors, key, field_label)
         completeness_bars[key] = bar_widget
         bars_layout.addWidget(bar_widget)
 
     layout.addWidget(bars_container)
     layout.addStretch()
-    return widget, completeness_bars
+    return (widget, completeness_bars)
 
 
-def create_distribution_bar(theme_colors, label: str, count: int, total: int) -> QWidget:
-    """Create a distribution bar for document insights"""
+def create_distribution_bar(theme_colors: dict, label: str, count: int, total: int) -> QWidget:
+    """Create a distribution bar for document insights."""
     container = QWidget()
     container.setStyleSheet("background-color: transparent; border: none;")
     layout = QVBoxLayout(container)
@@ -122,18 +163,15 @@ def create_distribution_bar(theme_colors, label: str, count: int, total: int) ->
     return container
 
 
-def create_type_dist_section(theme_colors) -> tuple:
+def create_type_dist_section(
+    theme_colors: dict,
+) -> tuple[QWidget, _DistContainerWidget]:
     """Create Document Types list section: title + distribution bar container.
 
     Returns: (widget, type_distribution_container)
     """
     widget = QWidget()
-    widget.setStyleSheet(f"""
-        QWidget {{
-            background-color: {theme_colors["bg_secondary"]};
-            border-radius: 8px;
-        }}
-    """)
+    widget.setStyleSheet(_card_style(theme_colors))
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(8)
@@ -144,29 +182,27 @@ def create_type_dist_section(theme_colors) -> tuple:
     )
     layout.addWidget(title)
 
-    type_distribution_container = QWidget()
+    type_distribution_container = _DistContainerWidget()
     type_distribution_container.setStyleSheet("background-color: transparent; border: none;")
     type_distribution_layout = QVBoxLayout(type_distribution_container)
     type_distribution_layout.setContentsMargins(0, 0, 0, 0)
     type_distribution_layout.setSpacing(4)
     layout.addWidget(type_distribution_container)
-    type_distribution_container._stored_layout = type_distribution_layout  # type: ignore[attr-defined]
+    type_distribution_container._stored_layout = type_distribution_layout
 
     layout.addStretch()
-    return widget, type_distribution_container
+    return (widget, type_distribution_container)
 
 
-def create_company_insights_widget(theme_colors) -> tuple:
-    """Create company insights section (company distribution only)
+def create_company_insights_widget(
+    theme_colors: dict,
+) -> tuple[QWidget, _DistContainerWidget]:
+    """Create company insights section (company distribution only).
+
     Returns: (widget, company_dist_container)
     """
     widget = QWidget()
-    widget.setStyleSheet(f"""
-        QWidget {{
-            background-color: {theme_colors["bg_secondary"]};
-            border-radius: 8px;
-        }}
-    """)
+    widget.setStyleSheet(_card_style(theme_colors))
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(8)
@@ -177,21 +213,21 @@ def create_company_insights_widget(theme_colors) -> tuple:
     )
     layout.addWidget(company_dist_title)
 
-    company_distribution_container = QWidget()
+    company_distribution_container = _DistContainerWidget()
     company_distribution_layout = QVBoxLayout(company_distribution_container)
     company_distribution_layout.setContentsMargins(0, 0, 0, 0)
     company_distribution_layout.setSpacing(4)
     layout.addWidget(company_distribution_container)
-    company_distribution_container._stored_layout = company_distribution_layout  # type: ignore[attr-defined]
+    company_distribution_container._stored_layout = company_distribution_layout
 
     layout.addStretch()
     return (widget, company_distribution_container)
 
 
 def create_collapsible_section(
-    theme_colors, title: str, content: QWidget, initially_expanded: bool = True
+    theme_colors: dict, title: str, content: QWidget, initially_expanded: bool = True
 ) -> QWidget:
-    """Create a collapsible section with expand/collapse functionality"""
+    """Create a collapsible section with expand/collapse functionality."""
     container = QWidget()
     container.setStyleSheet("background-color: transparent; border: none;")
     container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
@@ -256,7 +292,7 @@ def create_collapsible_section(
     content_layout.addWidget(content)
     content_frame.setVisible(initially_expanded)
 
-    def toggle_section():
+    def toggle_section() -> None:
         is_visible = content_frame.isVisible()
         content_frame.setVisible(not is_visible)
         toggle_btn.setText("▶" if is_visible else "▼")
@@ -271,7 +307,7 @@ def create_collapsible_section(
         if event and event.button() == _Qt.MouseButton.LeftButton:
             toggle_section()
 
-    header.mousePressEvent = _header_mouse_press  # type: ignore[assignment]
+    header.mousePressEvent = _header_mouse_press  # type: ignore[assignment,method-assign]
 
     main_layout.addWidget(header)
     main_layout.addWidget(content_frame)
