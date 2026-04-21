@@ -118,20 +118,25 @@ def test_model_name_pattern_allows_path_traversal_strings(traversal_name):
 # ---------------------------------------------------------------------------
 
 
-class TestableModelLoader:
-    """Minimal host for _ModelLoaderMixin."""
+from ui.settings.settings_model_loader import _ModelLoaderMixin  # noqa: E402
 
-    def __init__(self):
-        from ui.settings.settings_model_loader import _ModelLoaderMixin
 
-        for attr in dir(_ModelLoaderMixin):
-            if not attr.startswith("__"):
-                method = getattr(_ModelLoaderMixin, attr)
-                if callable(method):
-                    import types
+class _ModelLoaderHost(_ModelLoaderMixin):
+    """Minimal concrete host for the _ModelLoaderMixin.
 
-                    setattr(self, attr, types.MethodType(method, self))
+    Previously this class walked ``dir(_ModelLoaderMixin)`` and grafted every
+    callable onto each instance via ``types.MethodType``. That approach:
 
+      - copied class-level callables (anything with ``__call__``) as if they
+        were methods,
+      - bypassed Python's normal MRO and broke ``super()`` usage,
+      - silently stopped propagating future mixin changes.
+
+    A proper subclass inherits every method correctly and lets mypy + IDEs
+    introspect the host as a normal class.
+    """
+
+    def __init__(self) -> None:
         self.config_manager = MagicMock()
         self._logger = MagicMock()
 
@@ -141,7 +146,7 @@ class TestableModelLoader:
 
 def test_get_cached_models_returns_none_when_no_cache():
     """_get_cached_models() must return None when config has no cache entry."""
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
     host.config_manager.get_setting.return_value = None  # No cache
 
     result = host._get_cached_models("claude")
@@ -153,15 +158,18 @@ def test_get_cached_models_returns_none_when_cache_expired():
     """_get_cached_models() must return None when cache timestamp is more than 24h ago."""
     from datetime import datetime, timedelta
 
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
 
     old_timestamp = (datetime.now() - timedelta(hours=25)).isoformat()
     models_json = json.dumps(["claude-3-5-sonnet-20241022"])
 
     def mock_get_setting(section, key, *args):
-        if "cache" in key:
+        # Exact matches — substring checks against ``key`` coupled the test
+        # to cache-naming conventions ("claude_models_cache" contains both
+        # 'cache' and 'timestamp' substrings if someone renames the keys).
+        if key == "claude_models_cache":
             return models_json
-        if "timestamp" in key:
+        if key == "claude_models_timestamp":
             return old_timestamp
         return None
 
@@ -176,16 +184,16 @@ def test_get_cached_models_returns_list_when_cache_valid():
     """_get_cached_models() must return the cached model list when cache is fresh."""
     from datetime import datetime
 
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
 
     fresh_timestamp = datetime.now().isoformat()
     expected_models = ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
     models_json = json.dumps(expected_models)
 
     def mock_get_setting(section, key, *args):
-        if "cache" in key:
+        if key == "claude_models_cache":
             return models_json
-        if "timestamp" in key:
+        if key == "claude_models_timestamp":
             return fresh_timestamp
         return None
 
@@ -200,14 +208,14 @@ def test_get_cached_models_returns_none_on_invalid_json():
     """_get_cached_models() must return None and not crash on malformed JSON."""
     from datetime import datetime
 
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
 
     fresh_timestamp = datetime.now().isoformat()
 
     def mock_get_setting(section, key, *args):
-        if "cache" in key:
+        if key == "claude_models_cache":
             return "not_valid_json["
-        if "timestamp" in key:
+        if key == "claude_models_timestamp":
             return fresh_timestamp
         return None
 
@@ -225,19 +233,22 @@ def test_get_cached_models_returns_none_on_invalid_json():
 
 def test_cache_models_stores_json_array():
     """_cache_models() must serialise the model list to JSON and persist it."""
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
 
     models = ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
     host._cache_models("claude", models)
 
-    # config_manager.set_setting must have been called with the JSON array
+    # config_manager.set_setting must have been called with the JSON array.
+    # Match on the specific key (positional arg 2) rather than scanning the
+    # call's string representation — the latter can false-hit on tokens
+    # embedded in the value.
     calls = host.config_manager.set_setting.call_args_list
     json_call = next(
-        (c for c in calls if "cache" in str(c)),
+        (c for c in calls if c.args[1] == "claude_models_cache"),
         None,
     )
     assert json_call is not None
-    stored_value = json_call[0][2]  # positional arg 3
+    stored_value = json_call.args[2]
     assert json.loads(stored_value) == models
 
 
@@ -245,24 +256,24 @@ def test_cache_models_stores_timestamp():
     """_cache_models() must persist a timestamp alongside the model list."""
     from datetime import datetime
 
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
     host._cache_models("gemini", ["gemini-1.5-pro"])
 
     calls = host.config_manager.set_setting.call_args_list
     timestamp_call = next(
-        (c for c in calls if "timestamp" in str(c)),
+        (c for c in calls if c.args[1] == "gemini_models_timestamp"),
         None,
     )
     assert timestamp_call is not None
     # Timestamp should be parseable as ISO format
-    timestamp_value = timestamp_call[0][2]
+    timestamp_value = timestamp_call.args[2]
     # Should not raise
     datetime.fromisoformat(timestamp_value)
 
 
 def test_cache_models_uses_correct_section():
     """_cache_models() must write to the 'ModelCache' config section."""
-    host = TestableModelLoader()
+    host = _ModelLoaderHost()
     host._cache_models("ollama", ["llava:latest"])
 
     sections_written = {c[0][0] for c in host.config_manager.set_setting.call_args_list}
