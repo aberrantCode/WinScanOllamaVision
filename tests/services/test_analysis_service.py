@@ -799,9 +799,9 @@ class TestTaxRelatedFeature:
         # Assert - check for tax document examples
         tax_keywords = ["W-2", "1099", "tax return", "property tax", "IRS", "deductible"]
         found_keywords = [keyword for keyword in tax_keywords if keyword in prompt]
-        assert (
-            len(found_keywords) >= 3
-        ), f"Expected at least 3 tax keywords, found: {found_keywords}"
+        assert len(found_keywords) >= 3, (
+            f"Expected at least 3 tax keywords, found: {found_keywords}"
+        )
 
     @pytest.fixture
     def mock_config(self):
