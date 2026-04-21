@@ -31,38 +31,6 @@ class OllamaService:
                 f"Failed to connect to Ollama server. Is it running? Error: {e}"
             ) from e
 
-    @staticmethod
-    def is_vision_model(model_name: str) -> bool:
-        """
-        Determine if a model is a vision model based on its name.
-        Vision models typically have specific name patterns.
-        """
-        vision_keywords = [
-            "llava",
-            "bakllava",
-            "llava-phi",
-            "llava-llama3",
-            "llava-v1",
-            "moondream",
-            "cogvlm",
-            "qwen-vl",
-            "qwen2-vl",
-            "qwen2.5-vl",
-            "qwen3-vl",
-            "deepseek-vl",
-            "yi-vl",
-            "phi-3-vision",
-            "phi3-vision",
-            "internvl",
-            "minicpm-v",
-            "vision",
-            "vl-",
-            "-vl",
-            "-vision",
-        ]
-        model_lower = model_name.lower()
-        return any(keyword in model_lower for keyword in vision_keywords)
-
     def pull_model(self, model_name: str, progress_callback=None) -> None:
         """Pulls an Ollama model. This will block until the download is complete."""
         try:

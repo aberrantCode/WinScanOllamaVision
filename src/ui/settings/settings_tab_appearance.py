@@ -171,5 +171,84 @@ class _SettingsTabAppearanceMixin:
 
         layout.addWidget(tray_group)
 
+        # Status History Group
+        status_history_group = QGroupBox("Status History")
+        sh_layout = QGridLayout(status_history_group)
+
+        sh_layout.addWidget(QLabel("Events shown in dropdown:"), 0, 0)
+        self.status_history_display_count = QSpinBox()
+        self.status_history_display_count.setMinimum(5)
+        self.status_history_display_count.setMaximum(200)
+        self.status_history_display_count.setSingleStep(5)
+        self.status_history_display_count.setValue(
+            int(self.config_manager.get_setting("StatusHistory", "display_count", "20"))
+        )
+        self.status_history_display_count.setToolTip(
+            "How many recent status events are visible at once in the "
+            "history dropdown. Older events are still persisted and "
+            "searchable — this is purely a display cap."
+        )
+        sh_layout.addWidget(self.status_history_display_count, 0, 1)
+
+        sh_layout.addWidget(QLabel("Retention (days):"), 1, 0)
+        self.status_history_retention_days = QSpinBox()
+        self.status_history_retention_days.setMinimum(1)
+        self.status_history_retention_days.setMaximum(365)
+        self.status_history_retention_days.setValue(
+            int(self.config_manager.get_setting("StatusHistory", "retention_days", "30"))
+        )
+        self.status_history_retention_days.setToolTip(
+            "Events older than this are purged on next app start.\n"
+            "Events you've starred are exempt and kept forever."
+        )
+        sh_layout.addWidget(self.status_history_retention_days, 1, 1)
+
+        sh_layout.addWidget(QLabel("Minimum level to record:"), 2, 0)
+        self.status_history_min_level = QComboBox()
+        for label, value in (
+            ("Info (everything)", "info"),
+            ("Warn (and errors)", "warn"),
+            ("Errors only", "error"),
+        ):
+            self.status_history_min_level.addItem(label, value)
+        current_min = self.config_manager.get_setting("StatusHistory", "min_level", "info")
+        idx = self.status_history_min_level.findData(current_min)
+        if idx >= 0:
+            self.status_history_min_level.setCurrentIndex(idx)
+        self.status_history_min_level.setToolTip(
+            "Drop events below this level before they are recorded.\n"
+            "Choose 'Errors only' for the quietest history."
+        )
+        sh_layout.addWidget(self.status_history_min_level, 2, 1)
+
+        self.status_history_auto_popup = QCheckBox("Auto-open details on errors")
+        self.status_history_auto_popup.setChecked(
+            self.config_manager.get_setting("StatusHistory", "auto_popup_errors", "false").lower()
+            == "true"
+        )
+        self.status_history_auto_popup.setToolTip(
+            "When an error event is recorded, automatically open the "
+            "event detail dialog so you can inspect it immediately."
+        )
+        sh_layout.addWidget(self.status_history_auto_popup, 3, 0, 1, 2)
+
+        self.status_history_redact_paths = QCheckBox(
+            "Redact absolute file paths when filing GitHub issues"
+        )
+        self.status_history_redact_paths.setChecked(
+            self.config_manager.get_setting(
+                "StatusHistory", "redact_paths_in_issues", "true"
+            ).lower()
+            == "true"
+        )
+        self.status_history_redact_paths.setToolTip(
+            "When you click 'File GitHub Issue', strip the directory portion "
+            "of any file path so only the filename is disclosed.\n\n"
+            "You can still override this per-issue on the preview screen."
+        )
+        sh_layout.addWidget(self.status_history_redact_paths, 4, 0, 1, 2)
+
+        layout.addWidget(status_history_group)
+
         layout.addStretch()
         return widget

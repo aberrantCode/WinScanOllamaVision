@@ -58,7 +58,7 @@ class AnalyzePanel(QWidget):
 
         self._queue = AnalysisQueue()
         self._worker = AnalysisWorker(self.config_manager, self._queue)
-        self._stats: dict[str, int] = {
+        self._stats: dict[str, Any] = {
             "analyzed": 0,
             "cached": 0,
             "errors": 0,
@@ -76,7 +76,8 @@ class AnalyzePanel(QWidget):
         self.start_btn: QPushButton | None = None
         self.stop_btn: QPushButton | None = None
         self.abort_btn: QPushButton | None = None
-        self.status_lbl: QLabel | None = None
+        self.status_lbl: QLabel | None = None  # retained for backwards-compat shims
+        self.status_bar: Any = None  # StatusHistoryBar
         self.progress_bar: QProgressBar | None = None
         self.file_grid: FileDetailsGrid | None = None
         self.image_preview: ImagePreviewWidget | None = None
@@ -124,10 +125,19 @@ class AnalyzePanel(QWidget):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
 
-        self.status_lbl = QLabel("Ready to analyze.")
-        self.status_lbl.setStyleSheet(f"font-size: 9pt; color: {self._c()['text_secondary']};")
-        toolbar.addWidget(self.status_lbl)
-        toolbar.addStretch()
+        # StatusHistoryBar replaces the former status_lbl. The bar subscribes
+        # to StatusReporter.event_recorded on construction, so every event
+        # the backend emits is reflected here live.
+        from ui.status_history import StatusHistoryBar
+
+        self.status_bar = StatusHistoryBar(dark_mode=self.dark_mode, parent=self)
+        self.status_bar.open_requested.connect(self._on_status_bar_clicked)
+        toolbar.addWidget(self.status_bar, stretch=1)
+
+        # Keep a hidden QLabel alias so any legacy code path that set text
+        # on ``status_lbl`` doesn't crash. The bar is the actual surface now.
+        self.status_lbl = QLabel()
+        self.status_lbl.setVisible(False)
 
         self._select_all_btn = QPushButton("Select All")
         self._select_all_btn.setFlat(True)
@@ -502,6 +512,30 @@ class AnalyzePanel(QWidget):
                 self._on_grid_selection_changed
             )
 
+        # Auto-popup on error (setting: StatusHistory.auto_popup_errors).
+        # Opens StatusEventDialog immediately when an error-level event is
+        # recorded so the user never has to hunt for what went wrong.
+        try:
+            from services.status_reporter import get_reporter
+
+            get_reporter().event_recorded.connect(self._on_status_event_for_auto_popup)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    def _on_status_event_for_auto_popup(self, event: object) -> None:
+        """Auto-open the event dialog when the setting is on and level is error."""
+        from services.status_event import StatusEvent
+
+        if not isinstance(event, StatusEvent) or event.level != "error":
+            return
+        enabled = (
+            self.config_manager.get_setting("StatusHistory", "auto_popup_errors", "false").lower()
+            == "true"
+        )
+        if not enabled:
+            return
+        self._on_history_event_activated(event)
+
     def _on_start(self) -> None:
         self._stats = {"analyzed": 0, "cached": 0, "errors": 0, "total_files": 0}
 
@@ -625,6 +659,11 @@ class AnalyzePanel(QWidget):
         self._stats["errors"] += stats.get("errors", 0)
         self._stats["total_files"] += stats.get("total_files", 0)
 
+        # Explanatory messages ("No source directories configured", etc.)
+        # and per-file error details are now emitted by analysis_service /
+        # analysis_worker as StatusEvents and rendered by StatusHistoryBar;
+        # no in-panel bookkeeping needed.
+
         if self.progress_bar:
             total = stats.get("total_files", 0)
             if total > 0:
@@ -646,10 +685,77 @@ class AnalyzePanel(QWidget):
             self.abort_btn.setVisible(False)
         if self.start_btn:
             self.start_btn.setVisible(True)
-        if self.status_lbl:
-            self.status_lbl.setText("Analysis complete.")
         if self.progress_bar:
             self.progress_bar.setVisible(False)
+
+        # StatusHistoryBar now renders the final status from the most
+        # recent reporter event — no manual text push needed.
+
+    # ---- Status History dropdown / dialog / issue wiring ----------------
+
+    def _on_status_bar_clicked(self) -> None:
+        """Open the HistoryDropdown anchored below the status bar."""
+        from ui.status_history import HistoryDropdown
+
+        display_count = int(self.config_manager.get_setting("StatusHistory", "display_count", "20"))
+        dropdown = HistoryDropdown(
+            display_count=display_count, dark_mode=self.dark_mode, parent=self
+        )
+        dropdown.event_activated.connect(self._on_history_event_activated)
+
+        # Anchor the popup just below the bar for a natural feel
+        if self.status_bar is not None:
+            pos = self.status_bar.mapToGlobal(self.status_bar.rect().bottomLeft())
+            dropdown.move(pos)
+        dropdown.exec()
+
+    def _on_history_event_activated(self, event: Any) -> None:
+        """Open StatusEventDialog for an event the user clicked."""
+        from services.status_event import StatusEvent
+        from ui.status_history import StatusEventDialog
+
+        if not isinstance(event, StatusEvent):
+            return
+
+        retry_enabled = bool(event.file_path and event.feature.startswith("Analyze → Re-analyze"))
+
+        dialog = StatusEventDialog(event, retry_enabled=retry_enabled, parent=self)
+        dialog.retry_requested.connect(self._on_retry_from_history)
+        dialog.file_issue_requested.connect(self._on_file_issue)
+        dialog.exec()
+
+    def _on_retry_from_history(self, event: Any) -> None:
+        """Re-queue a failed file for analysis when user clicks Retry."""
+        from services.status_event import StatusEvent
+
+        if not isinstance(event, StatusEvent) or not event.file_path:
+            return
+        self._on_re_analyze_requested([event.file_path])
+
+    def _on_file_issue(self, event: Any) -> None:
+        """Open IssuePreviewDialog; on accept, browser launches with pre-filled form."""
+        from services.status_event import StatusEvent
+        from ui.status_history import IssuePreviewDialog
+
+        if not isinstance(event, StatusEvent):
+            return
+
+        redact = (
+            self.config_manager.get_setting(
+                "StatusHistory", "redact_paths_in_issues", "true"
+            ).lower()
+            == "true"
+        )
+
+        app_version = self.config_manager.get_setting("App", "version", "0.3.2-dev")
+
+        preview = IssuePreviewDialog(
+            event,
+            app_version=app_version,
+            default_redact_paths=redact,
+            parent=self,
+        )
+        preview.exec()
 
     def shutdown(self) -> None:
         """Stop the analysis worker gracefully. Called by the parent window on close."""

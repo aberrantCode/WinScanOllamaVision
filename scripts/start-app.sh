@@ -11,9 +11,10 @@ echo "WinScanLLM Application Launcher"
 echo "========================================"
 echo ""
 
-# Get script directory
+# Get project root (one level up from the scripts/ directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
 
 # Step 1: Clear Python cache files
 echo "[1/4] Clearing Python cache files..."

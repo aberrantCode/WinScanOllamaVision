@@ -16,6 +16,18 @@ def qapp():
     return app
 
 
+@pytest.fixture(autouse=True)
+def isolate_status_reporter():
+    """Replace the module-level get_reporter() with a MagicMock for every test.
+
+    Without this, each worker failure path would open a real SQLite DB in
+    the user's AppData directory and pollute real status_events rows.
+    """
+    with patch("services.analysis_worker.get_reporter") as m:
+        m.return_value = MagicMock()
+        yield m
+
+
 @pytest.fixture
 def mock_queue():
     q = MagicMock()
@@ -776,3 +788,249 @@ def test_process_job_scan_all_abort_check_reflects_cancelled_state(
     # Set cancelled and check again
     mock_queue.is_job_cancelled.return_value = True
     assert captured_abort_check[0]() is True
+
+
+# ---------------------------------------------------------------------------
+# ANALYZE_FILES — error detail preservation (Phase-0 patch for status history)
+# ---------------------------------------------------------------------------
+
+
+def test_process_job_analyze_files_failure_persists_error_to_db(
+    qapp, mock_config_manager, mock_queue, mock_logger
+):
+    """ANALYZE_FILES must call analysis_db.save_error() on per-file failures.
+
+    Before the Phase-0 patch, the worker only incremented stats["errors"] and
+    updated image status — the failure reason from _analyze_single_page was
+    silently dropped, leaving the user with 'N errors' and no way to see why.
+    """
+    from services.analysis_worker import AnalysisWorker
+
+    worker = AnalysisWorker(mock_config_manager, mock_queue)
+    mock_queue.is_job_cancelled.return_value = False
+    mock_job = _make_analyze_job(file_paths=["/fail.jpg"])
+
+    with (
+        patch("db.analysis_db.AnalysisDB") as mock_db_class,
+        patch("db.metadata_db.MetadataDB") as mock_meta_class,
+        patch("services.analysis_service.AnalysisService") as mock_service_class,
+        patch("services.analysis_worker.logger", mock_logger),
+    ):
+        mock_db = MagicMock()
+        mock_db_class.return_value = mock_db
+        mock_meta_class.return_value = MagicMock()
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        mock_service._analyze_single_page.return_value = {
+            "success": False,
+            "error": "Provider unreachable",
+        }
+
+        worker._process_job(mock_job)
+
+    mock_db.save_error.assert_called_once_with(
+        file_path="/fail.jpg",
+        error_message="Provider unreachable",
+        error_type="analysis_failed",
+    )
+
+
+def test_process_job_analyze_files_failure_populates_error_details_in_stats(
+    qapp, mock_config_manager, mock_queue, mock_logger
+):
+    """stats["error_details"] must carry per-file failure records to the UI.
+
+    This is the data path that backs the clickable "N failed — click for
+    details" affordance and the future StatusReporter.error() calls.
+    """
+    from services.analysis_worker import AnalysisWorker
+
+    worker = AnalysisWorker(mock_config_manager, mock_queue)
+    mock_queue.is_job_cancelled.return_value = False
+    mock_job = _make_analyze_job(file_paths=["/a.jpg", "/b.jpg"])
+
+    job_finished_calls = []
+    worker.job_finished.connect(lambda jid, stats: job_finished_calls.append((jid, stats)))
+
+    with (
+        patch("db.analysis_db.AnalysisDB") as mock_db_class,
+        patch("db.metadata_db.MetadataDB") as mock_meta_class,
+        patch("services.analysis_service.AnalysisService") as mock_service_class,
+        patch("services.analysis_worker.logger", mock_logger),
+    ):
+        mock_db = MagicMock()
+        mock_db_class.return_value = mock_db
+        mock_meta_class.return_value = MagicMock()
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        mock_service._analyze_single_page.side_effect = [
+            {"success": False, "error": "File not found"},
+            {"success": False, "error": "Bad JSON response"},
+        ]
+
+        worker._process_job(mock_job)
+
+    stats = job_finished_calls[0][1]
+    assert stats["errors"] == 2
+    assert "error_details" in stats
+    details = stats["error_details"]
+    assert len(details) == 2
+    assert details[0] == {
+        "file_path": "/a.jpg",
+        "error_message": "File not found",
+        "error_type": "analysis_failed",
+        "job_type": "ANALYZE_FILES",
+    }
+    assert details[1]["error_message"] == "Bad JSON response"
+
+
+def test_process_job_analyze_files_success_does_not_populate_error_details(
+    qapp, mock_config_manager, mock_queue, mock_logger
+):
+    """A successful run produces an empty error_details list, not a missing one."""
+    from services.analysis_worker import AnalysisWorker
+
+    worker = AnalysisWorker(mock_config_manager, mock_queue)
+    mock_queue.is_job_cancelled.return_value = False
+    mock_job = _make_analyze_job(file_paths=["/ok.jpg"])
+
+    job_finished_calls = []
+    worker.job_finished.connect(lambda jid, stats: job_finished_calls.append((jid, stats)))
+
+    with (
+        patch("db.analysis_db.AnalysisDB") as mock_db_class,
+        patch("db.metadata_db.MetadataDB") as mock_meta_class,
+        patch("services.analysis_service.AnalysisService") as mock_service_class,
+        patch("services.analysis_worker.logger", mock_logger),
+    ):
+        mock_db = MagicMock()
+        mock_db_class.return_value = mock_db
+        mock_meta_class.return_value = MagicMock()
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        mock_service._analyze_single_page.return_value = {"success": True}
+
+        worker._process_job(mock_job)
+
+    stats = job_finished_calls[0][1]
+    assert stats["error_details"] == []
+    mock_db.save_error.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ANALYZE_FILES — StatusReporter emission (Phase-2)
+# ---------------------------------------------------------------------------
+
+
+def test_process_job_analyze_files_failure_emits_status_event(
+    qapp, mock_config_manager, mock_queue, mock_logger, isolate_status_reporter
+):
+    """Per-file failure emits a StatusReporter.error() with user-facing feature + file_path."""
+    from services.analysis_worker import AnalysisWorker
+
+    mock_reporter = MagicMock()
+    isolate_status_reporter.return_value = mock_reporter
+
+    worker = AnalysisWorker(mock_config_manager, mock_queue)
+    mock_queue.is_job_cancelled.return_value = False
+    mock_job = _make_analyze_job(job_id="JOB-42", file_paths=["/fail.jpg"])
+
+    with (
+        patch("db.analysis_db.AnalysisDB") as mock_db_class,
+        patch("db.metadata_db.MetadataDB") as mock_meta_class,
+        patch("services.analysis_service.AnalysisService") as mock_service_class,
+        patch("services.analysis_worker.logger", mock_logger),
+    ):
+        mock_db_class.return_value = MagicMock()
+        mock_meta_class.return_value = MagicMock()
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        mock_service._analyze_single_page.return_value = {
+            "success": False,
+            "error": "Provider unreachable",
+        }
+
+        worker._process_job(mock_job)
+
+    # Reporter.error() was called for the failing file
+    mock_reporter.error.assert_any_call(
+        "Analyze → Re-analyze Files",
+        "Re-analysis failed: fail.jpg",
+        detail="Provider unreachable",
+        file_path="/fail.jpg",
+        correlation_id="JOB-42",
+        context={
+            "job_type": "ANALYZE_FILES",
+            "force_reanalysis": False,
+        },
+    )
+
+
+def test_process_job_analyze_files_emits_summary_event_when_errors(
+    qapp, mock_config_manager, mock_queue, mock_logger, isolate_status_reporter
+):
+    """When any file in the batch fails, a WARN summary event fires with totals."""
+    from services.analysis_worker import AnalysisWorker
+
+    mock_reporter = MagicMock()
+    isolate_status_reporter.return_value = mock_reporter
+
+    worker = AnalysisWorker(mock_config_manager, mock_queue)
+    mock_queue.is_job_cancelled.return_value = False
+    mock_job = _make_analyze_job(file_paths=["/a.jpg", "/b.jpg", "/c.jpg"])
+
+    with (
+        patch("db.analysis_db.AnalysisDB") as mock_db_class,
+        patch("db.metadata_db.MetadataDB") as mock_meta_class,
+        patch("services.analysis_service.AnalysisService") as mock_service_class,
+        patch("services.analysis_worker.logger", mock_logger),
+    ):
+        mock_db_class.return_value = MagicMock()
+        mock_meta_class.return_value = MagicMock()
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        # Two failures, one success
+        mock_service._analyze_single_page.side_effect = [
+            {"success": False, "error": "e1"},
+            {"success": True},
+            {"success": False, "error": "e2"},
+        ]
+
+        worker._process_job(mock_job)
+
+    # Find the summary warn() call — should have the "2 of 3" title
+    warn_calls = list(mock_reporter.warn.call_args_list)
+    summary_calls = [c for c in warn_calls if "of 3 files failed re-analysis" in c.args[1]]
+    assert len(summary_calls) == 1, "expected exactly one summary event"
+    assert "2 of 3" in summary_calls[0].args[1]
+
+
+def test_process_job_analyze_files_no_summary_event_when_all_succeed(
+    qapp, mock_config_manager, mock_queue, mock_logger, isolate_status_reporter
+):
+    """All-success runs produce no WARN summary event."""
+    from services.analysis_worker import AnalysisWorker
+
+    mock_reporter = MagicMock()
+    isolate_status_reporter.return_value = mock_reporter
+
+    worker = AnalysisWorker(mock_config_manager, mock_queue)
+    mock_queue.is_job_cancelled.return_value = False
+    mock_job = _make_analyze_job(file_paths=["/ok.jpg"])
+
+    with (
+        patch("db.analysis_db.AnalysisDB") as mock_db_class,
+        patch("db.metadata_db.MetadataDB") as mock_meta_class,
+        patch("services.analysis_service.AnalysisService") as mock_service_class,
+        patch("services.analysis_worker.logger", mock_logger),
+    ):
+        mock_db_class.return_value = MagicMock()
+        mock_meta_class.return_value = MagicMock()
+        mock_service = MagicMock()
+        mock_service_class.return_value = mock_service
+        mock_service._analyze_single_page.return_value = {"success": True}
+
+        worker._process_job(mock_job)
+
+    mock_reporter.warn.assert_not_called()
+    mock_reporter.error.assert_not_called()

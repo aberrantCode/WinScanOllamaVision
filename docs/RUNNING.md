@@ -7,13 +7,13 @@ This document explains how to run the WinScanLLM application.
 ### Using PowerShell (Recommended for Windows)
 
 ```powershell
-.\run_app.ps1
+.\scripts\Start-App.ps1
 ```
 
 ### Using Bash (Git Bash or WSL)
 
 ```bash
-./run_app.sh
+./scripts/start-app.sh
 ```
 
 ## What the Scripts Do
@@ -82,8 +82,8 @@ pip install --force-reinstall --no-cache-dir -r requirements.txt
 If you get "Permission denied" when running the bash script:
 
 ```bash
-chmod +x run_app.sh
-./run_app.sh
+chmod +x scripts/start-app.sh
+./scripts/start-app.sh
 ```
 
 ## Cache Clearing Benefits
@@ -108,7 +108,7 @@ Get-ExecutionPolicy
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 # Or run directly with bypass (one-time)
-PowerShell -ExecutionPolicy Bypass -File .\run_app.ps1
+PowerShell -ExecutionPolicy Bypass -File .\scripts\Start-App.ps1
 ```
 
 ## Development Mode
@@ -117,7 +117,7 @@ For development with automatic cache clearing, you can use the scripts in your d
 
 ```powershell
 # After making code changes
-.\run_app.ps1
+.\scripts\Start-App.ps1
 
 # The script automatically clears caches before each run
 ```

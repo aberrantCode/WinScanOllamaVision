@@ -13,6 +13,7 @@ from db.repositories.pdf_files_repo import PdfFilesRepository
 from db.repositories.pdf_image_pages_repo import PdfImagePagesRepository
 from db.repositories.provider_repo import ProviderRepository
 from db.repositories.rotation_repo import RotationRepository
+from db.repositories.status_events_repo import StatusEventsRepository
 
 __all__ = [
     "AnalysisRepository",
@@ -28,4 +29,5 @@ __all__ = [
     "PdfImagePagesRepository",
     "ProviderRepository",
     "RotationRepository",
+    "StatusEventsRepository",
 ]
