@@ -28,16 +28,25 @@ class _ModelLoaderMixin:
     # ------------------------------------------------------------------
 
     def _load_ollama_models(self, force_refresh: bool = False, cache_only: bool = False):
-        """Load available Ollama vision models with download status and caching
+        """Load available Ollama vision models with download status and caching.
+
+        The dropdown shows the UNION of:
+          1. Every locally-installed Ollama tag (by exact name, e.g. ``qwen2.5vl:3b``)
+          2. A curated set of popular vision-model suggestions the user might want
+
+        Locally-installed models are listed first with a ✓ marker; suggestions
+        follow. Using exact tag names (not just base-name matching) means tags
+        the curated list doesn't know about — e.g. ``qwen2.5vl:3b`` when the
+        curated entry is ``qwen2.5-vl:latest`` — still show up.
 
         Args:
-            force_refresh: If True, bypass cache and check download status fresh
-            cache_only: If True, skip network calls — use cached or default list only
+            force_refresh: If True, bypass cache and re-query Ollama.
+            cache_only: If True, skip network calls entirely.
         """
         self.ollama_model_combo.clear()
 
-        # Popular vision models available in Ollama
-        available_vision_models = [
+        # Curated suggestions — shown even when the user hasn't pulled them yet.
+        curated_suggestions = [
             "llava:latest",
             "llava:7b",
             "llava:13b",
@@ -49,7 +58,10 @@ class _ModelLoaderMixin:
             "qwen2-vl:latest",
             "qwen2-vl:2b",
             "qwen2-vl:7b",
-            "qwen2.5-vl:latest",
+            "qwen2.5vl:latest",
+            "qwen2.5vl:3b",
+            "qwen2.5vl:7b",
+            "qwen3-vl:latest",
             "minicpm-v:latest",
             "minicpm-v:8b",
             "cogvlm:latest",
@@ -57,101 +69,99 @@ class _ModelLoaderMixin:
             "internvl:latest",
         ]
 
-        downloaded_model_names: set = set()
+        # ``downloaded_tags`` holds the full tag names ("qwen2.5vl:3b") that
+        # Ollama reports; ``downloaded_bases`` is the pre-colon portion used
+        # for ✓ marking curated suggestions that share a family.
+        downloaded_tags: list[str] = []
+        downloaded_bases: set[str] = set()
 
-        # Check cache first (unless force refresh)
-        if not force_refresh:
-            cached_downloaded = self.config_manager.get_setting(
-                "ModelCache", "ollama_downloaded_cache"
+        def _set_cache(tags: list[str]) -> None:
+            self.config_manager.set_setting(
+                "ModelCache",
+                "ollama_downloaded_cache",
+                json.dumps(tags),
             )
+            self.config_manager.set_setting(
+                "ModelCache",
+                "ollama_models_timestamp",
+                datetime.now().isoformat(),
+            )
+
+        # Try cache first (unless force refresh)
+        if not force_refresh:
+            cached_raw = self.config_manager.get_setting("ModelCache", "ollama_downloaded_cache")
             cached_timestamp = self.config_manager.get_setting(
                 "ModelCache", "ollama_models_timestamp"
             )
-
-            if cached_downloaded and cached_timestamp:
+            if cached_raw and cached_timestamp:
                 try:
                     last_updated = datetime.fromisoformat(cached_timestamp)
-                    now = datetime.now()
-
-                    if now - last_updated < timedelta(hours=24):
-                        # Use cached download status
-                        downloaded_model_names = set(json.loads(cached_downloaded))
+                    if datetime.now() - last_updated < timedelta(hours=24):
+                        parsed = json.loads(cached_raw)
+                        # Legacy cache stored bases only — if we see a list
+                        # without ":" entries, treat as bases and force a
+                        # refresh so downloaded_tags is populated properly.
+                        if isinstance(parsed, list) and any(":" in x for x in parsed):
+                            downloaded_tags = [str(x) for x in parsed]
+                        else:
+                            force_refresh = True
                         self._get_logger().debug(
-                            f"Using cached Ollama download status (last checked: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
+                            f"Ollama model cache hit (last checked: {last_updated.strftime('%Y-%m-%d %I:%M %p')})"
                         )
                 except (ValueError, json.JSONDecodeError):
-                    pass  # Cache invalid, will refresh
+                    pass
 
-        # Refresh download status if not loaded from cache
-        if not downloaded_model_names or force_refresh:
-            if cache_only:
-                # Skip network call — populate without download status markers
-                pass
-            else:
-                try:
-                    local_models = self.ollama_service.list_models()
-                    downloaded_model_names = {
-                        (m.get("name") or m.get("model")).split(":")[0] for m in local_models
-                    }
+        # Refresh from Ollama if we don't have tags yet
+        if (not downloaded_tags) and not cache_only:
+            try:
+                local_models = self.ollama_service.list_models()
+                downloaded_tags = [
+                    str(m.get("name") or m.get("model") or "")
+                    for m in local_models
+                    if m.get("name") or m.get("model")
+                ]
+                _set_cache(downloaded_tags)
+                self._get_logger().debug(f"Fetched {len(downloaded_tags)} Ollama tags from server")
+            except Exception as e:
+                show_warning(self, "Error", f"Failed to load Ollama models: {e}")
+                return
 
-                    # Cache the download status
-                    timestamp = datetime.now().isoformat()
-                    self.config_manager.set_setting(
-                        "ModelCache",
-                        "ollama_downloaded_cache",
-                        json.dumps(list(downloaded_model_names)),
-                    )
-                    self.config_manager.set_setting(
-                        "ModelCache", "ollama_models_timestamp", timestamp
-                    )
-                    self._get_logger().debug(f"Checked Ollama download status at {timestamp}")
+        downloaded_bases = {t.split(":")[0] for t in downloaded_tags if t}
 
-                except Exception as e:
-                    show_warning(self, "Error", f"Failed to load Ollama models: {e}")
-                    return
+        # 1. Locally-installed tags first — exact names, ✓ marker.
+        seen: set[str] = set()
+        for tag in sorted(downloaded_tags):
+            if tag in seen:
+                continue
+            seen.add(tag)
+            self.ollama_model_combo.addItem(f"{tag} ✓ (Downloaded)", tag)
 
-        # Add models with download status
-        for model in available_vision_models:
-            model_base = model.split(":")[0]
-            is_downloaded = model_base in downloaded_model_names
+        # 2. Curated suggestions — only those not already shown.
+        #    Ones whose base is already installed get a lighter "(same family
+        #    installed)" marker to help the user recognize similarity.
+        for tag in curated_suggestions:
+            if tag in seen:
+                continue
+            seen.add(tag)
+            base = tag.split(":")[0]
+            display = f"{tag}  (same family installed)" if base in downloaded_bases else tag
+            self.ollama_model_combo.addItem(display, tag)
 
-            display_text = f"{model} ✓ (Downloaded)" if is_downloaded else f"{model}"
-
-            self.ollama_model_combo.addItem(display_text, model)
-
-        # Set current model
+        # Set the currently-configured model
         current_model = self.config_manager.get_setting("Ollama", "model")
         if current_model:
             model_found = False
-
-            # Try exact match first
+            # Exact match
             for i in range(self.ollama_model_combo.count()):
                 if self.ollama_model_combo.itemData(i) == current_model:
                     self.ollama_model_combo.setCurrentIndex(i)
                     model_found = True
                     break
-
-            # Try partial match (base name) if exact match failed
             if not model_found:
-                current_base = current_model.split(":")[0]
-                for i in range(self.ollama_model_combo.count()):
-                    if self.ollama_model_combo.itemData(i).startswith(current_base):
-                        self.ollama_model_combo.setCurrentIndex(i)
-                        model_found = True
-                        break
-
-            # If model not found in list, add it
-            if not model_found:
-                # Check if it's downloaded
-                model_base = current_model.split(":")[0]
-                is_downloaded = model_base in downloaded_model_names
-
-                if is_downloaded:
-                    display_text = f"{current_model} ✓ (Downloaded)"
-                else:
-                    display_text = f"{current_model}"
-
-                self.ollama_model_combo.addItem(display_text, current_model)
+                # Add a row for it so the user can see what's selected
+                is_downloaded = current_model in downloaded_tags
+                label = f"{current_model} ✓ (Downloaded)" if is_downloaded else current_model
+                self.ollama_model_combo.addItem(label, current_model)
                 self.ollama_model_combo.setCurrentIndex(self.ollama_model_combo.count() - 1)
 
     # ------------------------------------------------------------------
