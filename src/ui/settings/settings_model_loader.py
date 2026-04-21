@@ -341,11 +341,14 @@ class _ModelLoaderMixin:
                 # Cache is valid - parse and validate models
                 raw_models = json.loads(cached_json)
 
-                # H-11: validate structure
+                # H-11: validate structure. Route through the same compiled
+                # pattern that _validate_model_names uses — otherwise the
+                # cache and web paths can silently drift in their allowed
+                # character sets.
                 if not (
                     isinstance(raw_models, list)
                     and all(
-                        isinstance(item, str) and re.fullmatch(r"[a-zA-Z0-9._:/-]+", item)
+                        isinstance(item, str) and _MODEL_NAME_PATTERN.fullmatch(item)
                         for item in raw_models
                     )
                 ):

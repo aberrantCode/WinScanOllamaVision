@@ -307,24 +307,27 @@ class _DialogActionsMixin:
                     )
                     metadata_db.save_rotation(file_path, rotation_degrees)
 
-                    # Update normalized metadata table (user edit) via MetadataDB
-                    try:
-                        metadata_updates = {
-                            "company": metadata.get("company"),
-                            "document_type": metadata.get("document_type"),
-                            "document_date": metadata.get("document_date"),
-                            "page_number": self._safe_int(metadata.get("page_number")),
-                            "total_pages": self._safe_int(metadata.get("total_pages")),
-                            "rotation": rotation_degrees,
-                            "tax_related": metadata.get("tax_related", False),
-                            "output_filename": metadata.get("output_filename"),
-                            "document_category": metadata.get("document_category"),
-                        }
-                        # Use save_metadata which handles the metadata updates
-                        metadata_db.save_metadata(file_path, metadata_updates)
-                        logger.debug("Updated normalized metadata table via MetadataDB (user edit)")
-                    except Exception as meta_error:
-                        logger.warning("Failed to update normalized metadata: %s", meta_error)
+                    # Update normalized metadata table (user edit) via
+                    # MetadataDB. This was previously wrapped in its own
+                    # try/except-log-warning block, which caused a silent
+                    # partial-save: the first two writes would succeed, this
+                    # one would fail, the user would still see "Metadata saved
+                    # successfully!" and the normalized table would be stale.
+                    # Let the exception propagate to the outer handler so the
+                    # user learns the save did not fully complete.
+                    metadata_updates = {
+                        "company": metadata.get("company"),
+                        "document_type": metadata.get("document_type"),
+                        "document_date": metadata.get("document_date"),
+                        "page_number": self._safe_int(metadata.get("page_number")),
+                        "total_pages": self._safe_int(metadata.get("total_pages")),
+                        "rotation": rotation_degrees,
+                        "tax_related": metadata.get("tax_related", False),
+                        "output_filename": metadata.get("output_filename"),
+                        "document_category": metadata.get("document_category"),
+                    }
+                    metadata_db.save_metadata(file_path, metadata_updates)
+                    logger.debug("Updated normalized metadata table via MetadataDB (user edit)")
 
                     # All writes have succeeded — now it is safe to merge the
                     # user-entered values into the dialog's in-memory state.
@@ -396,6 +399,7 @@ class _DialogActionsMixin:
                 )
 
         except Exception as e:
+            logger.error("Save metadata failed", exc_info=True)
             show_critical(self, "Save Failed", f"Failed to save metadata:\n\n{str(e)}")
 
     def _find_actual_file_path(self, stored_path: str | None, filename: str) -> str | None:
