@@ -1,6 +1,8 @@
 # Pre-commit hooks configuration
 # Install: pre-commit install
+# Install pre-push tests: pre-commit install --hook-type pre-push
 # Run manually: pre-commit run --all-files
+# Run pre-push hooks manually: pre-commit run --hook-stage pre-push --all-files
 
 repos:
   # Ruff - Fast Python linter and formatter
@@ -30,6 +32,15 @@ repos:
         args: [-c, pyproject.toml]
         additional_dependencies: ["bandit[toml]"]
 
+  # Secrets scanning — catches API keys, OAuth tokens, AWS creds, etc.
+  # before they enter git history. The pre-existing detect-private-key
+  # hook only matches SSH keys; gitleaks covers the wider secret surface
+  # that security.yml's TruffleHog currently scans post-push on CI.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
+
   # Basic checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -50,3 +61,18 @@ repos:
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
+
+  # Fast test suite as a pre-push gate — catches regressions locally in
+  # ~30–60 s instead of waiting 2–10 min for GitHub Actions. Scoped to
+  # the fast test directories (services/db/config/llm_providers); the
+  # UI, GUI, and integration suites still run on CI where a full matrix
+  # across Python 3.11/3.12/3.13 × ubuntu/windows is possible.
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest (fast subset) on push
+        entry: python run_tests.py tests/services tests/db tests/config tests/llm_providers --no-cov -x
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        verbose: true
