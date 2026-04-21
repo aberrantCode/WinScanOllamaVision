@@ -14,9 +14,9 @@ Write-Host "WinScanLLM Application Launcher" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Get script directory
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $ScriptDir
+# Get project root (one level up from the scripts/ directory)
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+Set-Location $ProjectRoot
 
 # Step 1: Clear Python cache files
 Write-Host "[1/4] Clearing Python cache files..." -ForegroundColor Yellow
@@ -83,7 +83,7 @@ Write-Host ""
 
 # Step 3: Activate virtual environment
 Write-Host "[3/4] Activating virtual environment..." -ForegroundColor Yellow
-$venvPython = Join-Path $ScriptDir "venv\Scripts\python.exe"
+$venvPython = Join-Path $ProjectRoot "venv\Scripts\python.exe"
 $pythonVersion = & $venvPython --version 2>&1
 Write-Host "  ✓ Using: $pythonVersion" -ForegroundColor Green
 Write-Host ""
