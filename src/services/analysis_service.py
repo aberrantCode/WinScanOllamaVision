@@ -14,6 +14,7 @@ from db.analysis_db import AnalysisDB
 from db.metadata_db import MetadataDB
 from llm_providers.provider_factory import ProviderFactory
 from services.logging_service import get_logger
+from services.status_reporter import get_reporter
 
 
 class AnalysisService:
@@ -118,10 +119,21 @@ class AnalysisService:
             Dictionary with analysis statistics
         """
         self._log("[SCAN] Starting scan_all_directories...")
+        reporter = get_reporter()
 
         # Check if auto-analysis is enabled
         if not self.config.get_bool("AutoAnalysis", "enabled", True):
             self._log("[SCAN] Auto-analysis is disabled in settings")
+            reporter.warn(
+                "Analyze → Start Analysis",
+                "Auto-analysis is disabled in Settings",
+                detail=(
+                    "Start Analysis did nothing because AutoAnalysis.enabled is "
+                    "False. Open Settings → General to enable it, or switch to "
+                    "Re-analyze Selected for one-off runs."
+                ),
+                context={"config_key": "AutoAnalysis.enabled", "value": False},
+            )
             return {
                 "total_files": 0,
                 "analyzed": 0,
@@ -134,6 +146,15 @@ class AnalysisService:
         directories = self.analysis_db.get_active_directories()
         if not directories:
             self._log("[SCAN] No source directories configured")
+            reporter.warn(
+                "Analyze → Start Analysis",
+                "No source directories configured",
+                detail=(
+                    "Add at least one scan source in Settings → Directories "
+                    "so the analyzer knows where to look for images."
+                ),
+                context={"active_directory_count": 0},
+            )
             return {
                 "total_files": 0,
                 "analyzed": 0,
@@ -215,6 +236,13 @@ class AnalysisService:
                         error_message=error_msg,
                         error_type="analysis_failed",
                     )
+                    reporter.error(
+                        "Analyze → Start Analysis",
+                        f"Failed to analyze {os.path.basename(image_path)}",
+                        detail=error_msg,
+                        file_path=image_path,
+                        context={"job_type": "SCAN_ALL"},
+                    )
 
             # Update directory scan info for each directory
             for directory in directories:
@@ -239,6 +267,37 @@ class AnalysisService:
                 self._log("[SCAN] Analysis aborted - no results saved")
             else:
                 self._log(f"[SCAN] Analysis finalized - Stats: {stats}")
+
+        # Summary event at job end — only when the run actually completed.
+        # Gives the user a single line describing what happened; errors are
+        # already logged as individual events above.
+        try:
+            analyzed = int(stats.get("analyzed", 0) or 0)
+            cached = int(stats.get("cached", 0) or 0)
+            errors = int(stats.get("errors", 0) or 0)
+            total = int(stats.get("total_files", 0) or 0)
+            if errors > 0:
+                reporter.warn(
+                    "Analyze → Start Analysis",
+                    f"{errors} of {total} files failed analysis",
+                    detail=f"Analyzed {analyzed}, cached {cached}, errors {errors}.",
+                    context=dict(stats),
+                )
+            elif analyzed == 0 and cached > 0:
+                reporter.info(
+                    "Analyze → Start Analysis",
+                    f"Nothing to analyze — {cached} files already up to date",
+                    detail="All configured files matched the cache; no LLM calls needed.",
+                    context=dict(stats),
+                )
+            elif total > 0:
+                reporter.info(
+                    "Analyze → Start Analysis",
+                    f"Analyzed {analyzed}, cached {cached}",
+                    context=dict(stats),
+                )
+        except Exception:  # pragma: no cover - defensive
+            pass
 
         return stats
 

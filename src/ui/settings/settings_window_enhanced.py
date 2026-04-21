@@ -579,6 +579,40 @@ class EnhancedSettingsWindow(
                 "true" if self.close_to_tray_checkbox.isChecked() else "false",
             )
 
+            # Status History section (Phase 3 / status_history.md §8)
+            self.config_manager.set_setting(
+                "StatusHistory",
+                "display_count",
+                str(self.status_history_display_count.value()),
+            )
+            self.config_manager.set_setting(
+                "StatusHistory",
+                "retention_days",
+                str(self.status_history_retention_days.value()),
+            )
+            self.config_manager.set_setting(
+                "StatusHistory",
+                "min_level",
+                self.status_history_min_level.currentData(),
+            )
+            self.config_manager.set_setting(
+                "StatusHistory",
+                "auto_popup_errors",
+                "true" if self.status_history_auto_popup.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "StatusHistory",
+                "redact_paths_in_issues",
+                "true" if self.status_history_redact_paths.isChecked() else "false",
+            )
+            # Live-apply the min-level change immediately
+            try:
+                from services.status_reporter import get_reporter
+
+                get_reporter().set_min_level(self.status_history_min_level.currentData())
+            except Exception:
+                pass
+
             from ui.theme.styles import show_information
 
             show_information(self, "Settings Saved", "Your settings have been saved successfully.")
