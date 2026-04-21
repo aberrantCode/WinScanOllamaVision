@@ -3,15 +3,10 @@
 import logging
 import os
 import sqlite3
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from db.connection import DatabaseConnection
 from services.metadata_normalizer import MetadataNormalizer
-
-if TYPE_CHECKING:
-    from services.logging_service import get_logger
-else:
-    get_logger = None
 
 logger: logging.Logger | None = None
 
@@ -29,13 +24,66 @@ class MetadataRepository:
         self.conn = conn
 
     def _get_logger(self) -> logging.Logger:
-        """Get logger instance (lazy initialization)."""
+        """Get logger instance (lazy initialization).
+
+        Kept lazy rather than pulled into __init__ so that instantiating the
+        repository before LoggingService.initialize() has run (e.g. in unit
+        tests that exercise the connection layer in isolation) does not raise.
+        """
         global logger
         if logger is None:
             from services.logging_service import get_logger as _get_logger
 
             logger = _get_logger()
         return logger
+
+    # ------------------------------------------------------------------
+    # Internal transaction helpers
+    # ------------------------------------------------------------------
+    #
+    # Every public write method must guard BOTH ``execute`` and ``commit``
+    # in the same try/except. Execute-time errors (IntegrityError,
+    # OperationalError on a locked DB, DataError) would otherwise bypass
+    # the rollback branch entirely and leak an uncommitted transaction up
+    # the call stack — meaning callers have no way to know whether the
+    # operation partially applied.
+    #
+    # Use ``_run_write(op_name, fn)`` inside each public write method to
+    # run the execute + commit sequence atomically and surface a uniform
+    # error message.
+
+    def _run_write(self, op_name: str, fn: Any) -> Any:
+        """Execute a unit-of-work callable and commit, rolling back on failure.
+
+        Args:
+            op_name: Human-readable operation name for log messages and
+                the user-facing error text.
+            fn: Zero-argument callable that performs ``self.conn.execute(...)``
+                calls. Return value is passed through to the caller so the
+                method can retrieve ``cursor.lastrowid`` etc.
+
+        Raises:
+            sqlite3.OperationalError: Database is locked or unavailable.
+            sqlite3.Error: Any other sqlite-layer failure.
+        """
+        try:
+            result = fn()
+            self.conn.commit()
+            return result
+        except sqlite3.OperationalError as e:
+            self._get_logger().error(f"[METADATA REPO] {op_name} — DB locked: {e}")
+            self.conn.rollback()
+            raise sqlite3.OperationalError("Database is locked. Try again.") from e
+        except sqlite3.Error as e:
+            self._get_logger().error(f"[METADATA REPO] {op_name} — DB error: {e}")
+            self.conn.rollback()
+            # Preserve original casing on op_name so callers and tests can
+            # match specific phrases like "Failed to link images to PDF".
+            raise sqlite3.Error(f"Failed to {op_name}: {e}") from e
+
+    # ------------------------------------------------------------------
+    # Writes
+    # ------------------------------------------------------------------
 
     def create_from_analysis(
         self,
@@ -48,6 +96,12 @@ class MetadataRepository:
         """
         Create metadata record from normalized analysis.
 
+        Uses ON CONFLICT DO UPDATE rather than INSERT OR REPLACE — the
+        latter compiles to DELETE + INSERT in SQLite, which cascades
+        through ON DELETE CASCADE foreign keys and silently prunes any
+        child rows that reference the metadata row's primary key.
+        UPSERT updates in-place and preserves referential integrity.
+
         Args:
             image_file_id: Image file ID
             analysis_result_id: Analysis result ID (None if metadata created without analysis)
@@ -56,51 +110,71 @@ class MetadataRepository:
             document_category: Optional document category
 
         Returns:
-            Created metadata record ID
+            Metadata record ID (id of the row that was inserted or updated).
         """
-        cursor = self.conn.execute(
-            """
-            INSERT OR REPLACE INTO metadata (
-                image_file_id, analysis_result_id,
-                company, document_type, document_date,
-                page_number, total_pages, belongs_to_same_doc,
-                rotation, confidence_score, tax_related, is_blank,
-                output_filename, document_category,
-                auto_approved, last_edited_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ai')
-        """,
-            (
-                image_file_id,
-                analysis_result_id,
-                normalized_metadata.get("company"),
-                normalized_metadata.get("document_type"),
-                normalized_metadata.get("document_date"),
-                normalized_metadata.get("page_number"),
-                normalized_metadata.get("total_pages"),
-                normalized_metadata.get("belongs_to_same_doc"),
-                normalized_metadata.get("rotation"),
-                normalized_metadata.get("confidence_score"),
-                normalized_metadata.get("tax_related"),
-                normalized_metadata.get("is_blank"),
-                output_filename,
-                document_category,
-            ),
+        params = (
+            image_file_id,
+            analysis_result_id,
+            normalized_metadata.get("company"),
+            normalized_metadata.get("document_type"),
+            normalized_metadata.get("document_date"),
+            normalized_metadata.get("page_number"),
+            normalized_metadata.get("total_pages"),
+            normalized_metadata.get("belongs_to_same_doc"),
+            normalized_metadata.get("rotation"),
+            normalized_metadata.get("confidence_score"),
+            normalized_metadata.get("tax_related"),
+            normalized_metadata.get("is_blank"),
+            output_filename,
+            document_category,
         )
-        try:
-            self.conn.commit()
-        except sqlite3.OperationalError as e:
-            self._get_logger().error(f"[METADATA REPO] Database locked: {e}")
-            self.conn.rollback()
-            raise sqlite3.OperationalError("Database is locked. Try again.") from e
-        except sqlite3.Error as e:
-            self._get_logger().error(f"[METADATA REPO] Database error: {e}")
-            self.conn.rollback()
-            raise sqlite3.Error(f"Failed to create metadata record: {e}") from e
 
-        # Get last inserted row ID
-        metadata_id = cursor.lastrowid
-        if metadata_id is None:
-            raise RuntimeError("Failed to retrieve inserted metadata ID")
+        def _op() -> sqlite3.Cursor:
+            return self.conn.execute(
+                """
+                INSERT INTO metadata (
+                    image_file_id, analysis_result_id,
+                    company, document_type, document_date,
+                    page_number, total_pages, belongs_to_same_doc,
+                    rotation, confidence_score, tax_related, is_blank,
+                    output_filename, document_category,
+                    auto_approved, last_edited_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ai')
+                ON CONFLICT(image_file_id) DO UPDATE SET
+                    analysis_result_id = excluded.analysis_result_id,
+                    company            = excluded.company,
+                    document_type      = excluded.document_type,
+                    document_date      = excluded.document_date,
+                    page_number        = excluded.page_number,
+                    total_pages        = excluded.total_pages,
+                    belongs_to_same_doc = excluded.belongs_to_same_doc,
+                    rotation           = excluded.rotation,
+                    confidence_score   = excluded.confidence_score,
+                    tax_related        = excluded.tax_related,
+                    is_blank           = excluded.is_blank,
+                    output_filename    = excluded.output_filename,
+                    document_category  = excluded.document_category,
+                    auto_approved      = 1,
+                    last_edited_by     = 'ai',
+                    updated_at         = CURRENT_TIMESTAMP
+            """,
+                params,
+            )
+
+        cursor = self._run_write("create metadata record", _op)
+
+        # For an INSERT path, cursor.lastrowid holds the new row id. For
+        # the UPDATE path (ON CONFLICT), lastrowid can be 0 or None
+        # depending on SQLite version; in that case look up the existing
+        # row by the unique image_file_id.
+        metadata_id: int | None = cursor.lastrowid
+        if not metadata_id:
+            row = self.conn.fetch_one(
+                "SELECT id FROM metadata WHERE image_file_id = ?", (image_file_id,)
+            )
+            if row is None:
+                raise RuntimeError("Failed to retrieve inserted metadata ID")
+            metadata_id = int(row[0])
         return metadata_id
 
     def update_from_user(self, image_file_id: int, updates: dict[str, Any]) -> None:
@@ -164,25 +238,16 @@ class MetadataRepository:
             ", user_verified = 1, last_edited_by = 'user', updated_at = CURRENT_TIMESTAMP"
         )
 
-        # Execute UPSERT
-        self.conn.execute(
-            f"""
+        query = f"""
             INSERT INTO metadata ({", ".join(columns)})
             VALUES ({", ".join(placeholders)})
             ON CONFLICT(image_file_id) DO UPDATE SET {update_clause}
-        """,
-            tuple(values),
+        """
+
+        self._run_write(
+            "update metadata",
+            lambda: self.conn.execute(query, tuple(values)),
         )
-        try:
-            self.conn.commit()
-        except sqlite3.OperationalError as e:
-            self._get_logger().error(f"[METADATA REPO] Database locked: {e}")
-            self.conn.rollback()
-            raise sqlite3.OperationalError("Database is locked. Try again.") from e
-        except sqlite3.Error as e:
-            self._get_logger().error(f"[METADATA REPO] Database error: {e}")
-            self.conn.rollback()
-            raise sqlite3.Error(f"Failed to update metadata: {e}") from e
 
     def get_by_image_file_id(self, image_file_id: int) -> dict[str, Any] | None:
         """
@@ -245,26 +310,19 @@ class MetadataRepository:
 
         bundle_id = result["bundle_id"]
 
-        # Add images to bundle via bundle_images table
-        for sequence, image_file_id in enumerate(image_file_ids, start=1):
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO bundle_images (bundle_id, image_file_id, sequence_order)
-                VALUES (?, ?, ?)
-            """,
-                (bundle_id, image_file_id, sequence),
-            )
+        def _op() -> None:
+            # Add images to bundle via bundle_images table
+            for sequence, image_file_id in enumerate(image_file_ids, start=1):
+                self.conn.execute(
+                    """
+                    INSERT OR IGNORE INTO bundle_images (bundle_id, image_file_id, sequence_order)
+                    VALUES (?, ?, ?)
+                """,
+                    (bundle_id, image_file_id, sequence),
+                )
 
-        try:
-            self.conn.commit()
-        except sqlite3.OperationalError as e:
-            self._get_logger().error(f"[METADATA REPO] Database locked: {e}")
-            self.conn.rollback()
-            raise sqlite3.OperationalError("Database is locked. Try again.") from e
-        except sqlite3.Error as e:
-            self._get_logger().error(f"[METADATA REPO] Database error: {e}")
-            self.conn.rollback()
-            raise sqlite3.Error(f"Failed to link images to PDF: {e}") from e
+        # Case preserved for caller-visible error text.
+        self._run_write("link images to PDF", _op)
 
     def get_analysis_history(self, image_file_id: int) -> list[dict[str, Any]]:
         """
@@ -276,8 +334,9 @@ class MetadataRepository:
         Returns:
             List of analysis result dictionaries
         """
-        # Get all analyses for this image_file_id
-        results = self.conn.fetch_all_dicts(
+        # Get all analyses for this image_file_id. fetch_all_dicts already
+        # returns [] on empty — no post-hoc "or []" needed.
+        return self.conn.fetch_all_dicts(
             """
             SELECT *
             FROM analysis_results
@@ -287,8 +346,6 @@ class MetadataRepository:
             (image_file_id,),
             json_fields=["extracted_metadata", "model_options"],
         )
-
-        return results if results else []
 
     def get_all(
         self, status_filter: str | None = None, directory_filter: str | None = None
@@ -327,8 +384,7 @@ class MetadataRepository:
 
         query += " ORDER BY m.updated_at DESC"
 
-        results = self.conn.fetch_all_dicts(query, tuple(params))
-        return results if results else []
+        return self.conn.fetch_all_dicts(query, tuple(params))
 
     def delete_by_image_file_id(self, image_file_id: int) -> None:
         """
@@ -337,17 +393,12 @@ class MetadataRepository:
         Args:
             image_file_id: Image file ID
         """
-        self.conn.execute("DELETE FROM metadata WHERE image_file_id = ?", (image_file_id,))
-        try:
-            self.conn.commit()
-        except sqlite3.OperationalError as e:
-            self._get_logger().error(f"[METADATA REPO] Database locked: {e}")
-            self.conn.rollback()
-            raise sqlite3.OperationalError("Database is locked. Try again.") from e
-        except sqlite3.Error as e:
-            self._get_logger().error(f"[METADATA REPO] Database error: {e}")
-            self.conn.rollback()
-            raise sqlite3.Error(f"Failed to delete metadata record: {e}") from e
+        self._run_write(
+            "delete metadata record",
+            lambda: self.conn.execute(
+                "DELETE FROM metadata WHERE image_file_id = ?", (image_file_id,)
+            ),
+        )
 
     def get_unique_companies(self) -> list[str]:
         """
@@ -364,7 +415,7 @@ class MetadataRepository:
             ORDER BY company
         """
         )
-        return [row[0] for row in results] if results else []
+        return [row[0] for row in results]
 
     def get_unique_document_types(self) -> list[str]:
         """
@@ -381,7 +432,7 @@ class MetadataRepository:
             ORDER BY document_type
         """
         )
-        return [row[0] for row in results] if results else []
+        return [row[0] for row in results]
 
     def get_unique_categories(self) -> list[str]:
         """
@@ -398,7 +449,7 @@ class MetadataRepository:
             ORDER BY document_category
         """
         )
-        return [row[0] for row in results] if results else []
+        return [row[0] for row in results]
 
     def get_stats(self) -> dict[str, int]:
         """

@@ -1007,12 +1007,23 @@ class TestMetadataCreateFromAnalysisEdgeCases:
     def test_create_from_analysis_raises_error_when_lastrowid_is_none(
         self, repo, image_repo, monkeypatch
     ):
-        """Test create_from_analysis raises RuntimeError when cursor.lastrowid is None."""
+        """Test create_from_analysis raises RuntimeError when the UPSERT yields no row.
+
+        ``cursor.lastrowid`` is 0/None on SQLite's UPDATE path (ON CONFLICT
+        DO UPDATE), so the repo now falls back to a lookup by
+        ``image_file_id``. If that fallback also yields nothing the write
+        genuinely produced no row and a RuntimeError must surface.
+        """
         image_id = image_repo.register("/test/img.jpg", "hash", "/test", "img.jpg", 1024, 12345.0)
 
-        # Mock execute to return a cursor with lastrowid = None
+        # Mock execute to return a cursor with lastrowid = None and a
+        # fetchone() that returns None (simulating the fallback lookup
+        # also finding nothing).
         class MockCursor:
             lastrowid = None
+
+            def fetchone(self) -> None:
+                return None
 
         def mock_execute(*args, **kwargs):
             return MockCursor()
