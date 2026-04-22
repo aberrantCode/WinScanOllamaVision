@@ -130,6 +130,12 @@ class DocumentPipelineWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # ── Update banner (hidden unless UpdateService emits update_available)
+        from ui.update_banner import UpdateBanner
+
+        self.update_banner = UpdateBanner()
+        root.addWidget(self.update_banner)
+
         # ── Pipeline header rail
         self.header = PipelineHeaderWidget()
         self.header.set_stage(STAGE_IMPORT)

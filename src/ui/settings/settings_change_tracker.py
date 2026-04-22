@@ -44,6 +44,9 @@ class _ChangeTrackerMixin:
             self._original_values["confirm_exit"] = self.confirm_exit_checkbox.isChecked()
             self._original_values["persist_rotation"] = self.persist_rotation_checkbox.isChecked()
             self._original_values["log_sql"] = self.log_sql_checkbox.isChecked()
+            self._original_values["check_updates_on_startup"] = (
+                self.check_updates_on_startup_checkbox.isChecked()
+            )
 
             # LLM Provider tab
             self._original_values["active_provider"] = self.provider_combo.currentData()
@@ -95,6 +98,7 @@ class _ChangeTrackerMixin:
         self.confirm_exit_checkbox.stateChanged.connect(self._check_for_changes)
         self.persist_rotation_checkbox.stateChanged.connect(self._check_for_changes)
         self.log_sql_checkbox.stateChanged.connect(self._check_for_changes)
+        self.check_updates_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
 
         # LLM Provider tab
         self.provider_combo.currentIndexChanged.connect(self._check_for_changes)
@@ -216,6 +220,10 @@ class _ChangeTrackerMixin:
             ):
                 has_changes = True
             if self.log_sql_checkbox.isChecked() != self._original_values.get("log_sql", False):
+                has_changes = True
+            if self.check_updates_on_startup_checkbox.isChecked() != self._original_values.get(
+                "check_updates_on_startup", True
+            ):
                 has_changes = True
 
             # LLM Provider tab
