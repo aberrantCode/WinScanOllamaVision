@@ -5,6 +5,7 @@ Document Pipeline Window — unified Import → Analyze → Bundle → Export wo
 import ctypes
 import os
 import platform
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
@@ -17,6 +18,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+if TYPE_CHECKING:
+    from ui.settings import EnhancedSettingsWindow
 
 from config.config_manager import ConfigManager
 from db.analysis_db import AnalysisDB
@@ -32,8 +36,8 @@ from ui.pipeline.stages import (
     STAGE_IMPORT,
     PipelineHeaderWidget,
 )
-from ui.styles import Colors
-from ui.theme_manager import ThemeManager
+from ui.theme.styles import Colors
+from ui.theme.theme_manager import ThemeManager
 
 # ---------------------------------------------------------------------------
 # Windows DWM title-bar colour helpers
@@ -96,6 +100,8 @@ class DocumentPipelineWindow(QMainWindow):
 
         self._current_stage = STAGE_IMPORT
         self._completed_stages: set[int] = set()
+        self._skipped_stages: set[int] = set()
+        self._settings_window: EnhancedSettingsWindow | None = None
 
         self._build_ui()
         self._apply_theme()
@@ -123,6 +129,12 @@ class DocumentPipelineWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # ── Update banner (hidden unless UpdateService emits update_available)
+        from ui.update_banner import UpdateBanner
+
+        self.update_banner = UpdateBanner()
+        root.addWidget(self.update_banner)
 
         # ── Pipeline header rail
         self.header = PipelineHeaderWidget()
@@ -255,13 +267,17 @@ class DocumentPipelineWindow(QMainWindow):
     def _go_to_stage(self, stage: int) -> None:
         stage = max(STAGE_IMPORT, min(STAGE_EXPORT, stage))
 
-        # Mark the current stage complete when moving forward
         if stage > self._current_stage:
+            # Complete the stage we're leaving
             self._completed_stages.add(self._current_stage)
+            self._skipped_stages.discard(self._current_stage)
+            # Any stages we jump over become "skipped"
+            for s in range(self._current_stage + 1, stage):
+                self._skipped_stages.add(s)
 
         self._current_stage = stage
         self.stack.setCurrentIndex(stage)
-        self.header.set_stage(stage, self._completed_stages)
+        self.header.set_stage(stage, self._completed_stages, self._skipped_stages)
         self._update_footer_buttons(stage)
 
         # Trigger stage-specific refresh
@@ -302,15 +318,24 @@ class DocumentPipelineWindow(QMainWindow):
         self.export_panel.update_stats(stats)
 
     def _show_settings(self) -> None:
-        """Open the application settings dialog."""
-        from ui.settings_window_enhanced import EnhancedSettingsWindow
+        """Open the application settings dialog (modal, single instance)."""
+        from ui.settings import EnhancedSettingsWindow
 
-        settings = EnhancedSettingsWindow(
+        if (
+            hasattr(self, "_settings_window")
+            and self._settings_window is not None
+            and self._settings_window.isVisible()
+        ):
+            self._settings_window.raise_()
+            self._settings_window.activateWindow()
+            return
+
+        self._settings_window = EnhancedSettingsWindow(
             parent=self,
             analysis_db=self.analysis_db,
             metadata_db=self.metadata_db,
         )
-        settings.show()
+        self._settings_window.exec()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if hasattr(self, "analyze_panel"):

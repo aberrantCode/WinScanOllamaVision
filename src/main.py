@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+from __version__ import __version__ as _app_version
+
 # Import only LoggingService first, before any modules that use it
 from services.logging_service import LoggingService, get_logger
 
@@ -23,7 +25,7 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
     from PyQt6.QtCore import QTimer
 
     from services.discovery_worker import DiscoveryWorker
-    from ui.toast_notifier import ToastNotifier
+    from services.notification_service import NotificationService
 
     scan_on_startup = config_manager.get_bool("SourceDirectories", "scan_on_startup", True)
     if not scan_on_startup:
@@ -39,14 +41,14 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
 
     def start_discovery() -> None:
         discovery_worker = DiscoveryWorker(config_manager, directories)
-        toast_notifier = ToastNotifier()
+        toast_notifier = NotificationService()
 
         def on_discovery_finished(count: int) -> None:
-            get_logger().info(f"Startup discovery finished – {count} new files registered")
+            get_logger().info("Startup discovery finished – %s new files registered", count)
             toast_notifier.show_discovery_toast(count)
 
         def on_discovery_error(error: str) -> None:
-            get_logger().error(f"Startup discovery error: {error}")
+            get_logger().error("Startup discovery error: %s", error)
 
         discovery_worker.finished.connect(on_discovery_finished)
         discovery_worker.error.connect(on_discovery_error)
@@ -77,6 +79,51 @@ def _start_periodic_scheduler(window, config_manager) -> None:
 
     # Attach to the window to prevent garbage collection
     window._discovery_scheduler = discovery_scheduler  # type: ignore[attr-defined]
+
+
+def _start_update_check_if_enabled(window, config_manager) -> None:
+    """Start a one-shot self-update check ~10s after the UI is ready.
+
+    Polls GitHub Releases, emits a signal when a newer version exists.
+    The banner on the main window subscribes to UpdateService signals.
+    """
+    if not config_manager.get_bool("Updates", "check_on_startup", True):
+        get_logger().info("Update-on-startup disabled")
+        return
+
+    from pathlib import Path
+
+    from PyQt6.QtCore import QTimer
+
+    from config.appdata_manager import AppDataManager
+    from services.update_service_qt import UpdateService
+
+    owner, repo = "aberrantCode", "WinScanOllamaVision"
+    cache_path = Path(AppDataManager().get_appdata_dir()) / "update_cache.json"
+    ua = f"WinScanLLM-updater/{_app_version} (+https://github.com/{owner}/{repo})"
+
+    update_service = UpdateService(
+        owner=owner,
+        repo=repo,
+        current_version=_app_version,
+        cache_path=cache_path,
+        include_prereleases=config_manager.get_bool("Updates", "include_prereleases", False),
+        skipped_version=config_manager.get_setting("Updates", "skipped_version", ""),
+        user_agent=ua,
+    )
+
+    def _on_update_available(info) -> None:  # type: ignore[no-untyped-def]
+        get_logger().info("Update available: v%s", info.version)
+        if hasattr(window, "update_banner"):
+            window.update_banner.show_for(info, current_version=_app_version)
+
+    update_service.update_available.connect(_on_update_available)
+
+    # Attach to the window to prevent GC
+    window._update_service = update_service  # type: ignore[attr-defined]
+
+    QTimer.singleShot(10_000, update_service.check_for_updates)
+    get_logger().info("Update check scheduled for 10s after UI ready")
 
 
 def _seed_default_source_directory(config_manager) -> None:  # type: ignore[no-untyped-def]
@@ -140,19 +187,19 @@ if __name__ == "__main__":
 
     from config.appdata_manager import initialize_appdata
     from config.config_manager import ConfigManager
-    from ui.splash_screen import InitializationWorker, SplashScreen
-    from ui.theme_manager import ThemeManager
+    from ui.startup import InitializationWorker, SplashScreen
+    from ui.theme.theme_manager import ThemeManager
 
     try:
         logger.info("=" * 80)
         logger.info("NEW SESSION STARTED")
         logger.info("=" * 80)
-        logger.info("Application starting...")
+        logger.info("Application starting (WinScanLLM %s)...", _app_version)
 
         # Initialize AppData directory (settings and database)
         logger.info("Initializing AppData directory...")
         settings_path, db_path = initialize_appdata()
-        logger.info(f"AppData initialized - Settings: {settings_path}, Database: {db_path}")
+        logger.info("AppData initialized - Settings: %s, Database: %s", settings_path, db_path)
 
         # Initialize config to get theme preference and app name
         logger.info("Loading configuration...")
@@ -161,14 +208,14 @@ if __name__ == "__main__":
         theme = config_manager.get_setting("Theme", "theme", "dark")
         is_dark_mode = theme == "dark"
         app_name = config_manager.get_setting("GUI", "app_name", "WinScanLLM")
-        logger.info(f"Theme preference: {theme}")
+        logger.info("Theme preference: %s", theme)
 
         app = QApplication(sys.argv)
         logger.info("QApplication instance created.")
 
         # Apply centralized theme stylesheet
         app.setStyleSheet(ThemeManager.get_stylesheet(is_dark_mode))
-        logger.info(f"ThemeManager stylesheet applied (dark_mode={is_dark_mode}).")
+        logger.info("ThemeManager stylesheet applied (dark_mode=%s).", is_dark_mode)
 
         # ── Splash screen ──────────────────────────────────────────────────────
         logger.info("Showing splash screen...")
@@ -182,10 +229,6 @@ if __name__ == "__main__":
         # smooth. When the worker finishes it emits init_complete which triggers
         # the transition to the main window.
 
-        # Mutable container so the nested callback can hold references that
-        # survive beyond the function scope.
-        _refs: dict = {}
-
         def _on_init_complete() -> None:
             """
             Called on the main thread when the initialization worker finishes.
@@ -194,15 +237,16 @@ if __name__ == "__main__":
             """
             logger.info("Initialization complete – opening Document Pipeline")
 
-            from ui.pipeline_window import DocumentPipelineWindow
+            from ui.pipeline import DocumentPipelineWindow
 
             # The pipeline window creates and owns its own DB connections when
             # none are supplied, and closes them automatically on exit.
             pipeline_window = DocumentPipelineWindow(config_manager=config_manager)
             logger.info("DocumentPipelineWindow created.")
 
-            # Keep a strong reference so the window is not garbage-collected
-            _refs["pipeline_window"] = pipeline_window
+            # Keep a strong reference so the window is not garbage-collected;
+            # attaching to app ties GC lifetime to the QApplication instance.
+            app.pipeline_window = pipeline_window  # type: ignore[attr-defined]
 
             # ── Step 7: image scan if enabled ─────────────────────────────
             _start_discovery_if_enabled(pipeline_window, config_manager)
@@ -215,21 +259,27 @@ if __name__ == "__main__":
             pipeline_window.show()
             logger.info("DocumentPipelineWindow shown.")
 
+            # ── Step 8: self-update check if enabled ──────────────────────
+            _start_update_check_if_enabled(pipeline_window, config_manager)
+
         worker = InitializationWorker(config_manager)
         worker.status_changed.connect(splash.update_status)
-        worker.init_complete.connect(_on_init_complete)
+        # The splash gates on both init completion AND one full animation loop.
+        worker.init_complete.connect(splash.mark_init_done)
+        splash.ready_to_close.connect(_on_init_complete)
         worker.start()
         logger.info("Initialization worker started.")
 
-        # Keep a strong reference to the worker
-        _refs["worker"] = worker
+        # Keep a strong reference to the worker; attaching to app ties GC
+        # lifetime to the QApplication instance.
+        app.worker = worker  # type: ignore[attr-defined]
 
         # ── Event loop ────────────────────────────────────────────────────────
         logger.info("Entering QApplication event loop...")
         exit_code = app.exec()
 
         # DB connections are owned and closed by DocumentPipelineWindow.closeEvent()
-        logger.info(f"Application exited with code {exit_code}.")
+        logger.info("Application exited with code %s.", exit_code)
         sys.exit(exit_code)
 
     except Exception:

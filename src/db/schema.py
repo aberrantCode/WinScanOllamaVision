@@ -703,6 +703,76 @@ def _run_migrations(conn: DatabaseConnection) -> None:
         _get_logger().info("Migration 18 completed successfully")
         current_version = 18
 
+    # Migration 19: status_events table for the Status History feature.
+    # See _project_specs/status_history.md §3.1 for the canonical schema.
+    if current_version < 19:
+        _get_logger().info("Running Migration 19: Create status_events table")
+
+        _execute_sql(
+            cursor,
+            """
+            CREATE TABLE IF NOT EXISTS status_events (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id          TEXT NOT NULL UNIQUE,
+                occurred_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                session_id        TEXT NOT NULL,
+                level             TEXT NOT NULL,
+                feature           TEXT NOT NULL,
+                source            TEXT,
+                title             TEXT NOT NULL,
+                detail            TEXT,
+                traceback         TEXT,
+                context_json      TEXT,
+                file_path         TEXT,
+                correlation_id    TEXT,
+                starred           INTEGER NOT NULL DEFAULT 0,
+                acknowledged      INTEGER NOT NULL DEFAULT 0,
+                coalesced_count   INTEGER NOT NULL DEFAULT 1
+            )
+        """,
+        )
+
+        _execute_sql(
+            cursor,
+            """
+            CREATE INDEX IF NOT EXISTS idx_status_events_occurred
+            ON status_events(occurred_at DESC)
+        """,
+        )
+        _execute_sql(
+            cursor,
+            """
+            CREATE INDEX IF NOT EXISTS idx_status_events_level
+            ON status_events(level)
+        """,
+        )
+        _execute_sql(
+            cursor,
+            """
+            CREATE INDEX IF NOT EXISTS idx_status_events_feature
+            ON status_events(feature)
+        """,
+        )
+        _execute_sql(
+            cursor,
+            """
+            CREATE INDEX IF NOT EXISTS idx_status_events_session
+            ON status_events(session_id)
+        """,
+        )
+
+        _execute_sql(
+            cursor,
+            """
+            INSERT INTO schema_version (version, description)
+            VALUES (19, 'Add status_events table for durable status history')
+        """,
+        )
+
+        conn.commit()
+        _get_logger().info("Migration 19 completed successfully")
+        current_version = 19
+
 
 def get_schema_version(conn: DatabaseConnection) -> int:
     """

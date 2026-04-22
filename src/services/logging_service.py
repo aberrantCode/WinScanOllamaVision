@@ -136,7 +136,7 @@ class LoggingService:
 
         # Log initialization
         if file_handler_created:
-            self.logger.info(f"Logging service initialized. Log file: {self.log_file_path}")
+            self.logger.info("Logging service initialized. Log file: %s", self.log_file_path)
         elif console_output:
             self.logger.info("Logging service initialized (console-only mode)")
         else:

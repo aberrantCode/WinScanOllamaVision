@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 )
 
 from config.config_manager import ConfigManager
-from ui.styles import show_warning
-from ui.theme_manager import ThemeManager
+from ui.theme.styles import show_warning
+from ui.theme.theme_manager import ThemeManager
 
 
 class ExportPanel(QWidget):
@@ -80,18 +80,15 @@ class ExportPanel(QWidget):
         root.addWidget(summary_header)
 
         # ── Metric cards row
-        from ui.collection_status_helpers import create_metric_card
+        from ui.pipeline.metric_card import create_metric_card
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(8)
 
         def _card(title_text: str, default: str) -> QLabel:
-            card = create_metric_card(c, title_text, default)
+            card, lbl = create_metric_card(c, title_text, default)
             cards_row.addWidget(card)
-            # The value label object name is derived from the title
-            key = title_text.lower().replace(" ", "_") + "_value"
-            lbl = card.findChild(QLabel, key)
-            return lbl  # type: ignore[return-value]
+            return lbl
 
         self._metric_images = _card("Images Processed", "0")
         self._metric_pdfs = _card("PDFs Created", "0")

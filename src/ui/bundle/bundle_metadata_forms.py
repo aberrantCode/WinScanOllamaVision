@@ -11,6 +11,7 @@ import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPen, QPolygon
@@ -27,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 from ui.bundle.bundle_colors import get_bundle_colors
 from ui.bundle.bundle_pdf_converter import BundlePdfConverter
-from ui.styles import Colors
+from ui.theme.styles import Colors
 
 
 def create_metadata_form(
@@ -39,6 +40,7 @@ def create_metadata_form(
     on_update_filename: Callable,
     on_save: Callable,
     on_cancel: Callable,
+    analysis_db: Any | None = None,
 ) -> tuple[QWidget, dict[str, QWidget], QPushButton, QPushButton]:
     """Build the editable metadata form.
 
@@ -210,12 +212,22 @@ def create_metadata_form(
             elif widget_type == "text" and isinstance(widget, QLineEdit):
                 widget.textChanged.connect(on_update_filename)
 
+    # Populate dropdowns from DB when available, otherwise fall back to empty list
+    document_type_options: list[str] = []
+    company_options: list[str] = []
+    if analysis_db is not None:
+        try:
+            document_type_options = analysis_db.get_distinct_field_values("document_type")
+            company_options = analysis_db.get_distinct_field_values("company")
+        except Exception:
+            pass
+
     add_field(
         "Document Type",
         "document_type",
         bundle.get("document_type"),
         "dropdown",
-        ["Invoice", "Receipt", "Statement", "Contract", "Purchase Order"],
+        document_type_options,
         "e.g., invoice, receipt, contract",
     )
     add_field(
@@ -223,7 +235,7 @@ def create_metadata_form(
         "company",
         bundle.get("company"),
         "dropdown",
-        ["Acme Corporation", "TechCorp", "Global Shipping", "ABC Manufacturing"],
+        company_options,
         "Company or organization name",
     )
     add_field(
@@ -455,14 +467,14 @@ def create_analysis_info_form(
 
     confidence = analysis.get("confidence_score", 0.0)
     if isinstance(confidence, int | float):
-        confidence_pct = int(confidence * 100 if confidence <= 1.0 else confidence)
+        confidence_pct = confidence * 100 if confidence <= 1.0 else float(confidence)
         if confidence_pct >= 80:
             conf_color = theme.get("success", "#10b981")
         elif confidence_pct >= 50:
             conf_color = theme.get("warning", "#f59e0b")
         else:
             conf_color = theme.get("danger", "#ef4444")
-        add_info_row("Confidence Score", f"{confidence_pct:.1f}%", value_color=conf_color)
+        add_info_row("Confidence Score", f"{confidence_pct:.0f}%", value_color=conf_color)
     else:
         add_info_row("Confidence Score", "N/A")
 

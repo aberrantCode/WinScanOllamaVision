@@ -13,6 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from db.image_status import ImageStatus
 from services.analysis_queue import AnalysisJob, AnalysisQueue, JobType
+from services.status_reporter import get_reporter
 
 if TYPE_CHECKING:
     pass
@@ -74,6 +75,21 @@ class AnalysisWorker(QThread):
                 error_msg = f"{str(e)}\n{traceback.format_exc()}"
                 self._get_logger().error(f"Error processing job {job.job_id}: {error_msg}")
                 self.error.emit(job.job_id, error_msg)
+                # Surface the worker-level failure as a StatusEvent so it shows
+                # up in history with a traceback a user can file an issue from.
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    get_reporter().error(
+                        "Analyze → Worker",
+                        f"Analysis job failed: {type(e).__name__}",
+                        exc=e,
+                        correlation_id=job.job_id,
+                        context={
+                            "job_type": getattr(job.job_type, "name", str(job.job_type)),
+                            "file_count": len(getattr(job, "file_paths", []) or []),
+                        },
+                    )
                 self.analysis_queue.mark_cancelled(job.job_id)
             finally:
                 self._current_job_id = None
@@ -138,6 +154,7 @@ class AnalysisWorker(QThread):
                     "cached": 0,
                     "errors": 0,
                     "total_files": len(job.file_paths),
+                    "error_details": [],  # list[dict]: per-file failure records
                 }
                 for idx, file_path in enumerate(job.file_paths, 1):
                     if self.analysis_queue.is_job_cancelled(job.job_id):
@@ -164,10 +181,72 @@ class AnalysisWorker(QThread):
                         )
                         self.file_status_changed.emit(file_path, ImageStatus.ANALYZED.value)
                     else:
+                        # Preserve the failure reason so the UI can show actionable detail
+                        # and the user can file a scoped GitHub issue. Mirrors the
+                        # save_error() call in analysis_service.scan_all_directories.
+                        error_msg = result.get("error", "Unknown error")
                         stats["errors"] += 1
+                        stats["error_details"].append(
+                            {
+                                "file_path": file_path,
+                                "error_message": error_msg,
+                                "error_type": "analysis_failed",
+                                "job_type": "ANALYZE_FILES",
+                            }
+                        )
+                        try:
+                            thread_analysis_db.save_error(
+                                file_path=file_path,
+                                error_message=error_msg,
+                                error_type="analysis_failed",
+                            )
+                        except Exception as save_exc:  # pragma: no cover - defensive
+                            self._get_logger().warning(
+                                f"Failed to persist error for {file_path}: {save_exc}"
+                            )
+                        # Emit a StatusEvent so the UI history surface can show details.
+                        try:
+                            get_reporter().error(
+                                "Analyze → Re-analyze Files",
+                                f"Re-analysis failed: {os.path.basename(file_path)}",
+                                detail=error_msg,
+                                file_path=file_path,
+                                correlation_id=job.job_id,
+                                context={
+                                    "job_type": "ANALYZE_FILES",
+                                    "force_reanalysis": bool(job.force_reanalysis),
+                                },
+                            )
+                        except Exception as emit_exc:  # pragma: no cover - defensive
+                            self._get_logger().warning(
+                                f"Failed to emit status event for {file_path}: {emit_exc}"
+                            )
                         # Set status to "error" to indicate failed processing
                         thread_analysis_db.update_image_status(file_path, ImageStatus.ERROR.value)
                         self.file_status_changed.emit(file_path, ImageStatus.ERROR.value)
+
+                # Per-run summary event — useful when several files failed in
+                # a single Re-analyze Selected run; the user sees one headline
+                # that opens to the full list via correlation_id.
+                if job.job_type == JobType.ANALYZE_FILES and stats["errors"] > 0:
+                    import contextlib as _ctx
+
+                    with _ctx.suppress(Exception):
+                        get_reporter().warn(
+                            "Analyze → Re-analyze Files",
+                            f"{stats['errors']} of {stats['total_files']} files failed re-analysis",
+                            detail=(
+                                "Click the individual error events above for per-file "
+                                "details, or filter this history by Correlation ID to "
+                                "see them grouped."
+                            ),
+                            correlation_id=job.job_id,
+                            context={
+                                "analyzed": stats["analyzed"],
+                                "errors": stats["errors"],
+                                "total_files": stats["total_files"],
+                            },
+                        )
 
             # Mark job complete
             self.analysis_queue.mark_complete(job.job_id)

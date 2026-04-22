@@ -36,7 +36,7 @@ def mock_config_manager():
 
 
 def _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager):
-    from ui.pipeline_window import BundlePanel
+    from ui.pipeline import BundlePanel
 
     with patch("ui.pipeline.bundle_panel.BundlingService"):
         panel = BundlePanel(
@@ -105,6 +105,7 @@ def test_load_embedded_workflow_adds_to_stack_when_stack_present(
     with patch("ui.bundle.bundle_review_widget.BundleReviewWidget", return_value=mock_wf):
         panel._load_embedded_workflow(bundles)
 
+    mock_wf.bundle_changed.connect.assert_called_once()
     mock_wf.workflow_completed.connect.assert_called_once()
     mock_stack.addWidget.assert_called_once_with(mock_wf)
     mock_stack.setCurrentWidget.assert_called_once_with(mock_wf)
@@ -160,7 +161,7 @@ def test_update_bundle_stats_zero_avg_pages_shows_dash(
 def test_update_bundle_stats_shows_top_doc_types(
     qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
 ):
-    """update_bundle_stats() populates doc types from the provided dict."""
+    """update_bundle_stats() shows the count of distinct doc types in the card."""
     panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
     panel.update_bundle_stats(
         {
@@ -171,8 +172,8 @@ def test_update_bundle_stats_shows_top_doc_types(
         }
     )
     if panel._stat_doc_types_lbl:
-        text = panel._stat_doc_types_lbl.text()
-        assert "Invoice" in text
+        # Card now shows the count of distinct types, not a summary string
+        assert panel._stat_doc_types_lbl.text() == "2"
 
 
 def test_update_bundle_stats_empty_doc_types_shows_dash(
