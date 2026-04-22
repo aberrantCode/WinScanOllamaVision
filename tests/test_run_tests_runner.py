@@ -61,6 +61,30 @@ def test_coverage_available_detects_pytest_cov_truthfully():
     assert rt._coverage_available() is expected
 
 
+def test_skip_when_pre_commit_and_app_deps_missing():
+    rt = _load_run_tests_module()
+    assert rt._should_skip_due_to_missing_env(app_deps_available=False, under_pre_commit=True)
+
+
+def test_do_not_skip_when_app_deps_present_even_under_pre_commit():
+    rt = _load_run_tests_module()
+    assert not rt._should_skip_due_to_missing_env(app_deps_available=True, under_pre_commit=True)
+
+
+def test_do_not_skip_when_app_deps_missing_but_run_manually():
+    """Developer running `python run_tests.py` directly must still see real failures."""
+    rt = _load_run_tests_module()
+    assert not rt._should_skip_due_to_missing_env(app_deps_available=False, under_pre_commit=False)
+
+
+def test_running_under_pre_commit_reads_env_var(monkeypatch):
+    rt = _load_run_tests_module()
+    monkeypatch.setenv("PRE_COMMIT", "1")
+    assert rt._running_under_pre_commit() is True
+    monkeypatch.delenv("PRE_COMMIT", raising=False)
+    assert rt._running_under_pre_commit() is False
+
+
 def test_pre_push_hook_arg_shape_works_without_coverage():
     """Exact arg shape the .pre-commit-config.yaml pre-push hook passes."""
     rt = _load_run_tests_module()
