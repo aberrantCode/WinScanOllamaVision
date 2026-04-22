@@ -20,6 +20,8 @@ from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QMovie
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
+from resources import asset_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -298,25 +300,27 @@ class SplashScreen(QWidget):
         """
         Load *assets/scanner.gif* and start playback on the scanner label.
 
-        Mirrors the logic used in StartupWindow so the visual experience is
-        consistent between the splash and the main window.
+        If the GIF cannot be found or loaded (happens in frozen builds if the
+        asset path bootstrap is wrong), fall back to a placeholder label AND
+        immediately open the animation gate — otherwise the splash deadlocks,
+        because ``ready_to_close`` requires both the init and animation gates.
         """
-        # This file lives in src/ui/startup/; the project root is three levels up.
-        project_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        )
-        gif_path = os.path.join(project_root, "assets", "scanner.gif")
+        gif_path = asset_path("scanner.gif")
 
         if not os.path.exists(gif_path):
+            logger.warning("Splash animation not found at %s", gif_path)
             self._scanner_label.setText("[ animation unavailable ]")
             self._scanner_label.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 9pt;")
+            self._animation_done = True  # prevent deadlock
             return
 
         movie = QMovie(gif_path)
         movie.setCacheMode(QMovie.CacheMode.CacheNone)
 
         if not movie.isValid():
+            logger.warning("Splash animation at %s is invalid", gif_path)
             self._scanner_label.setText("[ animation unavailable ]")
+            self._animation_done = True  # prevent deadlock
             return
 
         # Determine scaled display size; cap at 220 × 220 for the splash.
