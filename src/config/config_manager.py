@@ -136,6 +136,16 @@ class ConfigManager:
                 "batch_size": "10",
             }
 
+        # Self-update settings
+        if "Updates" not in self.config:
+            self.config["Updates"] = {
+                "check_on_startup": "true",
+                "include_prereleases": "false",
+                "skipped_version": "",
+                "last_check_iso": "",
+                "last_known_version": "",
+            }
+
         # Discovery and scheduling settings
         if "Discovery" not in self.config:
             self.config["Discovery"] = {

@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+from __version__ import __version__ as _app_version
+
 # Import only LoggingService first, before any modules that use it
 from services.logging_service import LoggingService, get_logger
 
@@ -79,6 +81,51 @@ def _start_periodic_scheduler(window, config_manager) -> None:
     window._discovery_scheduler = discovery_scheduler  # type: ignore[attr-defined]
 
 
+def _start_update_check_if_enabled(window, config_manager) -> None:
+    """Start a one-shot self-update check ~10s after the UI is ready.
+
+    Polls GitHub Releases, emits a signal when a newer version exists.
+    The banner on the main window subscribes to UpdateService signals.
+    """
+    if not config_manager.get_bool("Updates", "check_on_startup", True):
+        get_logger().info("Update-on-startup disabled")
+        return
+
+    from pathlib import Path
+
+    from PyQt6.QtCore import QTimer
+
+    from config.appdata_manager import AppDataManager
+    from services.update_service_qt import UpdateService
+
+    owner, repo = "aberrantCode", "WinScanOllamaVision"
+    cache_path = Path(AppDataManager().get_appdata_dir()) / "update_cache.json"
+    ua = f"WinScanLLM-updater/{_app_version} (+https://github.com/{owner}/{repo})"
+
+    update_service = UpdateService(
+        owner=owner,
+        repo=repo,
+        current_version=_app_version,
+        cache_path=cache_path,
+        include_prereleases=config_manager.get_bool("Updates", "include_prereleases", False),
+        skipped_version=config_manager.get_setting("Updates", "skipped_version", ""),
+        user_agent=ua,
+    )
+
+    def _on_update_available(info) -> None:  # type: ignore[no-untyped-def]
+        get_logger().info("Update available: v%s", info.version)
+        if hasattr(window, "update_banner"):
+            window.update_banner.show_for(info, current_version=_app_version)
+
+    update_service.update_available.connect(_on_update_available)
+
+    # Attach to the window to prevent GC
+    window._update_service = update_service  # type: ignore[attr-defined]
+
+    QTimer.singleShot(10_000, update_service.check_for_updates)
+    get_logger().info("Update check scheduled for 10s after UI ready")
+
+
 def _seed_default_source_directory(config_manager) -> None:  # type: ignore[no-untyped-def]
     """
     If no source directories are configured, add ~/Pictures/Scans as the default.
@@ -147,7 +194,7 @@ if __name__ == "__main__":
         logger.info("=" * 80)
         logger.info("NEW SESSION STARTED")
         logger.info("=" * 80)
-        logger.info("Application starting...")
+        logger.info("Application starting (WinScanLLM %s)...", _app_version)
 
         # Initialize AppData directory (settings and database)
         logger.info("Initializing AppData directory...")
@@ -211,6 +258,9 @@ if __name__ == "__main__":
             splash.close()
             pipeline_window.show()
             logger.info("DocumentPipelineWindow shown.")
+
+            # ── Step 8: self-update check if enabled ──────────────────────
+            _start_update_check_if_enabled(pipeline_window, config_manager)
 
         worker = InitializationWorker(config_manager)
         worker.status_changed.connect(splash.update_status)

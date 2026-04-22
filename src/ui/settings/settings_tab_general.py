@@ -4,7 +4,9 @@
 from PyQt6.QtWidgets import (
     QCheckBox,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -93,6 +95,37 @@ class _SettingsTabGeneralMixin:
         logging_layout.addWidget(logging_info)
 
         layout.addWidget(logging_group)
+
+        # Updates Group
+        updates_group = QGroupBox("Software Updates")
+        updates_layout = QVBoxLayout(updates_group)
+
+        self.check_updates_on_startup_checkbox = QCheckBox("Check for updates on startup")
+        check_on_startup = self.config_manager.get_bool("Updates", "check_on_startup", True)
+        self.check_updates_on_startup_checkbox.setChecked(check_on_startup)
+        self.check_updates_on_startup_checkbox.setToolTip(
+            "Poll GitHub Releases once per startup (at most every 6 hours) to detect\n"
+            "newer versions. Never downloads or installs without explicit confirmation."
+        )
+        updates_layout.addWidget(self.check_updates_on_startup_checkbox)
+
+        check_now_row = QHBoxLayout()
+        self.check_updates_now_button = QPushButton("Check for updates now")
+        self.check_updates_now_button.setToolTip(
+            "Force an immediate update check, bypassing the cache."
+        )
+        check_now_row.addWidget(self.check_updates_now_button)
+        check_now_row.addStretch()
+        updates_layout.addLayout(check_now_row)
+
+        updates_info = QLabel(
+            "Source: public GitHub Releases. Downloads are SHA-256 verified before install.\n"
+            "Install requires administrator permission (per-machine install to Program Files)."
+        )
+        updates_info.setWordWrap(True)
+        updates_layout.addWidget(updates_info)
+
+        layout.addWidget(updates_group)
 
         layout.addStretch()
         return widget

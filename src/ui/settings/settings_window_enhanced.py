@@ -473,6 +473,11 @@ class EnhancedSettingsWindow(
                 "log_sql_statements",
                 "true" if self.log_sql_checkbox.isChecked() else "false",
             )
+            self.config_manager.set_setting(
+                "Updates",
+                "check_on_startup",
+                "true" if self.check_updates_on_startup_checkbox.isChecked() else "false",
+            )
 
             # LLM Provider Tab
             active_provider = self.provider_combo.currentData()
