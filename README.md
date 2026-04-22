@@ -22,7 +22,39 @@ This is a Python-based desktop utility designed to intelligently organize scanne
 ## Repository:
 https://github.com/aberrantCode/WinScanLLM.git
 
-## Setup:
+## Installation (end users)
+
+For Windows workstations, download the signed installer from the latest release:
+
+1. Go to the [Releases page](https://github.com/aberrantCode/WinScanOllamaVision/releases/latest).
+2. Download `WinScanLLM-Setup-<version>.exe`.
+3. Run it. You will need administrator rights (installs per-machine to `C:\Program Files\WinScanLLM`).
+
+### First-run SmartScreen warning
+
+Because the installer is not code-signed with a commercial Authenticode certificate yet, Windows will show:
+
+> **Windows protected your PC** — Microsoft Defender SmartScreen prevented an unrecognized app from starting.
+
+Click **More info** → **Run anyway**. Once past this screen the first time, subsequent launches proceed normally.
+
+### Optional — verify the download
+
+```powershell
+Get-FileHash .\WinScanLLM-Setup-<version>.exe -Algorithm SHA256
+```
+
+Compare the output against `WinScanLLM-Setup-<version>.exe.sha256` attached to the same release.
+
+### Automatic updates
+
+Once installed, the app polls the GitHub Releases API on startup (at most once per 6 hours). When a newer version is available, a yellow banner appears at the top of the main window with **Install update** / **Remind me later** / **Skip this version** buttons. Updates are downloaded and SHA-256-verified before handoff to the installer. You can disable the check in **Settings → General → Software Updates**.
+
+### Uninstall
+
+Uninstall via **Settings → Apps → Installed apps → WinScanLLM → Uninstall**. The uninstaller prompts whether to also delete your user data (settings, databases, logs in `%APPDATA%\WinScanLLM`) — default is **No** so a future reinstall picks up where you left off.
+
+## Setup (from source):
 
 ### 1. Install Python
 Ensure you have Python 3.11+ installed on your system (the project targets Python 3.11–3.13). You can download it from [python.org](https://www.python.org/downloads/).

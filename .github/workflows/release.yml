@@ -12,43 +12,26 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build twine
-
-      - name: Build package
-        run: |
-          python -m build
-
       - name: Generate changelog
         id: changelog
         run: |
-          # Get the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-
-          # Generate changelog
           if [ -z "$PREV_TAG" ]; then
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
           else
-            CHANGELOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+            CHANGELOG=$(git log "$PREV_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges)
           fi
-
-          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "CHANGELOG<<EOF"
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -60,34 +43,22 @@ jobs:
 
             ## Installation
 
-            ```bash
-            pip install WinScanOllamaVision==${{ github.ref_name }}
+            Download `WinScanLLM-Setup-${{ github.ref_name }}.exe` below and run it.
+            SmartScreen may warn on first run — click **More info** → **Run anyway**.
+
+            ## Verify (optional)
+
+            ```powershell
+            Get-FileHash .\WinScanLLM-Setup-${{ github.ref_name }}.exe -Algorithm SHA256
             ```
-
-            ## Checksums
-
-            See attached files for package checksums.
-
-          files: |
-            dist/*
+            Compare against `.sha256` attached to this release.
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
 
-      - name: Publish to PyPI
-        if: "!contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc')"
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          twine upload dist/*
-
-  build-executables:
-    name: Build Executables
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
+  build-windows-installer:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    needs: create-release
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -97,34 +68,96 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install build dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build executable (Windows)
-        if: runner.os == 'Windows'
+      - name: Write version file
+        shell: pwsh
         run: |
-          pyinstaller --onefile --windowed --name WinScanOllamaVision src/main.py
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          Set-Content -Path src/__version__.py -Value "__version__ = `"$ver`"`n" -Encoding UTF8
+          Write-Host "Version: $ver"
 
-      - name: Build executable (Linux)
-        if: runner.os == 'Linux'
+      - name: Build PyInstaller bundle
+        shell: pwsh
+        run: pyinstaller installer/WinScanLLM.spec
+
+      - name: Build Inno Setup installer
+        shell: pwsh
         run: |
-          pyinstaller --onefile --name WinScanOllamaVision src/main.py
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup 6 not found on runner" }
+          & $iscc "/DAppVersion=$ver" "installer\WinScanLLM.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed ($LASTEXITCODE)" }
 
-      - name: Build executable (macOS)
-        if: runner.os == 'macOS'
+      - name: Compute SHA-256
+        shell: pwsh
         run: |
-          pyinstaller --onefile --windowed --name WinScanOllamaVision src/main.py
+          $exe = Get-ChildItem installer/Output/WinScanLLM-Setup-*.exe | Select-Object -First 1
+          $hash = Get-FileHash $exe.FullName -Algorithm SHA256
+          $line = "$($hash.Hash.ToLower())  $($exe.Name)"
+          $sidecar = "$($exe.FullName).sha256"
+          Set-Content -Path $sidecar -Value $line -Encoding ASCII
+          Write-Host "SHA-256: $line"
 
-      - name: Upload executable
-        uses: actions/upload-artifact@v6
-        with:
-          name: executable-${{ matrix.os }}
-          path: dist/
-
-      - name: Attach to release
+      - name: Attach artifacts to release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            installer/Output/WinScanLLM-Setup-*.exe
+            installer/Output/WinScanLLM-Setup-*.exe.sha256
+
+  smoke-test-installer:
+    name: Silent Install/Uninstall Smoke Test
+    runs-on: windows-latest
+    needs: build-windows-installer
+    steps:
+      - name: Download installer from release
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/WinScanLLM-Setup-$ver.exe"
+          Invoke-WebRequest -Uri $url -OutFile "Setup.exe"
+          Write-Host "Downloaded: $((Get-Item Setup.exe).Length) bytes"
+
+      - name: Silent install
+        shell: pwsh
+        run: |
+          Start-Process -Wait -FilePath .\Setup.exe `
+            -ArgumentList "/VERYSILENT", "/NORESTART", "/LOG=install.log"
+          Write-Host "Install complete"
+
+      - name: Assert install layout
+        shell: pwsh
+        run: |
+          $exe = "C:\Program Files\WinScanLLM\WinScanLLM.exe"
+          $unins = "C:\Program Files\WinScanLLM\unins000.exe"
+          if (-not (Test-Path $exe))   { throw "Missing $exe" }
+          if (-not (Test-Path $unins)) { throw "Missing $unins" }
+          Write-Host "Layout OK"
+
+      - name: Silent uninstall
+        shell: pwsh
+        run: |
+          Start-Process -Wait -FilePath "C:\Program Files\WinScanLLM\unins000.exe" `
+            -ArgumentList "/VERYSILENT"
+
+      - name: Assert clean uninstall
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files\WinScanLLM") {
+            throw "Install directory still present after uninstall"
+          }
+          Write-Host "Uninstall OK"
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log
+          path: install.log
