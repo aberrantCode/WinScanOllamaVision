@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+from __version__ import __version__ as _app_version
+
 # Import only LoggingService first, before any modules that use it
 from services.logging_service import LoggingService, get_logger
 
@@ -147,7 +149,7 @@ if __name__ == "__main__":
         logger.info("=" * 80)
         logger.info("NEW SESSION STARTED")
         logger.info("=" * 80)
-        logger.info("Application starting...")
+        logger.info("Application starting (WinScanLLM %s)...", _app_version)
 
         # Initialize AppData directory (settings and database)
         logger.info("Initializing AppData directory...")
