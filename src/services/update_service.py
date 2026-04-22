@@ -14,7 +14,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -44,12 +44,6 @@ class FetchedRelease:
     assets: list[dict[str, Any]]
 
 
-class _ReleaseLike(Protocol):
-    tag_name: str
-    prerelease: bool
-    assets: list[dict[str, Any]]
-
-
 # ---------------------------------------------------------------------------
 # Version comparison (Task 3)
 # ---------------------------------------------------------------------------
@@ -69,7 +63,7 @@ def _find_installer_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None
 
 def decide_update(
     current: str,
-    release: _ReleaseLike,
+    release: FetchedRelease,
     include_prereleases: bool,
     skipped: str,
 ) -> UpdateInfo | None:
