@@ -113,11 +113,9 @@ class DocumentPipelineWindow(QMainWindow):
         app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
         self.setWindowTitle(f"{app_name} — Document Pipeline")
 
-        # Resolve assets/ relative to the project root (this file: src/ui/pipeline/)
-        _project_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        )
-        icon_path = os.path.join(_project_root, "assets", "icon.png")
+        from resources import asset_path
+
+        icon_path = asset_path("icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
