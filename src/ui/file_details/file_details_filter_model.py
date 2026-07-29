@@ -7,7 +7,7 @@ Provides filtering and sorting capabilities for the file details table.
 from datetime import datetime, timezone
 from typing import Any
 
-from PyQt6.QtCore import QModelIndex, QSortFilterProxyModel
+from PyQt6.QtCore import QModelIndex, QSortFilterProxyModel, Qt
 
 from ui.file_details.file_details_table_model import FileDetailsTableModel
 
@@ -42,6 +42,30 @@ class FileDetailsSortFilterProxyModel(QSortFilterProxyModel):
         """Set quick filter preset."""
         self._quick_filter = filter_name
         self.invalidateFilter()
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        """Sort using the model's UserRole sort key when it provides one.
+
+        Datetime columns expose an epoch float via UserRole so they sort
+        chronologically despite a MM/DD/YYYY display string; all other columns
+        fall back to Qt's default DisplayRole comparison.
+        """
+        model = self.sourceModel()
+        if model is None:
+            return bool(super().lessThan(left, right))
+        left_key = model.data(left, Qt.ItemDataRole.UserRole)
+        right_key = model.data(right, Qt.ItemDataRole.UserRole)
+        if left_key is not None and right_key is not None:
+            try:
+                return bool(left_key < right_key)
+            except TypeError:
+                pass
+        # Missing key on one side → push it below the populated one.
+        if left_key is None and right_key is not None:
+            return True
+        if left_key is not None and right_key is None:
+            return False
+        return bool(super().lessThan(left, right))
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
         """Determine if a row should be visible."""

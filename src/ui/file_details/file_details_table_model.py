@@ -5,6 +5,7 @@ Provides the QAbstractTableModel for displaying file analysis data in a table vi
 """
 
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
@@ -18,9 +19,11 @@ class FileDetailsTableModel(QAbstractTableModel):
     Supports 19 columns with configurable visibility.
     """
 
-    # Column definitions
+    # Column definitions. Order here IS the default column order; "Date
+    # Modified" sits second (right after Filename) by design.
     COLUMNS = [
         ("filename", "Filename", True),
+        ("modified_time", "Date Modified", True),
         ("status", "Status", True),
         ("confidence", "Confidence", True),
         ("company", "Company", True),
@@ -32,7 +35,6 @@ class FileDetailsTableModel(QAbstractTableModel):
         ("total_pages", "Total", True),
         ("rotation", "Rotation", True),
         ("file_size", "Size", True),
-        ("modified_time", "Modified", True),
         ("analysis_time", "Analyzed", True),
         ("processing_duration", "Duration", False),
         ("model_used", "Model", False),
@@ -102,6 +104,10 @@ class FileDetailsTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             return self._format_display_value(col_key, value, row_data)
+        elif role == Qt.ItemDataRole.UserRole:
+            # Sort key: lets the proxy sort chronologically even though the
+            # display string is MM/DD/YYYY (which sorts wrong lexically).
+            return self._sort_key(col_key, value)
         elif role == Qt.ItemDataRole.ToolTipRole:
             return self._format_tooltip(col_key, value, row_data)
         elif role == Qt.ItemDataRole.BackgroundRole:
@@ -279,12 +285,67 @@ class FileDetailsTableModel(QAbstractTableModel):
             return str(size)
 
     @staticmethod
-    def _format_datetime(dt: Any) -> str:
-        """Format datetime for display (converts UTC to local timezone)."""
+    def _parse_datetime(dt: Any) -> datetime | None:
+        """Best-effort parse of a stored value into a datetime, else None.
+
+        Accepts datetime objects, epoch numbers (assumed UTC), and the common
+        ISO / SQLite string forms produced elsewhere in the app.
+        """
+        if dt is None or dt == "":
+            return None
+        if isinstance(dt, datetime):
+            return dt
+        if isinstance(dt, int | float):
+            try:
+                return datetime.fromtimestamp(dt, tz=timezone.utc)
+            except (ValueError, OSError, OverflowError):
+                return None
+        if isinstance(dt, str):
+            s = dt.strip()
+            try:
+                return datetime.fromisoformat(s)
+            except ValueError:
+                pass
+            for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    return datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+        return None
+
+    @classmethod
+    def _format_datetime(cls, dt: Any) -> str:
+        """Format as ``MM/DD/YYYY HH:MM AM/PM`` in local time.
+
+        Timezone-aware values (e.g. UTC file mtimes) are converted to local;
+        naive values are shown as-is. Unparseable values fall back to str().
+        """
         if not dt:
             return "N/A"
-        # Simple string conversion for now
-        return str(dt)
+        parsed = cls._parse_datetime(dt)
+        if parsed is None:
+            return str(dt)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.strftime("%m/%d/%Y %I:%M %p")
+
+    @classmethod
+    def _sort_key(cls, col_key: str, value: Any) -> Any:
+        """Return a comparable sort key for a cell, or None to sort by text.
+
+        Only datetime columns need this today — their MM/DD/YYYY display
+        string would otherwise sort lexically (by month) instead of by time.
+        """
+        if col_key in ("modified_time", "analysis_time"):
+            parsed = cls._parse_datetime(value)
+            if parsed is None:
+                return None
+            # Normalize to a single epoch scale so aware/naive values within a
+            # column compare consistently.
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        return None
 
     @staticmethod
     def _format_duration(duration: Any) -> str:
