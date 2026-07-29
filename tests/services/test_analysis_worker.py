@@ -952,16 +952,21 @@ def test_process_job_analyze_files_failure_emits_status_event(
 
         worker._process_job(mock_job)
 
-    # Reporter.error() was called for the failing file
+    # Reporter.error() was called for the failing file, now enriched with the
+    # traceback + provider context forwarded from _analyze_single_page.
     mock_reporter.error.assert_any_call(
         "Analyze → Re-analyze Files",
         "Re-analysis failed: fail.jpg",
         detail="Provider unreachable",
         file_path="/fail.jpg",
         correlation_id="JOB-42",
+        traceback=None,
         context={
             "job_type": "ANALYZE_FILES",
             "force_reanalysis": False,
+            "provider": None,
+            "model": None,
+            "error_type": None,
         },
     )
 
