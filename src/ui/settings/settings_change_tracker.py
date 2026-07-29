@@ -74,6 +74,9 @@ class _ChangeTrackerMixin:
                     directories.append(item.text())
             self._original_values["directories"] = directories
             self._original_values["scan_on_startup"] = self.scan_on_startup_checkbox.isChecked()
+            self._original_values["auto_advance_on_empty_discovery"] = (
+                self.auto_advance_on_empty_checkbox.isChecked()
+            )
             self._original_values["export_strategy"] = self._current_export_strategy()
             self._original_values["export_static_path"] = self.export_static_path_edit.text()
             self._original_values["export_subfolder_name"] = self.export_subfolder_name_edit.text()
@@ -122,6 +125,7 @@ class _ChangeTrackerMixin:
         self.directories_list.model().rowsInserted.connect(self._check_for_changes)
         self.directories_list.model().rowsRemoved.connect(self._check_for_changes)
         self.scan_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.auto_advance_on_empty_checkbox.stateChanged.connect(self._check_for_changes)
         self.export_static_radio.clicked.connect(self._check_for_changes)
         self.export_subfolder_radio.clicked.connect(self._check_for_changes)
         self.export_beside_radio.clicked.connect(self._check_for_changes)
@@ -291,6 +295,10 @@ class _ChangeTrackerMixin:
                 )
             if self.scan_on_startup_checkbox.isChecked() != self._original_values.get(
                 "scan_on_startup", False
+            ):
+                has_changes = True
+            if self.auto_advance_on_empty_checkbox.isChecked() != self._original_values.get(
+                "auto_advance_on_empty_discovery", False
             ):
                 has_changes = True
             if self._current_export_strategy() != self._original_values.get(

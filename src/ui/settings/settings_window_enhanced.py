@@ -534,6 +534,11 @@ class EnhancedSettingsWindow(
                 "scan_on_startup",
                 "true" if self.scan_on_startup_checkbox.isChecked() else "false",
             )
+            self.config_manager.set_setting(
+                "SourceDirectories",
+                "auto_advance_on_empty_discovery",
+                "true" if self.auto_advance_on_empty_checkbox.isChecked() else "false",
+            )
 
             # Export Directory
             self.config_manager.set_setting(
