@@ -747,7 +747,7 @@ class AnalyzePanel(QWidget):
             == "true"
         )
 
-        app_version = self.config_manager.get_setting("App", "version", "0.3.2-dev")
+        from __version__ import __version__ as app_version
 
         preview = IssuePreviewDialog(
             event,
