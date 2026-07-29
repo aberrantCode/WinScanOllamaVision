@@ -115,6 +115,24 @@ class _SettingsTabDirectoriesMixin:
         self.scan_on_startup_checkbox.setChecked(scan_on_startup.lower() == "true")
         layout.addWidget(self.scan_on_startup_checkbox)
 
+        # Auto-advance to Analyze when startup discovery finds no new files
+        self.auto_advance_on_empty_checkbox = QCheckBox(
+            "Auto-advance to Analyze when no new images are discovered"
+        )
+        self.auto_advance_on_empty_checkbox.setToolTip(
+            "Skip the Import stage automatically when a discovery scan finds\n"
+            "no new images but there are still pending files or errors to review.\n\n"
+            "When enabled: The app jumps straight to the Analyze tab so you can\n"
+            "immediately continue processing work already in the queue.\n\n"
+            "When disabled: A banner is shown on Import offering a one-click\n"
+            "jump to Analyze, but the tab does not switch on its own."
+        )
+        auto_advance = self.config_manager.get_setting(
+            "SourceDirectories", "auto_advance_on_empty_discovery", "true"
+        )
+        self.auto_advance_on_empty_checkbox.setChecked(auto_advance.lower() == "true")
+        layout.addWidget(self.auto_advance_on_empty_checkbox)
+
         # Enable periodic discovery checkbox
         self.discovery_enabled_checkbox = QCheckBox("Enable periodic discovery (background)")
         self.discovery_enabled_checkbox.setToolTip(

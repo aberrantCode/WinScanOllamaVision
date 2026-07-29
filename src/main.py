@@ -46,6 +46,9 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
         def on_discovery_finished(count: int) -> None:
             get_logger().info("Startup discovery finished – %s new files registered", count)
             toast_notifier.show_discovery_toast(count)
+            import_panel = getattr(window, "import_panel", None)
+            if import_panel is not None:
+                import_panel.maybe_show_analyze_nudge_after_discovery(count)
 
         def on_discovery_error(error: str) -> None:
             get_logger().error("Startup discovery error: %s", error)

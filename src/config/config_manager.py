@@ -126,6 +126,7 @@ class ConfigManager:
             self.config["SourceDirectories"] = {
                 "directories": json.dumps([]),
                 "scan_on_startup": "true",
+                "auto_advance_on_empty_discovery": "true",
             }
 
         # Auto-analysis settings

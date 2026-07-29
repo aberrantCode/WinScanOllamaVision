@@ -153,6 +153,9 @@ class DocumentPipelineWindow(QMainWindow):
             config_manager=self.config_manager,
             dark_mode=self.dark_mode,
         )
+        self.import_panel.jump_to_analyze_requested.connect(
+            lambda: self._go_to_stage(STAGE_ANALYZE)
+        )
         self.analyze_panel = AnalyzePanel(
             config_manager=self.config_manager,
             analysis_db=self.analysis_db,
