@@ -63,6 +63,9 @@ class HistoryDropdown(QDialog):
         self._dark_mode = dark_mode
         self._filter_min_level: str | None = None
         self._search_text: str = ""
+        # Events currently shown, in display order — handed to the detail
+        # dialog so it can offer prev/next navigation over the same list.
+        self._events: list[StatusEvent] = []
 
         self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
@@ -167,6 +170,7 @@ class HistoryDropdown(QDialog):
         events = [row_to_status_event(row) for row in rows]
         events = [e for e in events if self._matches_search(e)]
         events = events[: self._display_count]
+        self._events = events
 
         self._list.clear()
         for event, row in zip(events, rows[: len(events)], strict=False):
@@ -258,6 +262,10 @@ class HistoryDropdown(QDialog):
             QMessageBox.warning(self, "Export failed", str(exc))
 
     # ---- Public ----------------------------------------------------------
+
+    def ordered_events(self) -> list[StatusEvent]:
+        """Return the currently displayed events in list order."""
+        return list(self._events)
 
     def set_display_count(self, count: int) -> None:
         self._display_count = max(int(count), 1)

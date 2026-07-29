@@ -702,6 +702,9 @@ class AnalyzePanel(QWidget):
             display_count=display_count, dark_mode=self.dark_mode, parent=self
         )
         dropdown.event_activated.connect(self._on_history_event_activated)
+        # Held so the activation handler can read the full ordered list for
+        # prev/next navigation, and so it can close the dropdown itself.
+        self._history_dropdown = dropdown
 
         # Anchor the popup just below the bar for a natural feel
         if self.status_bar is not None:
@@ -709,20 +712,57 @@ class AnalyzePanel(QWidget):
             dropdown.move(pos)
         dropdown.exec()
 
+    @staticmethod
+    def _retry_predicate(event: Any) -> bool:
+        """Retry applies to re-analyzable files — evaluated per shown event."""
+        from services.status_event import StatusEvent
+
+        return bool(
+            isinstance(event, StatusEvent)
+            and event.file_path
+            and event.feature.startswith("Analyze → Re-analyze")
+        )
+
     def _on_history_event_activated(self, event: Any) -> None:
-        """Open StatusEventDialog for an event the user clicked."""
+        """Open StatusEventDialog (modeless) for the clicked event.
+
+        The dialog is shown non-modally so the rest of the app stays usable,
+        and it receives the dropdown's full ordered list so the user can walk
+        prev/next without reopening the dropdown.
+        """
         from services.status_event import StatusEvent
         from ui.status_history import StatusEventDialog
 
         if not isinstance(event, StatusEvent):
             return
 
-        retry_enabled = bool(event.file_path and event.feature.startswith("Analyze → Re-analyze"))
+        dropdown = getattr(self, "_history_dropdown", None)
+        events = dropdown.ordered_events() if dropdown is not None else [event]
+        try:
+            index = events.index(event)
+        except ValueError:
+            events, index = [event], 0
 
-        dialog = StatusEventDialog(event, retry_enabled=retry_enabled, parent=self)
+        # Close the dropdown's modal loop first, otherwise it keeps the app
+        # blocked even though the detail dialog itself is modeless.
+        if dropdown is not None:
+            dropdown.accept()
+
+        dialog = StatusEventDialog(
+            event,
+            events=events,
+            index=index,
+            retry_enabled=self._retry_predicate,
+            parent=self,
+        )
         dialog.retry_requested.connect(self._on_retry_from_history)
         dialog.file_issue_requested.connect(self._on_file_issue)
-        dialog.exec()
+        # Keep a reference so the modeless dialog isn't garbage-collected the
+        # moment this handler returns.
+        self._event_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _on_retry_from_history(self, event: Any) -> None:
         """Re-queue a failed file for analysis when user clicks Retry."""
