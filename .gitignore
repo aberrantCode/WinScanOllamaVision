@@ -74,5 +74,8 @@ service-account*.json
 # Scanned files (input and output) - these should not be version controlled
 scans/
 organized/
+
+# Runtime logs (start-app wrappers, timing) - not version controlled
+logs/
 .worktrees/
 .mypy_cache/
