@@ -284,11 +284,11 @@ Respond ONLY with valid JSON in this format:
 CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, no code blocks.
 
 Required JSON format:
-{
+{{
             "company": "company name or null",
   "title": "document type or null",
   "date": "YYYY-MM-DD or null"
-}
+}}
 
 Task:
 1. Company: Organization name from headers/footers/logos
@@ -404,12 +404,12 @@ Determine the logical reading order based on:
 - Visual layout clues
 
 Respond with ONLY valid JSON:
-{
+{{
             "ordered_indices": [list of 0-based indices in correct order],
   "confidence": "high" or "medium" or "low"
-}
+}}
 
-Example for 3 pages: {"ordered_indices": [1, 0, 2], "confidence": "high"}
+Example for 3 pages: {{"ordered_indices": [1, 0, 2], "confidence": "high"}}
 
 Current order is: [0, 1, 2, ..., {len(image_paths) - 1}]
 Provide the CORRECT order as indices."""

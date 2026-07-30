@@ -74,3 +74,36 @@ class TestOllamaService:
 
         # Assert
         progress.assert_any_call("downloading: 50%")
+
+    def test_extract_document_info_does_not_raise_on_valid_input(self, service):
+        """Regression: extract_document_info used to crash with unescaped braces in f-string.
+        This test verifies it can now successfully extract document metadata from JSON response."""
+        # Arrange
+        service.client.chat.return_value = {
+            "message": {
+                "content": '{"company": "Acme Corp", "title": "Invoice", "date": "2024-01-15"}'
+            }
+        }
+
+        # Act
+        result = service.extract_document_info("qwen2.5vl:latest", ["a.png"], "Invoice,Receipt")
+
+        # Assert — must not raise
+        assert result["company"] == "Acme Corp"
+        assert result["title"] == "Invoice"
+        assert result["date"] == "2024-01-15"
+
+    def test_infer_page_order_from_content_does_not_raise_on_valid_input(self, service):
+        """Regression: infer_page_order_from_content used to crash with unescaped braces in f-string.
+        This test verifies it can now successfully infer page order from JSON response."""
+        # Arrange
+        service.client.chat.return_value = {
+            "message": {"content": '{"ordered_indices": [1, 0], "confidence": "high"}'}
+        }
+
+        # Act
+        result = service.infer_page_order_from_content("qwen2.5vl:latest", ["a.png", "b.png"])
+
+        # Assert — must not raise
+        assert result["ordered_indices"] == [1, 0]
+        assert result["confidence"] == "high"
