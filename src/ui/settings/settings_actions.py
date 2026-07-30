@@ -43,6 +43,50 @@ class _SettingsActionsMixin:
             if hasattr(self, "gemini_model_combo"):
                 self._load_gemini_models()
 
+    def _validate_ollama_connection(self) -> None:
+        """Test the currently-entered (not necessarily saved) Ollama base URL
+        and model combination, without requiring Save first.
+
+        Uses OllamaProvider.test_connection() against a transient provider
+        built from the in-progress form values, then — if reachable — checks
+        the selected model is actually present so a typo'd or not-yet-pulled
+        model is caught, not just server reachability.
+        """
+        from llm_providers.ollama_provider import OllamaProvider
+
+        base_url = self.ollama_url_edit.text().strip()
+        model = (self.ollama_model_combo.currentData() or "").strip()
+        timeout = self.ollama_timeout_spin.value()
+
+        if not base_url:
+            self.ollama_validate_status_label.setText("⚠ Enter a base URL first")
+            return
+
+        self.ollama_validate_status_label.setText("Testing…")
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.processEvents()
+
+        try:
+            provider = OllamaProvider({"base_url": base_url, "timeout": timeout, "model": model})
+            if not provider.test_connection():
+                self.ollama_validate_status_label.setText(f"✗ Could not reach {base_url}")
+                return
+
+            if model:
+                available = provider.get_available_models()
+                if not any(m.startswith(model) for m in available):
+                    self.ollama_validate_status_label.setText(
+                        f"⚠ Connected, but '{model}' is not downloaded"
+                    )
+                    return
+
+            self.ollama_validate_status_label.setText(
+                f"✓ Connected — {model or 'server reachable'}"
+            )
+        except Exception as e:
+            self.ollama_validate_status_label.setText(f"✗ Validation failed: {e}")
+
     def _optimize_prompt(self, prompt_edit: QPlainTextEdit):
         """Use AI to optimize a prompt"""
         current_prompt = prompt_edit.toPlainText().strip()
