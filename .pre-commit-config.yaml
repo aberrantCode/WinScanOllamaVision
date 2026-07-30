@@ -4,6 +4,13 @@
 # Run manually: pre-commit run --all-files
 # Run pre-push hooks manually: pre-commit run --hook-stage pre-push --all-files
 
+# Hooks with no explicit `stages:` only run at commit time. Without this,
+# every hook below (ruff/mypy/bandit/gitleaks/basic checks) would also
+# redundantly re-run at push time on files that already passed at commit
+# time — pytest-fast is the only hook meant to run on push, and it already
+# declares its own `stages: [pre-push]`.
+default_stages: [pre-commit]
+
 repos:
   # Ruff - Fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -63,15 +70,17 @@ repos:
         stages: [commit-msg]
 
   # Fast test suite as a pre-push gate — catches regressions locally in
-  # ~30–60 s instead of waiting 2–10 min for GitHub Actions. Scoped to
+  # ~30 s instead of waiting 2–10 min for GitHub Actions. Scoped to
   # the fast test directories (services/db/config/llm_providers); the
   # UI, GUI, and integration suites still run on CI where a full matrix
-  # across Python 3.11/3.12/3.13 × ubuntu/windows is possible.
+  # across Python 3.11/3.12/3.13 × ubuntu/windows is possible. `-n auto`
+  # (pytest-xdist) parallelizes across CPU cores — measured ~3.5x faster
+  # (120s -> 30s) on the full 1065-test subset with no failures.
   - repo: local
     hooks:
       - id: pytest-fast
         name: pytest (fast subset) on push
-        entry: python run_tests.py tests/services tests/db tests/config tests/llm_providers --no-cov -x
+        entry: python scripts/pre_push_tests.py tests/services tests/db tests/config tests/llm_providers --no-cov -x -n auto
         language: system
         pass_filenames: false
         stages: [pre-push]
