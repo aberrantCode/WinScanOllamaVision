@@ -1,7 +1,7 @@
 # mypy: disable-error-code=attr-defined
 """LLM Provider tab mixin for EnhancedSettingsWindow."""
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -104,23 +105,46 @@ class _SettingsTabProviderMixin:
         self._apply_combobox_chevron_fix(self.ollama_model_combo)
         layout.addWidget(self.ollama_model_combo, 0, 1)
 
-        # Model action buttons
+        # Model action buttons — icon-only, with the label moved into the tooltip
+        style = self.style()
+
+        def _icon_button(pixmap: QStyle.StandardPixmap, tooltip: str) -> QPushButton:
+            btn = QPushButton()
+            if style is not None:
+                btn.setIcon(style.standardIcon(pixmap))
+            btn.setToolTip(tooltip)
+            btn.setFixedSize(36, 36)
+            btn.setIconSize(QSize(18, 18))
+            btn.setFlat(True)
+            btn.setObjectName("iconButton")
+            return btn
+
         model_buttons = QHBoxLayout()
-        refresh_ollama_btn = QPushButton("Refresh")
-        refresh_ollama_btn.clicked.connect(lambda: self._load_ollama_models(force_refresh=True))
-        refresh_ollama_btn.setObjectName("compactButton")
-        refresh_ollama_btn.setToolTip(
-            "Check download status of Ollama models (bypasses 24-hour cache)"
+        refresh_ollama_btn = _icon_button(
+            QStyle.StandardPixmap.SP_BrowserReload,
+            "Refresh — Check download status of Ollama models (bypasses 24-hour cache)",
         )
+        refresh_ollama_btn.clicked.connect(lambda: self._load_ollama_models(force_refresh=True))
         model_buttons.addWidget(refresh_ollama_btn)
 
-        download_btn = QPushButton("Download")
+        download_btn = _icon_button(
+            QStyle.StandardPixmap.SP_ArrowDown, "Download — Download an Ollama model"
+        )
         download_btn.clicked.connect(self._download_ollama_model)
-        download_btn.setObjectName("compactButton")
-        download_btn.setToolTip("Download an Ollama model")
         model_buttons.addWidget(download_btn)
 
+        validate_btn = _icon_button(
+            QStyle.StandardPixmap.SP_DialogApplyButton,
+            "Validate — Test the current base URL and model without saving first",
+        )
+        validate_btn.clicked.connect(self._validate_ollama_connection)
+        model_buttons.addWidget(validate_btn)
+
         layout.addLayout(model_buttons, 0, 2)
+
+        self.ollama_validate_status_label = QLabel("")
+        self.ollama_validate_status_label.setWordWrap(True)
+        layout.addWidget(self.ollama_validate_status_label, 3, 0, 1, 3)
 
         layout.addWidget(QLabel("Base URL:"), 1, 0)
         self.ollama_url_edit = QLineEdit(
