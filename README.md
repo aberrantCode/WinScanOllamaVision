@@ -63,9 +63,9 @@ Ensure you have Python 3.11+ installed on your system (the project targets Pytho
 Download and install Ollama from [ollama.com](https://ollama.com/). Make sure the Ollama server is running locally (it usually starts automatically).
 
 ### 3. Install a Vision Model
-You need an Ollama vision model for the application to work. The application defaults to `qwen2.5-vl`. You can pull it via the CLI:
+You need an Ollama vision model for the application to work. The application defaults to `qwen2.5vl:latest`. You can pull it via the CLI:
 ```powershell
-ollama pull qwen2.5-vl
+ollama pull qwen2.5vl:latest
 ```
 Or, you can pull other vision models like `llava:latest` or `deepseek-ocr` which can also be selected and pulled directly from within the application's UI.
 
@@ -94,7 +94,7 @@ pip install -r requirements.txt
 ### 1. Configure Settings (`settings.ini`)
 The application automatically creates a `settings.ini` file in the root directory if it doesn't exist. You can edit this file to customize:
 *   `[Ollama]`
-    *   `model`: The default Ollama vision model to use (e.g., `qwen2.5-vl`).
+    *   `model`: The default Ollama vision model to use (e.g., `qwen2.5vl:latest`).
     *   `base_url`: The URL of your Ollama server (default: `http://localhost:11434`).
 *   `[DocumentProcessing]`
     *   `scan_folder`: The path to your input folder (default: `C:\Users\{username}\Pictures\Scans`).
