@@ -557,7 +557,7 @@ class EnhancedSettingsWindow(
             loop.quit()
 
         worker.progress.connect(on_progress)
-        worker.finished.connect(on_finished)
+        worker.result_ready.connect(on_finished)
         worker.error.connect(on_error)
         worker.start()
         progress.show()

@@ -24,8 +24,10 @@ from PyQt6.QtCore import QThread, pyqtSignal
 class LLMPreflightWorker(QThread):
     """Runs an LLM readiness check (and gated download) off the main thread."""
 
-    # Emitted with the ReadinessResult on completion.
-    finished = pyqtSignal(object)
+    # Emitted with the ReadinessResult on completion. Named result_ready (not
+    # `finished`) so it doesn't shadow QThread's built-in argumentless
+    # `finished` signal that Qt relies on for its own thread-cleanup wiring.
+    result_ready = pyqtSignal(object)
     # Emitted with streamed progress strings during a model pull.
     progress = pyqtSignal(str)
     # Emitted with an error string if the worker itself raises unexpectedly.
@@ -56,6 +58,6 @@ class LLMPreflightWorker(QThread):
                 approve_callback=self._approve_callback,
                 progress_callback=self.progress.emit,
             )
-            self.finished.emit(result)
+            self.result_ready.emit(result)
         except Exception as exc:  # pragma: no cover - defensive
             self.error.emit(str(exc))
