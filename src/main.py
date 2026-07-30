@@ -43,6 +43,14 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
         discovery_worker = DiscoveryWorker(config_manager, directories)
         toast_notifier = NotificationService()
 
+        import_panel = getattr(window, "import_panel", None)
+        if import_panel is not None:
+            # Give the Import view the same visible "scanning…" state and
+            # control lock the manual "Discover Images" button uses, so a
+            # startup scan doesn't run invisibly while the user can still
+            # click into a race with a second worker.
+            import_panel.lock_for_external_scan(discovery_worker)
+
         def on_discovery_finished(count: int) -> None:
             get_logger().info("Startup discovery finished – %s new files registered", count)
             toast_notifier.show_discovery_toast(count)

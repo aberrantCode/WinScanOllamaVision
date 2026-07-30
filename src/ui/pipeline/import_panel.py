@@ -75,6 +75,7 @@ class ImportPanel(QWidget):
         self._preview_stack: QStackedWidget | None = None
         self._select_all_btn: QPushButton | None = None
         self._deselect_btn: QPushButton | None = None
+        self._refresh_btn: QPushButton | None = None
         self._summary_bar: QLabel | None = None
         self._analyze_nudge: QFrame | None = None
         self._analyze_nudge_label: QLabel | None = None
@@ -154,11 +155,11 @@ class ImportPanel(QWidget):
         self.show_analyzed_cb.stateChanged.connect(self._refresh)
         bar.addWidget(self.show_analyzed_cb)
 
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedHeight(28)
-        refresh_btn.setFixedWidth(70)
-        refresh_btn.clicked.connect(self._refresh)
-        bar.addWidget(refresh_btn)
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setFixedHeight(28)
+        self._refresh_btn.setFixedWidth(70)
+        self._refresh_btn.clicked.connect(self._refresh)
+        bar.addWidget(self._refresh_btn)
 
         self.scan_btn = QPushButton("Discover Images")
         self.scan_btn.setFixedHeight(28)
@@ -362,7 +363,7 @@ class ImportPanel(QWidget):
         self._analyze_nudge_label = QLabel("")
         self._analyze_nudge_label.setWordWrap(True)
         self._analyze_nudge_label.setStyleSheet(
-            "border: none; background: transparent;" f" color: {c['text_primary']}; font-size: 9pt;"
+            f"border: none; background: transparent; color: {c['text_primary']}; font-size: 9pt;"
         )
         hbox.addWidget(self._analyze_nudge_label, stretch=1)
 
@@ -611,6 +612,61 @@ class ImportPanel(QWidget):
         if self.image_tree:
             self.image_tree.clearSelection()
 
+    def _set_controls_locked(self, locked: bool) -> None:
+        """Disable/enable controls that would race with an in-flight scan.
+
+        The scan button itself is left enabled — it already toggles between
+        "Discover Images" and "Stop Scan" and guards against starting a
+        duplicate scan, so disabling it would remove the ability to cancel.
+        """
+        enabled = not locked
+        if self._refresh_btn:
+            self._refresh_btn.setEnabled(enabled)
+        if self.directory_combo:
+            self.directory_combo.setEnabled(enabled)
+        if self._select_all_btn:
+            self._select_all_btn.setEnabled(enabled)
+        if self._deselect_btn:
+            self._deselect_btn.setEnabled(enabled)
+
+    def lock_for_external_scan(self, worker: DiscoveryWorker) -> None:
+        """Wire an externally-created DiscoveryWorker (e.g. the startup scan
+        in main.py) into this panel's scan UI, so the Import view shows the
+        same visible "scanning…" state and stays locked for the duration —
+        instead of the scan running invisibly while the user can still click
+        Discover Images and race a second worker.
+
+        No completion dialog is shown here (startup scans notify via toast,
+        not a modal) — only progress + locking reuse the manual-scan wiring.
+        """
+        self._discovery_worker = worker
+        if self.scan_btn:
+            self.scan_btn.setText("Stop Scan")
+        if self.scan_progress_bar:
+            self.scan_progress_bar.setVisible(True)
+            self.scan_progress_bar.setRange(0, 0)
+        self._set_controls_locked(True)
+
+        worker.progress.connect(self._on_scan_progress)
+        worker.finished.connect(self._on_external_scan_finished)
+        worker.error.connect(self._on_external_scan_error)
+
+    def _on_external_scan_finished(self, count: int) -> None:
+        if self.scan_btn:
+            self.scan_btn.setText("Discover Images")
+        if self.scan_progress_bar:
+            self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
+        self._refresh()
+
+    def _on_external_scan_error(self, error_msg: str) -> None:
+        if self.scan_btn:
+            self.scan_btn.setText("Discover Images")
+        if self.scan_progress_bar:
+            self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
+        get_logger().error(f"[ImportPanel] external scan error: {error_msg}")
+
     def _on_scan_clicked(self) -> None:
         if self._discovery_worker and self._discovery_worker.isRunning():
             self._discovery_worker.stop()
@@ -626,6 +682,7 @@ class ImportPanel(QWidget):
         if self.scan_progress_bar:
             self.scan_progress_bar.setVisible(True)
             self.scan_progress_bar.setRange(0, 0)
+        self._set_controls_locked(True)
 
         self._discovery_worker = DiscoveryWorker(self.config_manager, dirs)
         self._discovery_worker.progress.connect(self._on_scan_progress)
@@ -645,6 +702,7 @@ class ImportPanel(QWidget):
             self.scan_btn.setText("Discover Images")
         if self.scan_progress_bar:
             self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
         self._refresh()
         if count > 0:
             show_information(self, "Discovery Complete", f"Found {count} new image(s).")
@@ -655,6 +713,7 @@ class ImportPanel(QWidget):
             self.scan_btn.setText("Discover Images")
         if self.scan_progress_bar:
             self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
         show_warning(self, "Discovery Error", f"Scan failed:\n{error_msg}")
 
     def _on_unregister(self) -> None:

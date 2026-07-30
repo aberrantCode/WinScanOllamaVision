@@ -153,6 +153,32 @@ def test_analyze_panel_has_no_close_event_override(
 
 
 # ---------------------------------------------------------------------------
+# Refresh button
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_button_exists_and_is_wired(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """The Refresh button must exist, have the correct text, and trigger refresh()."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+
+    # Verify the button exists
+    assert panel._refresh_btn is not None
+
+    # Verify the button text
+    assert panel._refresh_btn.text() == "⟳ Refresh"
+
+    # Verify the button's tooltip indicates it reloads the grid
+    assert "Reload" in panel._refresh_btn.toolTip()
+
+    # Verify the button has a connected slot by checking the signal receivers
+    # (Qt stores a count of receivers for each signal)
+    receivers = panel._refresh_btn.receivers(panel._refresh_btn.clicked)
+    assert receivers > 0, "Refresh button must have at least one connected slot"
+
+
+# ---------------------------------------------------------------------------
 # H4 — unified dark_mode / is_dark_mode
 # ---------------------------------------------------------------------------
 
