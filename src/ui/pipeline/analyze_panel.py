@@ -582,11 +582,20 @@ class AnalyzePanel(QWidget):
 
     def _on_progress(self, status: str, current: int, total: int) -> None:
         if self.progress_bar:
-            if total > 0:
+            if total > 0 and current < total:
                 self.progress_bar.setRange(0, total)
                 self.progress_bar.setValue(current)
                 pct = int(current / total * 100)
                 self.progress_bar.setFormat(f"{pct}% — {status}")
+            elif total > 0:
+                # current == total: the LAST file's analysis call is still in
+                # flight (scan_all_directories reports `current` before
+                # running the call, not after) — there's no sub-file progress
+                # signal, so a determinate "100%" here would be a lie. Switch
+                # to indeterminate/busy mode until _on_job_finished reports
+                # real completion.
+                self.progress_bar.setRange(0, 0)
+                self.progress_bar.setFormat(status)
             else:
                 self.progress_bar.setRange(0, 0)
         if self.status_lbl:
