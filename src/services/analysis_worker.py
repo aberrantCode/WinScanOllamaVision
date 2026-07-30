@@ -212,9 +212,13 @@ class AnalysisWorker(QThread):
                                 detail=error_msg,
                                 file_path=file_path,
                                 correlation_id=job.job_id,
+                                traceback=result.get("traceback"),
                                 context={
                                     "job_type": "ANALYZE_FILES",
                                     "force_reanalysis": bool(job.force_reanalysis),
+                                    "provider": result.get("provider"),
+                                    "model": result.get("model"),
+                                    "error_type": result.get("error_type"),
                                 },
                             )
                         except Exception as emit_exc:  # pragma: no cover - defensive

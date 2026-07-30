@@ -241,7 +241,13 @@ class AnalysisService:
                         f"Failed to analyze {os.path.basename(image_path)}",
                         detail=error_msg,
                         file_path=image_path,
-                        context={"job_type": "SCAN_ALL"},
+                        traceback=result.get("traceback"),
+                        context={
+                            "job_type": "SCAN_ALL",
+                            "provider": result.get("provider"),
+                            "model": result.get("model"),
+                            "error_type": result.get("error_type"),
+                        },
                     )
 
             # Update directory scan info for each directory
@@ -326,13 +332,18 @@ class AnalysisService:
                     "analysis": existing_analysis,
                 }
 
-        # File needs analysis
+        # File needs analysis. Track the provider name outside the try so a
+        # failure *after* the provider is obtained can still report which
+        # provider/model was in play (crucial for actionable error events).
+        provider_name: str | None = None
+        model_name: str | None = None
         try:
             # Update status to "analyzing"
             self.analysis_db.update_image_status(image_path, "analyzing")
 
             self._log(f"[ANALYSIS] Starting analysis for: {os.path.basename(image_path)}")
             provider = self._get_provider()
+            provider_name = provider.provider_name
             self._log(f"[ANALYSIS] Provider obtained: {provider.provider_name}")
 
             # Get metadata extraction prompt from settings
@@ -346,12 +357,24 @@ class AnalysisService:
             result = provider.analyze_images(image_paths=[image_path], prompt=metadata_prompt)
             self._log(f"[ANALYSIS] Provider returned: success={result.get('success')}")
 
+            model_name = result.get("model_used")
+
             if not result["success"]:
                 error_msg = result.get("error", "Unknown error")
                 self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
                 # Update status to "error"
                 self.analysis_db.update_image_status(image_path, "error")
-                return {"success": False, "cached": False, "skipped": False, "error": error_msg}
+                return {
+                    "success": False,
+                    "cached": False,
+                    "skipped": False,
+                    "error": error_msg,
+                    "error_type": "provider_error",
+                    "provider": provider_name,
+                    "model": model_name,
+                    # Some providers attach their own traceback/stderr; forward it.
+                    "traceback": result.get("traceback"),
+                }
 
             # Save analysis to database
             self._log("[ANALYSIS] Saving to database...")
@@ -394,7 +417,18 @@ class AnalysisService:
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
             # Update status to "error"
             self.analysis_db.update_image_status(image_path, "error")
-            return {"success": False, "cached": False, "skipped": False, "error": str(e)}
+            # Carry the traceback + provider context out so the status event
+            # (and any GitHub issue) is actionable instead of a bare message.
+            return {
+                "success": False,
+                "cached": False,
+                "skipped": False,
+                "error": str(e),
+                "error_type": "exception",
+                "provider": provider_name,
+                "model": model_name,
+                "traceback": error_details,
+            }
 
     def _log(self, message: str):
         """Write log message using the logging service"""

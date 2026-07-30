@@ -301,3 +301,64 @@ def test_event_dialog_file_issue_emits_event(qapp):
     dialog._on_file_issue()
     assert len(received) == 1
     dialog.deleteLater()
+
+
+def test_event_dialog_prev_next_navigation(qapp):
+    """With a sibling list, prev/next walk the events and clamp at the ends."""
+    from ui.status_history.event_dialog import StatusEventDialog
+
+    e0 = _event(title="zero")
+    e1 = _event(title="one")
+    e2 = _event(title="two")
+    dialog = StatusEventDialog(e0, events=[e0, e1, e2], index=0)
+
+    assert dialog._index == 0
+    assert dialog._event is e0
+
+    dialog._go_next()
+    assert dialog._index == 1
+    assert dialog._event is e1
+
+    dialog._go_next()
+    assert dialog._index == 2
+    assert dialog._event is e2
+
+    dialog._go_next()  # clamp at the end — no overflow
+    assert dialog._index == 2
+
+    dialog._go_prev()
+    assert dialog._index == 1
+    assert dialog._event is e1
+    dialog.deleteLater()
+
+
+def test_event_dialog_retry_predicate_evaluated_per_event(qapp):
+    """A callable retry_enabled is re-checked for whichever event is shown."""
+    from ui.status_history.event_dialog import StatusEventDialog
+
+    retryable = _event(feature="Analyze → Re-analyze Files", file_path="/x.png")
+    plain = _event(feature="Analyze → Start Analysis", file_path=None)
+
+    def predicate(ev: StatusEvent) -> bool:
+        return bool(ev.file_path and ev.feature.startswith("Analyze → Re-analyze"))
+
+    dialog = StatusEventDialog(
+        retryable, events=[retryable, plain], index=0, retry_enabled=predicate
+    )
+    assert dialog._retry_is_enabled() is True
+
+    dialog._go_next()
+    assert dialog._retry_is_enabled() is False
+    dialog.deleteLater()
+
+
+def test_event_dialog_single_event_has_no_navigation(qapp):
+    """A lone event hides the prev/next controls."""
+    from ui.status_history.event_dialog import StatusEventDialog
+
+    dialog = StatusEventDialog(_event())
+    # isHidden() reflects the explicit setVisible(False) regardless of whether
+    # the (unshown) dialog window is on screen.
+    assert dialog._prev_btn.isHidden() is True
+    assert dialog._next_btn.isHidden() is True
+    dialog.deleteLater()

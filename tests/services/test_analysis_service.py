@@ -315,6 +315,49 @@ class TestScanAllDirectories:
 
     @patch("glob.glob")
     @patch("os.path.exists")
+    def test_scan_error_event_carries_traceback_and_provider_context(
+        self, mock_exists, mock_glob, service, mock_analysis_db
+    ):
+        """A failed file's status event must forward the traceback + provider
+        context so the history UI shows something actionable, not a bare line.
+        """
+        mock_exists.return_value = True
+        mock_analysis_db.get_active_directories.return_value = ["C:\\dir1"]
+        mock_glob.side_effect = lambda pattern: (
+            ["file1.png"] if "*.png" in pattern and "*.PNG" not in pattern else []
+        )
+
+        with (
+            patch.object(service, "_analyze_single_page") as mock_analyze,
+            patch("services.analysis_service.get_reporter") as mock_get_reporter,
+        ):
+            reporter = MagicMock()
+            mock_get_reporter.return_value = reporter
+            mock_analyze.return_value = {
+                "success": False,
+                "cached": False,
+                "skipped": False,
+                "error": "boom",
+                "error_type": "exception",
+                "provider": "claude_cli",
+                "model": "sonnet",
+                "traceback": "Traceback (most recent call last):\n  RuntimeError: boom",
+            }
+
+            # Act
+            service.scan_all_directories()
+
+            # Assert — the enriched fields reached reporter.error(...)
+            reporter.error.assert_called_once()
+            _, kwargs = reporter.error.call_args
+            assert kwargs["traceback"].startswith("Traceback")
+            assert kwargs["context"]["provider"] == "claude_cli"
+            assert kwargs["context"]["model"] == "sonnet"
+            assert kwargs["context"]["error_type"] == "exception"
+            assert kwargs["context"]["job_type"] == "SCAN_ALL"
+
+    @patch("glob.glob")
+    @patch("os.path.exists")
     def test_scan_tracks_skipped_files(self, mock_exists, mock_glob, service, mock_analysis_db):
         # Arrange
         mock_exists.return_value = True
@@ -607,6 +650,48 @@ class TestAnalyzeSinglePage:
             # Assert
             assert result["success"] is False
             assert "Test exception" in result["error"]
+
+    def test_analyze_single_page_provider_failure_includes_context(self, service):
+        """A provider-reported failure should carry provider/model/error_type."""
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "claude_cli"
+            mock_provider.analyze_images.return_value = {
+                "success": False,
+                "error": "Provider error",
+                "model_used": "sonnet",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["error_type"] == "provider_error"
+            assert result["provider"] == "claude_cli"
+            assert result["model"] == "sonnet"
+
+    def test_analyze_single_page_exception_includes_traceback(self, service):
+        """An exception mid-analysis must surface the traceback + provider."""
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "ollama"
+            mock_provider.analyze_images.side_effect = RuntimeError("kaboom")
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["error_type"] == "exception"
+            assert "kaboom" in result["error"]
+            assert result["provider"] == "ollama"
+            assert "Traceback" in result["traceback"]
+            assert "kaboom" in result["traceback"]
 
 
 class TestAnalyzeSpecificFiles:
