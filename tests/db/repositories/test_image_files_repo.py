@@ -625,6 +625,100 @@ class TestImageFileComplexQueries:
         results = repo.get_batch_with_analysis([])
         assert results == {}
 
+    def test_get_all_with_analysis_surfaces_failed_analysis_without_metadata_row(self, repo, conn):
+        """A failed analysis with no metadata row must still surface via the join.
+
+        Regression test for the join fix: the old join went through
+        `m.analysis_result_id`, so a failed analysis (which never creates a
+        metadata row) was invisible. The new join keys directly off
+        `image_file_id` and picks the latest `analysis_results` row.
+        """
+        from db.repositories.analysis_repo import AnalysisRepository
+
+        image_file_id = repo.register(
+            "/test/failed.jpg", "hash1", "/test", "failed.jpg", 1024, 12345.0
+        )
+        analysis_repo = AnalysisRepository(conn)
+        analysis_repo.save(
+            image_file_id=image_file_id,
+            provider_name="ollama",
+            model_name="qwen2.5vl",
+            prompt_text="Analyze this document.",
+            response_text="Connection refused",
+            confidence_score=None,
+            processing_time_ms=0,
+            had_error=True,
+            extracted_metadata=None,
+            model_options=None,
+        )
+
+        results = repo.get_all_with_analysis()
+
+        assert len(results) == 1
+        row = results[0]
+        assert row["had_error"]
+        assert row["response_text"] == "Connection refused"
+        assert row["provider_name"] == "ollama"
+        assert row["company"] is None
+
+    def test_get_all_with_analysis_picks_latest_attempt_over_stale_metadata_link(self, repo, conn):
+        """A failed re-analysis must surface its own diagnostics while the
+        sticky metadata (last-known-good) stays independently readable.
+        """
+        from db.repositories.analysis_repo import AnalysisRepository
+        from db.repositories.metadata_repo import MetadataRepository
+
+        image_file_id = repo.register(
+            "/test/reanalyzed.jpg", "hash2", "/test", "reanalyzed.jpg", 1024, 12345.0
+        )
+        analysis_repo = AnalysisRepository(conn)
+        metadata_repo = MetadataRepository(conn)
+
+        # First: a successful analysis that also writes the sticky metadata row.
+        first_id = analysis_repo.save(
+            image_file_id=image_file_id,
+            provider_name="ollama",
+            model_name="qwen2.5vl",
+            prompt_text="Analyze this document.",
+            response_text='{"company": "Acme"}',
+            confidence_score=0.9,
+            processing_time_ms=500,
+            had_error=False,
+            extracted_metadata={"company": "Acme"},
+            model_options=None,
+        )
+        metadata_repo.create_from_analysis(
+            image_file_id=image_file_id,
+            analysis_result_id=first_id,
+            normalized_metadata={"company": "Acme"},
+            output_filename=None,
+            document_category=None,
+        )
+
+        # Second: a later failed re-analysis attempt (no metadata write).
+        analysis_repo.save(
+            image_file_id=image_file_id,
+            provider_name="ollama",
+            model_name="qwen2.5vl",
+            prompt_text="Analyze this document.",
+            response_text="Timed out",
+            confidence_score=None,
+            processing_time_ms=0,
+            had_error=True,
+            extracted_metadata=None,
+            model_options=None,
+        )
+
+        results = repo.get_all_with_analysis()
+
+        assert len(results) == 1
+        row = results[0]
+        # Latest attempt's diagnostics surface...
+        assert row["had_error"]
+        assert row["response_text"] == "Timed out"
+        # ...while the sticky metadata from the earlier success is untouched.
+        assert row["company"] == "Acme"
+
     def test_get_stats_returns_counts(self, repo):
         """Test get_stats returns statistics."""
         repo.register("/test/image1.jpg", "abc123", "/test", "image1.jpg", 1024, 12345.0)

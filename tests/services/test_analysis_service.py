@@ -693,6 +693,125 @@ class TestAnalyzeSinglePage:
             assert "Traceback" in result["traceback"]
             assert "kaboom" in result["traceback"]
 
+    def test_analyze_single_page_calls_save_failed_analysis_when_provider_fails(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        """Test save_failed_analysis is called when provider returns failure (line 368-376)."""
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        file_hash = "hash123"
+        mock_metadata_db.compute_file_hash.return_value = file_hash
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "claude_cli"
+            mock_provider.analyze_images.return_value = {
+                "success": False,
+                "error": "API rate limit",
+                "model_used": "sonnet",
+                "processing_time_ms": 2000,
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert - save_failed_analysis called once with correct args
+            mock_analysis_db.save_failed_analysis.assert_called_once()
+            call_kwargs = mock_analysis_db.save_failed_analysis.call_args.kwargs
+            assert call_kwargs["file_path"] == image_path
+            assert call_kwargs["file_hash"] == file_hash
+            assert call_kwargs["provider_name"] == "claude_cli"
+            assert call_kwargs["model_name"] == "sonnet"
+            assert call_kwargs["error_message"] == "API rate limit"
+            assert call_kwargs["processing_time_ms"] == 2000
+
+    def test_analyze_single_page_calls_save_failed_analysis_when_exception_after_prompt(
+        self, service, mock_analysis_db, mock_metadata_db, mock_config
+    ):
+        """Test save_failed_analysis is called when provider.analyze_images raises exception (after prompt fetch)."""
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        file_hash = "hash123"
+        mock_metadata_db.compute_file_hash.return_value = file_hash
+        mock_config.get_setting.return_value = "Custom analyze prompt"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "ollama"
+            # Exception happens during analyze_images call (after prompt was fetched)
+            mock_provider.analyze_images.side_effect = RuntimeError("Connection failed")
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert - save_failed_analysis called with prompt_text set (not None)
+            mock_analysis_db.save_failed_analysis.assert_called_once()
+            call_kwargs = mock_analysis_db.save_failed_analysis.call_args.kwargs
+            assert call_kwargs["file_path"] == image_path
+            assert call_kwargs["file_hash"] == file_hash
+            assert call_kwargs["provider_name"] == "ollama"
+            assert call_kwargs["error_message"] == "Connection failed"
+            assert (
+                call_kwargs["prompt_text"] == "Custom analyze prompt"
+            ), "prompt_text should be set when exception occurs after prompt fetch"
+
+    def test_analyze_single_page_calls_save_failed_analysis_when_exception_before_prompt(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        """Test save_failed_analysis is called when _get_provider raises exception (before prompt fetch)."""
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+        file_hash = "hash123"
+        mock_metadata_db.compute_file_hash.return_value = file_hash
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            # Exception happens during _get_provider call (before prompt is fetched)
+            mock_get_provider.side_effect = RuntimeError("Provider not configured")
+
+            # Act
+            service._analyze_single_page(image_path)
+
+            # Assert - save_failed_analysis called with provider_name/prompt_text as None
+            mock_analysis_db.save_failed_analysis.assert_called_once()
+            call_kwargs = mock_analysis_db.save_failed_analysis.call_args.kwargs
+            assert call_kwargs["file_path"] == image_path
+            assert call_kwargs["file_hash"] == file_hash
+            assert call_kwargs["provider_name"] is None
+            assert call_kwargs["model_name"] is None
+            assert call_kwargs["prompt_text"] is None
+            assert call_kwargs["error_message"] == "Provider not configured"
+
+    def test_analyze_single_page_does_not_call_save_failed_analysis_on_success(
+        self, service, mock_analysis_db, mock_metadata_db
+    ):
+        """Test save_failed_analysis is NOT called on success path (line 413-418)."""
+        # Arrange
+        image_path = "C:\\test\\file1.png"
+
+        with patch.object(service, "_get_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.provider_name = "ollama"
+            mock_provider.analyze_images.return_value = {
+                "success": True,
+                "metadata": {"company": "Test Corp"},
+                "response": "{}",
+                "processing_time_ms": 100,
+                "model_used": "test-model",
+            }
+            mock_get_provider.return_value = mock_provider
+
+            # Act
+            result = service._analyze_single_page(image_path)
+
+            # Assert
+            assert result["success"] is True
+            # save_failed_analysis should NOT be called
+            mock_analysis_db.save_failed_analysis.assert_not_called()
+            # save_analysis SHOULD be called instead
+            mock_analysis_db.save_analysis.assert_called_once()
+
 
 class TestAnalyzeSpecificFiles:
     """Tests for analyze_specific_files method"""

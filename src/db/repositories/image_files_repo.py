@@ -457,7 +457,12 @@ class ImageFilesRepository:
                 (SELECT COUNT(*) FROM analysis_results WHERE image_file_id = img.id) > 1 AS is_cached
             FROM image_files img
             LEFT JOIN metadata m ON img.id = m.image_file_id
-            LEFT JOIN analysis_results ar ON m.analysis_result_id = ar.id
+            LEFT JOIN analysis_results ar ON ar.id = (
+                SELECT ar2.id FROM analysis_results ar2
+                WHERE ar2.image_file_id = img.id
+                ORDER BY ar2.analyzed_at DESC, ar2.id DESC
+                LIMIT 1
+            )
             WHERE img.status != 'deleted'
         """
         params = []
@@ -549,7 +554,12 @@ class ImageFilesRepository:
                 (SELECT COUNT(*) FROM analysis_results WHERE image_file_id = img.id) > 1 AS is_cached
             FROM image_files img
             LEFT JOIN metadata m ON img.id = m.image_file_id
-            LEFT JOIN analysis_results ar ON m.analysis_result_id = ar.id
+            LEFT JOIN analysis_results ar ON ar.id = (
+                SELECT ar2.id FROM analysis_results ar2
+                WHERE ar2.image_file_id = img.id
+                ORDER BY ar2.analyzed_at DESC, ar2.id DESC
+                LIMIT 1
+            )
             WHERE img.file_path IN ({placeholders})
             ORDER BY img.discovered_at DESC
         """  # nosec B608
