@@ -148,7 +148,14 @@ class OllamaProvider(BaseLLMProvider):
         """
         try:
             models = self.service.list_models()
-            return [model["name"] for model in models]
+            # The ollama SDK's list() items key the tag under "model", not
+            # "name" — fall back to "name" for callers/tests that pass plain
+            # {"name": ...} dicts.
+            return [
+                str(model.get("name") or model.get("model") or "")
+                for model in models
+                if model.get("name") or model.get("model")
+            ]
         except ConnectionError as e:
             _get_logger().error(f"[OLLAMA PROVIDER] Connection error listing models: {e}")
             return []
