@@ -133,6 +133,30 @@ def test_check_readiness_cli_provider_missing_cannot_download(reporter):
     assert "cannot be auto-downloaded" in result.message
 
 
+def test_check_readiness_corrected_model_name_matches_installed_tag(reporter):
+    """The post-fix default 'qwen2.5vl:latest' matches the user's installed model."""
+    provider = make_provider(
+        model="qwen2.5vl:latest", available=["qwen2.5vl:latest", "llama3.1:8b"]
+    )
+    svc = LLMReadinessService(make_config(), provider=provider, reporter=reporter)
+
+    result = svc.check_readiness()
+
+    assert result.ok is True
+    assert result.model_available is True
+
+
+def test_check_readiness_corrected_untagged_model_matches_installed_tag(reporter):
+    """A config value of the untagged base 'qwen2.5vl' also matches 'qwen2.5vl:latest'."""
+    provider = make_provider(model="qwen2.5vl", available=["qwen2.5vl:latest"])
+    svc = LLMReadinessService(make_config(), provider=provider, reporter=reporter)
+
+    result = svc.check_readiness()
+
+    assert result.ok is True
+    assert result.model_available is True
+
+
 def test_check_readiness_provider_construction_failure(reporter):
     """When the factory can't build a provider, return a not-ok result."""
     cfg = make_config(active="bogus")
@@ -173,6 +197,22 @@ def test_ensure_model_auto_downloads_then_ok(reporter):
     assert provider.service.pull_model.call_args[0][0] == "qwen2.5-vl"
     assert result.ok is True
     reporter.warn.assert_called()  # "downloading" warn emitted
+
+
+def test_ensure_model_auto_downloads_corrected_model_name(reporter):
+    """Missing 'qwen2.5vl:latest' → auto policy pulls the corrected name (mocked),
+    then a re-check finds it present. Proves the download wiring receives a real,
+    pullable model name rather than the invalid legacy 'qwen2.5-vl'."""
+    provider = make_provider(model="qwen2.5vl:latest", available=[])
+    provider.get_available_models.side_effect = [[], ["qwen2.5vl:latest"], ["qwen2.5vl:latest"]]
+
+    svc = LLMReadinessService(make_config(), provider=provider, reporter=reporter)
+    result = svc.ensure_model("auto")
+
+    provider.service.pull_model.assert_called_once()
+    assert provider.service.pull_model.call_args[0][0] == "qwen2.5vl:latest"
+    assert result.ok is True
+    reporter.warn.assert_called()
 
 
 def test_ensure_model_prompt_approved_downloads(reporter):

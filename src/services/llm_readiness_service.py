@@ -67,8 +67,8 @@ class ReadinessResult:
 def _model_is_available(model: str, available: list[str]) -> bool:
     """Return True if ``model`` matches any name in ``available``.
 
-    Ollama reports tagged names ("qwen2.5-vl:latest") while config commonly
-    stores the untagged base ("qwen2.5-vl"); match either direction on the
+    Ollama reports tagged names ("qwen2.5vl:latest") while config may store
+    the untagged base ("qwen2.5vl"); match either direction on the
     ``base:tag`` boundary. Mirrors ``OllamaService.pull_model``'s verify logic.
     """
     if not model:

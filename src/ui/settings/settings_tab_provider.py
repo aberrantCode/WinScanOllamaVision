@@ -97,7 +97,7 @@ class _SettingsTabProviderMixin:
             "Models marked with ✓ are already downloaded and ready to use.\n"
             "Models without ✓ need to be downloaded first (use Download button or 'ollama pull' command).\n\n"
             "Recommended models:\n"
-            "• qwen2.5-vl:latest - Best accuracy for document analysis\n"
+            "• qwen2.5vl:latest - Best accuracy for document analysis\n"
             "• llava:latest - Good all-around performance\n"
             "• minicpm-v:latest - Fastest for quick processing"
         )
