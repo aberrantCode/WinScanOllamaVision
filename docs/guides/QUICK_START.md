@@ -69,7 +69,7 @@ python src/main.py
 
 ```ini
 [Ollama]
-model = qwen2.5-vl
+model = qwen2.5vl:latest
 base_url = http://localhost:11434
 timeout = 300  # Seconds to wait for Ollama (default: 5 minutes)
 ```

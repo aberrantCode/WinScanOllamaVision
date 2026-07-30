@@ -207,7 +207,7 @@ optimization_request = (
 ### Ollama
 - Ollama service must be running
 - Default: `http://localhost:11434`
-- Model must support text chat (e.g., qwen2.5-vl, llama3, gemma)
+- Model must support text chat (e.g., qwen2.5vl, llama3, gemma)
 
 ### Claude CLI
 - `claude` command must be in PATH

@@ -36,7 +36,7 @@ class OllamaProvider(BaseLLMProvider):
         super().__init__(config)
         self.base_url = config.get("base_url", "http://localhost:11434")
         self.timeout = config.get("timeout", 300)
-        self.default_model = config.get("model", "qwen2.5-vl")
+        self.default_model = config.get("model", "qwen2.5vl:latest")
 
         # Create OllamaService instance
         self.service = OllamaService(base_url=self.base_url, timeout=float(self.timeout))

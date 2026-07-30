@@ -101,7 +101,11 @@ class ProviderFactory:
 # Example usage
 if __name__ == "__main__":
     # Test creating providers
-    ollama_config = {"base_url": "http://localhost:11434", "timeout": 300, "model": "qwen2.5-vl"}
+    ollama_config = {
+        "base_url": "http://localhost:11434",
+        "timeout": 300,
+        "model": "qwen2.5vl:latest",
+    }
 
     claude_config = {
         "command_template": "claude --model %MODEL% --image %IMAGE_PATHS% --prompt %PROMPT%",

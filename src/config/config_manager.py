@@ -19,6 +19,12 @@ def _get_logger():
 
 
 class ConfigManager:
+    # Ollama has no hyphen in "qwen2.5vl" — "qwen2.5-vl" was never a valid
+    # model name and 404s against the Ollama API. Configs written before this
+    # fix carry the invalid value and are migrated on load.
+    _LEGACY_OLLAMA_MODEL = "qwen2.5-vl"
+    _DEFAULT_OLLAMA_MODEL = "qwen2.5vl:latest"
+
     def __init__(self, config_file=None):
         # If no config file specified, use AppData directory
         if config_file is None:
@@ -76,11 +82,21 @@ class ConfigManager:
                 return
 
             # Ensure all default sections exist (for config files created before new providers added)
+            self._migrate_legacy_config()
             self._create_default_config()
             self._save_config()
         else:
             self._create_default_config()
             self._save_config()
+
+    def _migrate_legacy_config(self):
+        """One-time upgrade of legacy config values that are no longer valid."""
+        if self.config.get("Ollama", "model", fallback=None) == self._LEGACY_OLLAMA_MODEL:
+            self.config["Ollama"]["model"] = self._DEFAULT_OLLAMA_MODEL
+            _get_logger().info(
+                f"[CONFIG] Migrated legacy Ollama model '{self._LEGACY_OLLAMA_MODEL}' "
+                f"to '{self._DEFAULT_OLLAMA_MODEL}'"
+            )
 
     def _create_default_config(self):
         # Default LLM Provider settings
@@ -90,7 +106,7 @@ class ConfigManager:
         # Default Ollama settings
         if "Ollama" not in self.config:
             self.config["Ollama"] = {
-                "model": "qwen2.5-vl",  # Default vision model
+                "model": self._DEFAULT_OLLAMA_MODEL,  # Default vision model
                 "base_url": "http://localhost:11434",
                 "timeout": "300",  # Timeout in seconds (5 minutes default for vision models)
             }
@@ -307,7 +323,7 @@ class ConfigManager:
         """Get available models for a provider as list"""
         if provider_name == "ollama":
             # For Ollama, return single model as list
-            model = self.get_setting("Ollama", "model", "qwen2.5-vl")
+            model = self.get_setting("Ollama", "model", self._DEFAULT_OLLAMA_MODEL)
             return [model]
         elif provider_name == "claude_cli":
             models_str = self.get_setting("ClaudeCLI", "models", "")

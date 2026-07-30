@@ -107,7 +107,7 @@ def _start_llm_preflight_if_enabled(window, config_manager) -> None:
         def on_preflight_error(error: str) -> None:
             get_logger().error("LLM preflight worker error: %s", error)
 
-        worker.finished.connect(on_preflight_finished)
+        worker.result_ready.connect(on_preflight_finished)
         worker.error.connect(on_preflight_error)
         worker.start()
         get_logger().info("LLM preflight worker started (policy=%s)", policy)
