@@ -110,6 +110,51 @@ class AnalysisDB:
             document_category=analysis_data.get("document_category"),
         )
 
+    def save_failed_analysis(
+        self,
+        file_path: str,
+        file_hash: str,
+        provider_name: str | None,
+        model_name: str | None,
+        prompt_text: str | None,
+        error_message: str | None,
+        processing_time_ms: int = 0,
+    ) -> None:
+        """
+        Persist diagnostic provenance for a failed analysis attempt.
+
+        Writes only to analysis_results (had_error=True) so a failed
+        re-analysis of a previously-successful file can never overwrite that
+        file's last-known-good metadata row.
+        """
+        # Get or create image_file record
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            # Register new image file
+            directory_path = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            file_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else 0.0
+
+            image_file_id = self._image_files.register(
+                file_path, file_hash, directory_path, filename, file_size, file_mtime
+            )
+        else:
+            image_file_id = image_file["id"]
+
+        self._analysis.save(
+            image_file_id=image_file_id,
+            provider_name=provider_name or "unknown",
+            model_name=model_name or "unknown",
+            prompt_text=prompt_text or "",
+            response_text=error_message or "Unknown error",
+            confidence_score=None,
+            processing_time_ms=processing_time_ms,
+            had_error=True,
+            extracted_metadata=None,
+            model_options=None,
+        )
+
     def get_analysis(self, file_path: str) -> dict[str, Any] | None:
         """Retrieve analysis results for a file."""
         # Get image_file_id from file_path

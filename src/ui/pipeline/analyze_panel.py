@@ -486,7 +486,9 @@ class AnalyzePanel(QWidget):
                     "model_used": row.get("model_name", ""),
                     "provider": row.get("provider_name", ""),
                     "cache_hit": bool(row.get("is_cached", False)),
-                    "error_message": "",
+                    "error_message": (row.get("response_text") or "")
+                    if row.get("had_error")
+                    else "",
                     "file_hash": row.get("file_hash", ""),
                     "raw_response": row.get("response_text", ""),
                     "response_text": row.get("response_text", ""),

@@ -337,6 +337,7 @@ class AnalysisService:
         # provider/model was in play (crucial for actionable error events).
         provider_name: str | None = None
         model_name: str | None = None
+        metadata_prompt: str | None = None
         try:
             # Update status to "analyzing"
             self.analysis_db.update_image_status(image_path, "analyzing")
@@ -364,6 +365,15 @@ class AnalysisService:
                 self._log(f"[ANALYSIS ERROR] Provider returned failure: {error_msg}")
                 # Update status to "error"
                 self.analysis_db.update_image_status(image_path, "error")
+                self.analysis_db.save_failed_analysis(
+                    file_path=image_path,
+                    file_hash=file_hash,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    prompt_text=metadata_prompt,
+                    error_message=error_msg,
+                    processing_time_ms=result.get("processing_time_ms", 0) or 0,
+                )
                 return {
                     "success": False,
                     "cached": False,
@@ -417,6 +427,15 @@ class AnalysisService:
             self._log(f"[ANALYSIS EXCEPTION] Traceback:\n{error_details}")
             # Update status to "error"
             self.analysis_db.update_image_status(image_path, "error")
+            self.analysis_db.save_failed_analysis(
+                file_path=image_path,
+                file_hash=file_hash,
+                provider_name=provider_name,
+                model_name=model_name,
+                prompt_text=metadata_prompt,
+                error_message=str(e),
+                processing_time_ms=0,
+            )
             # Carry the traceback + provider context out so the status event
             # (and any GitHub issue) is actionable instead of a bare message.
             return {
