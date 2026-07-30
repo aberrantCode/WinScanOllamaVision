@@ -444,6 +444,128 @@ class EnhancedSettingsWindow(
         if hasattr(self, "_loading_overlay"):
             self._loading_overlay.hide()
 
+    def _run_save_preflight(self) -> None:
+        """Check LLM readiness after a save and act on the download policy.
+
+        Gated on ``LLMPreflight/verify_on_save``. A ready config is silent; a
+        missing model or unreachable host informs the user. For a missing Ollama
+        model the policy decides: ``off`` warns, ``prompt`` asks then downloads
+        (with a modal progress dialog), ``auto`` downloads immediately. CLI
+        providers cannot download — the user is told to install/select manually.
+        """
+        if not self.config_manager.get_bool("LLMPreflight", "verify_on_save", True):
+            return
+
+        try:
+            from services.llm_readiness_service import LLMReadinessService
+
+            service = LLMReadinessService(self.config_manager)
+            result = service.check_readiness()
+        except Exception as e:  # pragma: no cover - defensive
+            self._get_logger().error(f"Save preflight failed: {e}", exc_info=True)
+            return
+
+        if result.ok:
+            return  # Provider reachable and model present — nothing to say.
+
+        from ui.theme.styles import show_warning
+
+        if not result.reachable:
+            show_warning(self, "LLM Not Reachable", result.message)
+            return
+
+        # Reachable but the configured model is missing.
+        if not result.can_download:
+            show_warning(self, "Model Not Available", result.message)
+            return
+
+        policy = (
+            self.config_manager.get_setting("LLMPreflight", "model_download_policy", "prompt")
+            or "prompt"
+        ).lower()
+
+        if policy == "off":
+            show_warning(self, "Model Missing", result.message)
+            return
+
+        if policy == "prompt":
+            from PyQt6.QtWidgets import QMessageBox
+
+            answer = QMessageBox.question(
+                self,
+                "Download Model?",
+                f"The model '{result.model}' is not installed on Ollama.\n\n"
+                "Download it now? This may be several gigabytes.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                show_warning(
+                    self,
+                    "Model Missing",
+                    f"Model '{result.model}' was not downloaded. "
+                    "Analysis may fail until it is installed.",
+                )
+                return
+
+        # policy == auto, or prompt approved → download with a progress dialog.
+        final = self._download_model_with_progress(result.model)
+
+        from ui.theme.styles import show_critical, show_information
+
+        if final is not None and getattr(final, "ok", False):
+            show_information(self, "Model Ready", f"Model '{final.model}' is installed and ready.")
+        else:
+            message = getattr(final, "message", None) or "Model download failed."
+            show_critical(self, "Download Failed", message)
+
+    def _download_model_with_progress(self, model_name: str):
+        """Download a missing Ollama model off-thread behind a modal progress dialog.
+
+        Returns the post-download ``ReadinessResult`` (or None on worker error).
+        The pull runs on ``LLMPreflightWorker`` with policy ``auto`` (approval,
+        if any, already happened on the main thread), and a local event loop
+        keeps the dialog responsive without blocking the outer event loop.
+        """
+        from PyQt6.QtCore import QEventLoop, Qt
+        from PyQt6.QtWidgets import QProgressDialog
+
+        from services.llm_readiness_worker import LLMPreflightWorker
+
+        progress = QProgressDialog(f"Downloading '{model_name}'…", "", 0, 0, self)
+        progress.setWindowTitle("Downloading Model")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setCancelButton(None)  # A model pull can't be safely interrupted.
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
+        loop = QEventLoop()
+        holder: dict[str, object] = {"result": None}
+
+        worker = LLMPreflightWorker(self.config_manager, "auto")
+
+        def on_progress(text: str) -> None:
+            progress.setLabelText(f"Downloading '{model_name}'…\n{text}")
+
+        def on_finished(result: object) -> None:
+            holder["result"] = result
+            loop.quit()
+
+        def on_error(err: str) -> None:
+            self._get_logger().error(f"Model download worker error: {err}")
+            loop.quit()
+
+        worker.progress.connect(on_progress)
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        worker.start()
+        progress.show()
+        loop.exec()
+        worker.wait(2000)
+        progress.close()
+        return holder["result"]
+
     def save_settings(self):
         """Save all settings"""
         try:
@@ -477,6 +599,21 @@ class EnhancedSettingsWindow(
                 "Updates",
                 "check_on_startup",
                 "true" if self.check_updates_on_startup_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "LLMPreflight",
+                "verify_on_startup",
+                "true" if self.preflight_verify_startup_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "LLMPreflight",
+                "verify_on_save",
+                "true" if self.preflight_verify_save_checkbox.isChecked() else "false",
+            )
+            self.config_manager.set_setting(
+                "LLMPreflight",
+                "model_download_policy",
+                self.preflight_policy_combo.currentData(),
             )
 
             # LLM Provider Tab
@@ -621,6 +758,10 @@ class EnhancedSettingsWindow(
             from ui.theme.styles import show_information
 
             show_information(self, "Settings Saved", "Your settings have been saved successfully.")
+
+            # Verify the newly-saved provider/model is actually ready. A good
+            # config is silent; a missing model / unreachable host surfaces here.
+            self._run_save_preflight()
 
             # Recapture original values to reset change tracking
             self._tracking_enabled = False  # Temporarily disable tracking
