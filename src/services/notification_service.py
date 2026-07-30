@@ -63,15 +63,14 @@ class NotificationService:
 
         return True
 
-    def show_discovery_toast(self, count: int) -> bool:
-        """
-        Show Windows toast notification for discovery results.
+    def _show(self, title: str, message: str) -> bool:
+        """Build and show a single Windows toast with the given text.
 
-        Args:
-            count: Number of new files discovered
+        Shared by all public toast methods so icon handling and error
+        suppression live in one place.
 
         Returns:
-            True if toast was shown successfully, False otherwise
+            True if the toast was shown, False if unavailable or on error.
         """
         if not self._toasts_available:
             self._get_logger.debug("[TOAST] Toasts not available, skipping notification")
@@ -80,17 +79,6 @@ class NotificationService:
         try:
             # Create toaster instance
             toaster = InteractableWindowsToaster("WinScanLLM")
-
-            # Create toast content
-            if count == 0:
-                title = "WinScanLLM Discovery"
-                message = "No new images found"
-            elif count == 1:
-                title = "WinScanLLM Discovery"
-                message = "1 new image discovered"
-            else:
-                title = "WinScanLLM Discovery"
-                message = f"{count} new images discovered"
 
             # Create toast
             toast = Toast()
@@ -113,12 +101,49 @@ class NotificationService:
 
             # Show toast
             toaster.show_toast(toast)
-            self._get_logger.info("[TOAST] Showed discovery toast: %s new files", count)
             return True
 
         except Exception as e:
             self._get_logger.error("[TOAST] Failed to show toast notification: %s", e)
             return False
+
+    def show_discovery_toast(self, count: int) -> bool:
+        """
+        Show Windows toast notification for discovery results.
+
+        Args:
+            count: Number of new files discovered
+
+        Returns:
+            True if toast was shown successfully, False otherwise
+        """
+        title = "WinScanLLM Discovery"
+        if count == 0:
+            message = "No new images found"
+        elif count == 1:
+            message = "1 new image discovered"
+        else:
+            message = f"{count} new images discovered"
+
+        shown = self._show(title, message)
+        if shown:
+            self._get_logger.info("[TOAST] Showed discovery toast: %s new files", count)
+        return shown
+
+    def show_preflight_toast(self, message: str) -> bool:
+        """
+        Show Windows toast notification for an LLM readiness preflight result.
+
+        Args:
+            message: Human-readable readiness summary (e.g. "model missing").
+
+        Returns:
+            True if toast was shown successfully, False otherwise
+        """
+        shown = self._show("WinScanLLM — LLM not ready", message)
+        if shown:
+            self._get_logger.info("[TOAST] Showed preflight toast: %s", message)
+        return shown
 
 
 # Example usage

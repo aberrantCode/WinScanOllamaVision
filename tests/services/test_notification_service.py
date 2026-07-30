@@ -124,6 +124,39 @@ def test_show_discovery_toast_multiple_files(mock_toast_class, mock_toaster_clas
     assert mock_toast.text_fields == ["WinScanLLM Discovery", "5 new images discovered"]
 
 
+@patch("services.notification_service.sys.platform", "win32")
+@patch("services.notification_service.WINDOWS_TOASTS_AVAILABLE", True)
+@patch("services.notification_service.InteractableWindowsToaster")
+@patch("services.notification_service.Toast")
+def test_show_preflight_toast(mock_toast_class, mock_toaster_class):
+    """Test showing a preflight readiness toast."""
+    from services.notification_service import NotificationService
+
+    mock_toaster = MagicMock()
+    mock_toast = MagicMock()
+    mock_toaster_class.return_value = mock_toaster
+    mock_toast_class.return_value = mock_toast
+
+    notifier = NotificationService()
+    result = notifier.show_preflight_toast("Model 'qwen2.5-vl' is not installed on ollama.")
+
+    assert result is True
+    mock_toaster.show_toast.assert_called_once()
+    assert mock_toast.text_fields == [
+        "WinScanLLM — LLM not ready",
+        "Model 'qwen2.5-vl' is not installed on ollama.",
+    ]
+
+
+@patch("services.notification_service.sys.platform", "linux")
+def test_show_preflight_toast_unavailable():
+    """Preflight toast returns False when toasts are unavailable."""
+    from services.notification_service import NotificationService
+
+    notifier = NotificationService()
+    assert notifier.show_preflight_toast("anything") is False
+
+
 @patch("services.notification_service.sys.platform", "linux")
 def test_show_discovery_toast_unavailable():
     """Test showing toast when toasts are unavailable returns False"""
