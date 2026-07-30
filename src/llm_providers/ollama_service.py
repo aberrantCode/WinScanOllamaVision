@@ -46,8 +46,13 @@ class OllamaService:
                     else:
                         progress_callback(status)
 
-            # Verify model was pulled
-            if not any(m["name"].startswith(model_name) for m in self.list_models()):
+            # Verify model was pulled. The ollama SDK's list() items key the tag
+            # under "model", not "name" — fall back to "name" for callers/tests
+            # that pass plain {"name": ...} dicts.
+            if not any(
+                str(m.get("model") or m.get("name") or "").startswith(model_name)
+                for m in self.list_models()
+            ):
                 raise Exception(
                     f"Model '{model_name}' did not appear in list_models after pull operation."
                 )

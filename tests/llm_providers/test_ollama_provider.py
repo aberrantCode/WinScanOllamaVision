@@ -183,6 +183,23 @@ class TestOllamaProvider:
         assert result == ["model1", "model2", "model3"]
         provider.service.list_models.assert_called_once()
 
+    def test_get_available_models_handles_real_sdk_response_shape(self, provider):
+        """The ollama SDK's list() items key the tag under 'model', not 'name'
+        (['name'] raises KeyError against a real response). Regression for
+        get_available_models() always returning [] against a live server."""
+        # Arrange
+        models = [
+            {"model": "qwen2.5vl:latest"},
+            {"model": "llama3.1:8b"},
+        ]
+        provider.service.list_models = MagicMock(return_value=models)
+
+        # Act
+        result = provider.get_available_models()
+
+        # Assert
+        assert result == ["qwen2.5vl:latest", "llama3.1:8b"]
+
     def test_get_available_models_returns_empty_on_error(self, provider):
         # Arrange
         provider.service.list_models = MagicMock(side_effect=ConnectionError("Server down"))
