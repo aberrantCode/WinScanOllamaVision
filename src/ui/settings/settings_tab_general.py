@@ -3,6 +3,7 @@
 
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -126,6 +127,54 @@ class _SettingsTabGeneralMixin:
         updates_layout.addWidget(updates_info)
 
         layout.addWidget(updates_group)
+
+        # LLM Readiness Group
+        readiness_group = QGroupBox("LLM Readiness")
+        readiness_layout = QVBoxLayout(readiness_group)
+
+        self.preflight_verify_startup_checkbox = QCheckBox("Verify LLM readiness on startup")
+        verify_on_startup = self.config_manager.get_bool("LLMPreflight", "verify_on_startup", True)
+        self.preflight_verify_startup_checkbox.setChecked(verify_on_startup)
+        self.preflight_verify_startup_checkbox.setToolTip(
+            "Shortly after launch, check (off the UI thread) that the active provider is\n"
+            "reachable and its configured model is installed — before analysis runs."
+        )
+        readiness_layout.addWidget(self.preflight_verify_startup_checkbox)
+
+        self.preflight_verify_save_checkbox = QCheckBox("Verify LLM readiness when saving settings")
+        verify_on_save = self.config_manager.get_bool("LLMPreflight", "verify_on_save", True)
+        self.preflight_verify_save_checkbox.setChecked(verify_on_save)
+        self.preflight_verify_save_checkbox.setToolTip(
+            "After saving, confirm the selected provider/model is ready and, per the\n"
+            "download policy below, offer to download a missing Ollama model."
+        )
+        readiness_layout.addWidget(self.preflight_verify_save_checkbox)
+
+        policy_row = QHBoxLayout()
+        policy_label = QLabel("Missing-model download policy:")
+        policy_row.addWidget(policy_label)
+        self.preflight_policy_combo = QComboBox()
+        # (label, stored value)
+        for label, value in (
+            ("Off — never download", "off"),
+            ("Prompt — ask before downloading", "prompt"),
+            ("Auto — download automatically", "auto"),
+        ):
+            self.preflight_policy_combo.addItem(label, value)
+        current_policy = self.config_manager.get_setting(
+            "LLMPreflight", "model_download_policy", "prompt"
+        )
+        policy_index = self.preflight_policy_combo.findData(current_policy)
+        self.preflight_policy_combo.setCurrentIndex(policy_index if policy_index >= 0 else 1)
+        self.preflight_policy_combo.setToolTip(
+            "Only Ollama can auto-download models. Claude/Gemini CLI models must be\n"
+            "installed CLI-side. Downloads can be multi-GB — 'Prompt' asks first."
+        )
+        policy_row.addWidget(self.preflight_policy_combo)
+        policy_row.addStretch()
+        readiness_layout.addLayout(policy_row)
+
+        layout.addWidget(readiness_group)
 
         layout.addStretch()
         return widget

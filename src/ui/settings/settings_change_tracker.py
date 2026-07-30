@@ -47,6 +47,13 @@ class _ChangeTrackerMixin:
             self._original_values["check_updates_on_startup"] = (
                 self.check_updates_on_startup_checkbox.isChecked()
             )
+            self._original_values["preflight_verify_startup"] = (
+                self.preflight_verify_startup_checkbox.isChecked()
+            )
+            self._original_values["preflight_verify_save"] = (
+                self.preflight_verify_save_checkbox.isChecked()
+            )
+            self._original_values["preflight_policy"] = self.preflight_policy_combo.currentData()
 
             # LLM Provider tab
             self._original_values["active_provider"] = self.provider_combo.currentData()
@@ -102,6 +109,9 @@ class _ChangeTrackerMixin:
         self.persist_rotation_checkbox.stateChanged.connect(self._check_for_changes)
         self.log_sql_checkbox.stateChanged.connect(self._check_for_changes)
         self.check_updates_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.preflight_verify_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.preflight_verify_save_checkbox.stateChanged.connect(self._check_for_changes)
+        self.preflight_policy_combo.currentIndexChanged.connect(self._check_for_changes)
 
         # LLM Provider tab
         self.provider_combo.currentIndexChanged.connect(self._check_for_changes)
@@ -227,6 +237,18 @@ class _ChangeTrackerMixin:
                 has_changes = True
             if self.check_updates_on_startup_checkbox.isChecked() != self._original_values.get(
                 "check_updates_on_startup", True
+            ):
+                has_changes = True
+            if self.preflight_verify_startup_checkbox.isChecked() != self._original_values.get(
+                "preflight_verify_startup", True
+            ):
+                has_changes = True
+            if self.preflight_verify_save_checkbox.isChecked() != self._original_values.get(
+                "preflight_verify_save", True
+            ):
+                has_changes = True
+            if self.preflight_policy_combo.currentData() != self._original_values.get(
+                "preflight_policy", "prompt"
             ):
                 has_changes = True
 

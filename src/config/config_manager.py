@@ -147,6 +147,17 @@ class ConfigManager:
                 "last_known_version": "",
             }
 
+        # LLM readiness preflight settings
+        if "LLMPreflight" not in self.config:
+            self.config["LLMPreflight"] = {
+                "verify_on_startup": "true",
+                "verify_on_save": "true",
+                # off | prompt | auto — governs whether a missing Ollama model
+                # may be auto-downloaded. "prompt" asks first; "auto" pulls
+                # silently; "off" never downloads. Multi-GB pulls, so default safe.
+                "model_download_policy": "prompt",
+            }
+
         # Discovery and scheduling settings
         if "Discovery" not in self.config:
             self.config["Discovery"] = {
