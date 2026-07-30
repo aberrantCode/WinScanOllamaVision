@@ -5,11 +5,20 @@ from typing import Any, cast
 import httpx
 import ollama
 
+CONNECT_TIMEOUT_SECONDS = 10.0
+
 
 class OllamaService:
     def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
         """
         Initialize OllamaService with configurable timeout.
+
+        A genuinely-unreachable host and a genuinely-slow generation call
+        (first vision-model load, a large pull) used to look identical: both
+        waited the full `timeout` before raising. The connect phase (TCP
+        handshake) is split out with a short, fixed timeout so an unreachable
+        host fails fast, while read/write/pool keep the long `timeout` needed
+        for real generation and model-pull work.
 
         Args:
             base_url: Ollama server URL
@@ -17,9 +26,12 @@ class OllamaService:
         """
         self.base_url = base_url
         self.timeout = timeout
+        self.connect_timeout = min(CONNECT_TIMEOUT_SECONDS, timeout)
 
         # Create client with explicit host parameter - no global env mutation needed
-        self.client = ollama.Client(host=base_url, timeout=httpx.Timeout(timeout))
+        self.client = ollama.Client(
+            host=base_url, timeout=httpx.Timeout(timeout, connect=self.connect_timeout)
+        )
 
     def list_models(self) -> list[dict[str, Any]]:
         """Lists locally available Ollama models."""
@@ -82,6 +94,10 @@ class OllamaService:
             print(f"  Image {i}: {path}")
             print(f"    Exists: {exists} | Size: {size} bytes")
 
+        import time
+
+        start_time = time.time()
+
         try:
             # The SDK accepts file paths directly and handles encoding
             # Build the request parameters
@@ -103,11 +119,6 @@ class OllamaService:
             if format_json:
                 chat_params["format"] = "json"
 
-            # Start timing
-            import time
-
-            start_time = time.time()
-
             # Use client with configured timeout
             response = self.client.chat(**chat_params)  # type: ignore[call-overload]
 
@@ -123,9 +134,13 @@ class OllamaService:
             return cast(dict[str, Any], response.get("message", {}))
 
         except Exception as e:
+            elapsed_time = time.time() - start_time
             print(f"ERROR in chat_with_vision_model: {e}")
             print("==========================================\n")
-            raise ConnectionError(f"Failed to communicate with Ollama: {e}") from e
+            raise ConnectionError(
+                f"Failed to communicate with Ollama at {self.base_url} "
+                f"(model={model_name}, elapsed={elapsed_time:.1f}s): {e}"
+            ) from e
 
     # --- Specific Application Prompts ---
 

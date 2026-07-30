@@ -107,3 +107,53 @@ class TestOllamaService:
         # Assert — must not raise
         assert result["ordered_indices"] == [1, 0]
         assert result["confidence"] == "high"
+
+    def test_init_sets_connect_timeout_shorter_than_total_timeout(self):
+        """__init__ must set connect_timeout to min(CONNECT_TIMEOUT_SECONDS, timeout)."""
+        # Arrange & Act
+        with patch("llm_providers.ollama_service.ollama.Client"):
+            service = OllamaService(timeout=300.0)
+
+        # Assert
+        from llm_providers.ollama_service import CONNECT_TIMEOUT_SECONDS
+
+        assert service.connect_timeout == CONNECT_TIMEOUT_SECONDS
+        assert service.connect_timeout < service.timeout
+
+    def test_init_connect_timeout_never_exceeds_total_timeout(self):
+        """connect_timeout must be clamped to not exceed total timeout."""
+        # Arrange & Act
+        with patch("llm_providers.ollama_service.ollama.Client"):
+            service = OllamaService(timeout=3.0)
+
+        # Assert
+        assert service.connect_timeout == 3.0
+        assert service.connect_timeout <= service.timeout
+
+    def test_init_passes_split_timeout_to_httpx(self):
+        """__init__ must pass both timeout and connect timeout to httpx.Timeout()."""
+        # Arrange
+        with (
+            patch("llm_providers.ollama_service.httpx.Timeout") as mock_timeout,
+            patch("llm_providers.ollama_service.ollama.Client"),
+        ):
+            OllamaService(timeout=300.0)
+
+        # Assert
+        from llm_providers.ollama_service import CONNECT_TIMEOUT_SECONDS
+
+        mock_timeout.assert_called_once_with(300.0, connect=CONNECT_TIMEOUT_SECONDS)
+
+    def test_chat_with_vision_model_error_includes_base_url_model_and_elapsed(self, service):
+        """chat_with_vision_model exception must include base_url, model_name, and elapsed time."""
+        # Arrange
+        service.client.chat.side_effect = Exception("timed out")
+
+        # Act & Assert
+        with pytest.raises(ConnectionError) as exc_info:
+            service.chat_with_vision_model("qwen2.5vl:latest", ["test.png"], "test prompt")
+
+        error_msg = str(exc_info.value)
+        assert "http://localhost:11434" in error_msg
+        assert "qwen2.5vl:latest" in error_msg
+        assert "elapsed" in error_msg
