@@ -156,6 +156,16 @@ class AnalyzePanel(QWidget):
         self._deselect_btn.clicked.connect(self._on_deselect)
         toolbar.addWidget(self._deselect_btn)
 
+        self._refresh_btn = QPushButton("⟳ Refresh")
+        self._refresh_btn.setFlat(True)
+        self._refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._refresh_btn.setToolTip("Reload the grid and analytics from the database")
+        self._refresh_btn.setStyleSheet(
+            _LINK_STYLE.format(self._c().get("text_secondary", "#9CA3AF"))
+        )
+        self._refresh_btn.clicked.connect(self.refresh)
+        toolbar.addWidget(self._refresh_btn)
+
         self.start_btn = QPushButton("▶  Start Analysis")
         self.start_btn.setStyleSheet(
             "QPushButton { background-color: #10B981; color: white; font-weight: 600; "
