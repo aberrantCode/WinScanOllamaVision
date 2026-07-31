@@ -144,7 +144,7 @@ class _SettingsTabProviderMixin:
 
         self.ollama_validate_status_label = QLabel("")
         self.ollama_validate_status_label.setWordWrap(True)
-        layout.addWidget(self.ollama_validate_status_label, 3, 0, 1, 3)
+        layout.addWidget(self.ollama_validate_status_label, 4, 0, 1, 3)
 
         layout.addWidget(QLabel("Base URL:"), 1, 0)
         self.ollama_url_edit = QLineEdit(
@@ -165,7 +165,7 @@ class _SettingsTabProviderMixin:
         self.ollama_timeout_spin.setMinimum(10)
         self.ollama_timeout_spin.setMaximum(600)
         self.ollama_timeout_spin.setValue(
-            int(self.config_manager.get_setting("Ollama", "timeout", "300"))
+            int(self.config_manager.get_setting("Ollama", "timeout", "600"))
         )
         self.ollama_timeout_spin.setToolTip(
             "Maximum time to wait for Ollama to respond (in seconds).\n\n"
@@ -173,10 +173,28 @@ class _SettingsTabProviderMixin:
             "• Complex documents with lots of text\n"
             "• Larger models (13B, 34B parameters)\n"
             "• Systems with limited GPU/CPU resources\n\n"
-            "Default: 300 seconds (5 minutes)\n"
-            "Increase if you get timeout errors during analysis."
+            "Default: 600 seconds (10 minutes) — a cold vision-model load plus the\n"
+            "first inference on a CPU-only host can take ~7 minutes.\n"
+            "Increase if you still get timeout errors during analysis."
         )
         layout.addWidget(self.ollama_timeout_spin, 2, 1)
+
+        layout.addWidget(QLabel("Keep model loaded:"), 3, 0)
+        self.ollama_keepalive_edit = QLineEdit(
+            self.config_manager.get_setting("Ollama", "keep_alive", "30m")
+        )
+        self.ollama_keepalive_edit.setToolTip(
+            "How long Ollama keeps the vision model resident in memory after a "
+            "request (Ollama 'keep_alive').\n\n"
+            "Loading a vision model cold can take minutes on CPU-only systems; "
+            "keeping it warm means only the first analysis pays that cost — "
+            "subsequent files run in seconds.\n\n"
+            "Accepted values:\n"
+            "• Duration, e.g. 30m, 1h, 10m (default: 30m)\n"
+            "• 0 — unload immediately after each request\n"
+            "• -1 — keep loaded indefinitely (holds ~13GB RAM until Ollama restarts)"
+        )
+        layout.addWidget(self.ollama_keepalive_edit, 3, 1)
 
         # Don't load models here - will be loaded from showEvent after initialization
         # to prevent race conditions with change tracking

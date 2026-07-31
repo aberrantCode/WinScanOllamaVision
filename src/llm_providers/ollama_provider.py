@@ -35,11 +35,16 @@ class OllamaProvider(BaseLLMProvider):
         """
         super().__init__(config)
         self.base_url = config.get("base_url", "http://localhost:11434")
-        self.timeout = config.get("timeout", 300)
+        self.timeout = config.get("timeout", 600)
         self.default_model = config.get("model", "qwen2.5vl:latest")
+        # How long Ollama keeps the model loaded after a request. Keeping it warm
+        # avoids re-paying the cold vision-model load (~405s on CPU) per file.
+        self.keep_alive = config.get("keep_alive", "30m")
 
         # Create OllamaService instance
-        self.service = OllamaService(base_url=self.base_url, timeout=float(self.timeout))
+        self.service = OllamaService(
+            base_url=self.base_url, timeout=float(self.timeout), keep_alive=self.keep_alive
+        )
 
     def analyze_images(
         self, image_paths: list[str], prompt: str, model: str | None = None

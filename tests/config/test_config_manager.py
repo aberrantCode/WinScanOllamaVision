@@ -98,7 +98,8 @@ class TestConfigManager:
         # Assert
         assert config_manager.get_setting("Ollama", "model") == "qwen2.5vl:latest"
         assert config_manager.get_setting("Ollama", "base_url") == "http://localhost:11434"
-        assert config_manager.get_setting("Ollama", "timeout") == "300"
+        assert config_manager.get_setting("Ollama", "timeout") == "600"
+        assert config_manager.get_setting("Ollama", "keep_alive") == "30m"
 
     def test_migrates_legacy_ollama_model_name(self, temp_config_file):
         # Arrange: a config file written before the qwen2.5-vl -> qwen2.5vl fix
@@ -116,6 +117,41 @@ class TestConfigManager:
             saved = f.read()
         assert "model = qwen2.5vl:latest" in saved
         assert "qwen2.5-vl" not in saved
+
+    def test_migrates_stale_default_ollama_timeout_300_to_600(self, temp_config_file):
+        """Configs written with the old 300s default must be bumped to 600s so a
+        cold CPU vision load (~405s) completes instead of timing out mid-load."""
+        # Arrange: a config carrying the old default timeout
+        with open(temp_config_file, "w") as f:
+            f.write(
+                "[Ollama]\nmodel = qwen2.5vl:latest\n"
+                "base_url = http://localhost:11434\ntimeout = 300\n"
+            )
+
+        # Act
+        config = ConfigManager(temp_config_file)
+
+        # Assert: upgraded in memory and persisted
+        assert config.get_setting("Ollama", "timeout") == "600"
+        with open(temp_config_file) as f:
+            saved = f.read()
+        assert "timeout = 600" in saved
+
+    def test_preserves_non_default_ollama_timeout(self, temp_config_file):
+        """A user-chosen timeout that is not the old 300s default must be left
+        untouched by the migration."""
+        # Arrange
+        with open(temp_config_file, "w") as f:
+            f.write(
+                "[Ollama]\nmodel = qwen2.5vl:latest\n"
+                "base_url = http://localhost:11434\ntimeout = 900\n"
+            )
+
+        # Act
+        config = ConfigManager(temp_config_file)
+
+        # Assert
+        assert config.get_setting("Ollama", "timeout") == "900"
 
     def test_migration_is_idempotent_for_already_corrected_model(self, temp_config_file):
         # Arrange
@@ -372,7 +408,8 @@ class TestConfigManager:
         # Assert
         assert config["model"] == "qwen2.5vl:latest"
         assert config["base_url"] == "http://localhost:11434"
-        assert config["timeout"] == 300
+        assert config["timeout"] == 600
+        assert config["keep_alive"] == "30m"
 
     def test_get_provider_config_claude_cli(self, config_manager):
         # Act

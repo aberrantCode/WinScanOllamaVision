@@ -50,7 +50,7 @@ class TestOllamaProvider:
 
         # Assert
         assert provider.base_url == "http://localhost:11434"
-        assert provider.timeout == 300
+        assert provider.timeout == 600
         assert provider.default_model == "qwen2.5vl:latest"
 
     def test_init_creates_ollama_service(self, config):
@@ -59,8 +59,19 @@ class TestOllamaProvider:
             provider = OllamaProvider(config)
 
         # Assert
-        mock_service.assert_called_once_with(base_url="http://localhost:11434", timeout=60.0)
+        mock_service.assert_called_once_with(
+            base_url="http://localhost:11434", timeout=60.0, keep_alive="30m"
+        )
         assert provider.service == mock_service.return_value
+
+    def test_init_plumbs_keep_alive_from_config(self):
+        """keep_alive from provider config must reach the OllamaService so the
+        model stays warm between analyses (default 30m when unset)."""
+        with patch("llm_providers.ollama_provider.OllamaService") as mock_service:
+            OllamaProvider({"keep_alive": "1h"})
+
+        _, kwargs = mock_service.call_args
+        assert kwargs["keep_alive"] == "1h"
 
     def test_analyze_images_success_with_valid_json(self, provider):
         # Arrange
