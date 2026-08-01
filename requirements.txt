@@ -17,6 +17,6 @@ mypy>=2.3.0
 pre-commit>=4.6.0
 bandit>=1.9.4
 pip-audit>=2.10.1
-build>=1.0.0        # Local build-check (python -m build)
+build>=1.5.0        # Local build-check (python -m build)
 twine>=5.0.0        # Local build-check (twine check dist/*)
 types-requests  # Type stubs for mypy
