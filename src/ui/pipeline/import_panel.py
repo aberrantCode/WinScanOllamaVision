@@ -39,6 +39,27 @@ from ui.theme.styles import Colors, show_confirm, show_information, show_warning
 from ui.theme.theme_manager import ThemeManager
 
 
+class _ImageTreeItem(QTreeWidgetItem):
+    """Tree item that sorts the Date and Size columns numerically.
+
+    ``QTreeWidget`` sorts by the DisplayRole *string* by default, which would
+    order file sizes lexically (``"9.0 KB"`` after ``"10.0 KB"``, ``"1.2 MB"``
+    before ``"900 B"``) and treat dates as text. For those columns the real
+    numeric value is stored in ``UserRole`` and compared here instead.
+    """
+
+    _NUMERIC_COLUMNS = (2, 3)  # Date Created (mtime), Size (bytes)
+
+    def __lt__(self, other: QTreeWidgetItem) -> bool:
+        tree = self.treeWidget()
+        column = tree.sortColumn() if tree is not None else 0
+        if column in self._NUMERIC_COLUMNS:
+            left = self.data(column, Qt.ItemDataRole.UserRole)
+            right = other.data(column, Qt.ItemDataRole.UserRole)
+            return float(left or 0) < float(right or 0)
+        return bool(super().__lt__(other))
+
+
 class ImportPanel(QWidget):
     """
     Stage 1: Import — discover and review image files.
@@ -238,6 +259,9 @@ class ImportPanel(QWidget):
             return
         tree_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         tree_hdr.setStretchLastSection(False)
+        # Click a column header to sort by it (numeric for Date/Size via _ImageTreeItem).
+        self.image_tree.setSortingEnabled(True)
+        tree_hdr.setSortIndicatorShown(True)
         self.image_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.image_tree.setColumnWidth(1, 90)
         self.image_tree.setColumnWidth(2, 96)
@@ -513,19 +537,26 @@ class ImportPanel(QWidget):
 
         all_images = [i for i in all_images if not i.get("is_ignored", False)]
 
+        # Rebuild with sorting suspended for performance, then restore the user's
+        # chosen sort column/order (re-applied when sorting is re-enabled).
+        self.image_tree.setSortingEnabled(False)
         self.image_tree.clear()
         c = self._c()
 
         for img in all_images:
             status = img.get("status", "registered")
             mtime = img.get("file_mtime") or 0
+            size_bytes = img.get("file_size") or 0
             date_str = (
                 datetime.fromtimestamp(mtime, tz=timezone.utc).strftime("%Y-%m-%d") if mtime else ""
             )
-            size_str = self._fmt_size(img.get("file_size") or 0)
+            size_str = self._fmt_size(size_bytes)
 
-            item = QTreeWidgetItem([img["filename"], status, date_str, size_str])
+            item = _ImageTreeItem([img["filename"], status, date_str, size_str])
             item.setData(0, Qt.ItemDataRole.UserRole, img["file_path"])
+            # Numeric sort keys for the Date and Size columns.
+            item.setData(2, Qt.ItemDataRole.UserRole, mtime)
+            item.setData(3, Qt.ItemDataRole.UserRole, size_bytes)
             item.setTextAlignment(3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
             status_color = {
@@ -538,6 +569,8 @@ class ImportPanel(QWidget):
             item.setForeground(3, QColor(c["text_tertiary"]))
 
             self.image_tree.addTopLevelItem(item)
+
+        self.image_tree.setSortingEnabled(True)
 
         total = self.image_tree.topLevelItemCount()
 
@@ -752,7 +785,7 @@ class ImportPanel(QWidget):
         menu = QMenu(self)
         menu.addAction(f"Unregister{suffix}", self._on_unregister)
         menu.addAction(f"Ignore{suffix}", self._on_ignore)
-        menu.addAction(f"Delete from Disk{suffix}", self._on_delete)
+        menu.addAction(f"Delete from Disk{suffix}", self._on_delete)  # nosec B608 - menu label, not SQL
         menu.addSeparator()
         menu.addAction(f"Rotate Clockwise{suffix}", self._on_rotate_cw)
         menu.addAction(f"Rotate Counter-Clockwise{suffix}", self._on_rotate_ccw)
@@ -832,7 +865,7 @@ class ImportPanel(QWidget):
 
     def _on_open_document(self) -> None:
         """Open selected files with their default application."""
-        import subprocess
+        import subprocess  # nosec B404 - used only to open files in the OS file manager
         import sys
 
         for p in self._selected_paths():
@@ -843,17 +876,18 @@ class ImportPanel(QWidget):
                 )
                 continue
             try:
-                os.startfile(p)  # type: ignore[attr-defined]
+                # p is confined to a source dir by _is_path_in_source_dirs above.
+                os.startfile(p)  # type: ignore[attr-defined]  # nosec B606
             except (OSError, AttributeError):
                 with contextlib.suppress(OSError):
                     if sys.platform == "darwin":
-                        subprocess.Popen(["open", p])  # noqa: S603,S607
+                        subprocess.Popen(["open", p])  # noqa: S603,S607  # nosec B603 B607
                     else:
-                        subprocess.Popen(["xdg-open", p])  # noqa: S603,S607
+                        subprocess.Popen(["xdg-open", p])  # noqa: S603,S607  # nosec B603 B607
 
     def _on_open_folder(self) -> None:
         """Open the containing folder(s) for selected files, deduplicating by folder."""
-        import subprocess
+        import subprocess  # nosec B404 - used only to open folders in the OS file manager
         import sys
 
         folders = {
@@ -861,13 +895,14 @@ class ImportPanel(QWidget):
         }
         for folder in folders:
             try:
-                os.startfile(folder)  # type: ignore[attr-defined]
+                # folder is confined to a source dir by _is_path_in_source_dirs above.
+                os.startfile(folder)  # type: ignore[attr-defined]  # nosec B606
             except (OSError, AttributeError):
                 with contextlib.suppress(OSError):
                     if sys.platform == "darwin":
-                        subprocess.Popen(["open", folder])  # noqa: S603,S607
+                        subprocess.Popen(["open", folder])  # noqa: S603,S607  # nosec B603 B607
                     else:
-                        subprocess.Popen(["xdg-open", folder])  # noqa: S603,S607
+                        subprocess.Popen(["xdg-open", folder])  # noqa: S603,S607  # nosec B603 B607
 
     @staticmethod
     def _fmt_size(size_bytes: int) -> str:
