@@ -272,6 +272,111 @@ class BundlingService:
         # Normalize to 0.0-1.0 range
         return cast(float, min(max(confidence, 0.0), max_confidence))
 
+    def create_or_extend_manual_bundle(self, file_paths: list[str]) -> dict[str, Any]:
+        """Manually bundle the given pages, applying the 0/1/>=2 existing-bundle rule.
+
+        This is the data layer behind the Analyze list view's "Bundle" action. It
+        requires no analysis — it works purely from registered ``image_files`` rows,
+        so it functions when no LLM provider is available.
+
+        Rule (over the *non-rejected* bundles the selected pages already belong to):
+          * 0 distinct existing bundles  -> create a new ``'suggested'`` bundle
+          * exactly 1 existing bundle    -> add the not-yet-member pages to it
+          * 2+ distinct existing bundles -> abort as ambiguous (future work will ask
+            which bundle wins)
+
+        Rejected bundles are ignored so a dead bundle never blocks or captures a merge.
+
+        Args:
+            file_paths: Absolute paths of the selected pages.
+
+        Returns:
+            Outcome dict with keys:
+              ``status``            -- "created" | "extended" | "ambiguous" | "error"
+              ``bundle_id``         -- resulting bundle id, or None on ambiguous/error
+              ``existing_bundle_ids`` -- sorted distinct non-rejected bundle ids found
+              ``added_image_ids``   -- image ids newly added (extend case; [] otherwise)
+              ``message``           -- human-readable summary for the caller/UI
+        """
+        # 1. Resolve selected paths to image ids, preserving selection order.
+        resolved: list[tuple[str, int]] = []
+        for path in file_paths:
+            image_id = self.analysis_db.get_image_id(path)
+            if image_id is not None:
+                resolved.append((path, image_id))
+
+        if not resolved:
+            return {
+                "status": "error",
+                "bundle_id": None,
+                "existing_bundle_ids": [],
+                "added_image_ids": [],
+                "message": "None of the selected pages are registered in the database.",
+            }
+
+        resolved_paths = [p for p, _ in resolved]
+        resolved_ids = [iid for _, iid in resolved]
+
+        # 2. Gather distinct existing (non-rejected) bundle ids across the selection.
+        existing_bundle_ids: set[int] = set()
+        for _, image_id in resolved:
+            for bundle in self.analysis_db.get_bundles_for_image(image_id):
+                if str(bundle.get("status")) == "rejected":
+                    continue
+                existing_bundle_ids.add(bundle["id"])
+
+        distinct_ids = sorted(existing_bundle_ids)
+
+        # 3a. Ambiguous: pages span two or more live bundles.
+        if len(distinct_ids) >= 2:
+            return {
+                "status": "ambiguous",
+                "bundle_id": None,
+                "existing_bundle_ids": distinct_ids,
+                "added_image_ids": [],
+                "message": (
+                    f"The selected pages already belong to {len(distinct_ids)} different "
+                    "bundles. Merging separate bundles is not supported yet."
+                ),
+            }
+
+        # 3b. None bundled: create a fresh suggested bundle with all resolved pages.
+        if not distinct_ids:
+            bundle_id = self.analysis_db.save_bundle_suggestion(
+                file_paths=resolved_paths,
+                bundle_metadata={"bundle_name": "Manual bundle"},
+                confidence_score=1.0,
+            )
+            if bundle_id is None:
+                return {
+                    "status": "error",
+                    "bundle_id": None,
+                    "existing_bundle_ids": [],
+                    "added_image_ids": [],
+                    "message": "Failed to create the bundle.",
+                }
+            return {
+                "status": "created",
+                "bundle_id": bundle_id,
+                "existing_bundle_ids": [],
+                "added_image_ids": resolved_ids,
+                "message": f"Created a new bundle with {len(resolved_paths)} page(s).",
+            }
+
+        # 3c. Exactly one existing bundle: add only the not-yet-member pages to it.
+        target_id = distinct_ids[0]
+        member_ids = {img["id"] for img in self.analysis_db.get_bundle_images(target_id)}
+        to_add = [iid for iid in resolved_ids if iid not in member_ids]
+        if to_add:
+            self.analysis_db.add_images_to_bundle(target_id, to_add)
+        return {
+            "status": "extended",
+            "bundle_id": target_id,
+            "existing_bundle_ids": [target_id],
+            "added_image_ids": to_add,
+            "message": f"Added {len(to_add)} page(s) to the existing bundle.",
+        }
+
     def get_bundle_by_id(self, bundle_id: int) -> dict[str, Any] | None:
         """
         Get bundle suggestion by ID.
