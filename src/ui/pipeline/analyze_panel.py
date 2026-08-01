@@ -41,6 +41,9 @@ class AnalyzePanel(QWidget):
 
     back_requested = pyqtSignal()
     next_requested = pyqtSignal()
+    # Re-emitted from the grid when the user manually bundles pages; carries the
+    # resulting bundle id so the window can open the Bundle view with it selected.
+    bundle_view_requested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -520,6 +523,8 @@ class AnalyzePanel(QWidget):
         self._worker.queue_empty.connect(self._on_queue_empty, ct)  # type: ignore[call-arg]
         if self.file_grid:
             self.file_grid.re_analyze_requested.connect(self._on_re_analyze_requested)
+            # Re-emit the grid's bundle_created upward so the window can switch views.
+            self.file_grid.bundle_created.connect(self.bundle_view_requested)
             self.file_grid.table_view.selectionModel().selectionChanged.connect(
                 self._on_grid_selection_changed
             )

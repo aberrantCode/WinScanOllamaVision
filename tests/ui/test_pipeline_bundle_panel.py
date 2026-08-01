@@ -186,6 +186,104 @@ def test_update_bundle_stats_empty_doc_types_shows_dash(
         assert panel._stat_doc_types_lbl.text() == "—"
 
 
+## ---------------------------------------------------------------------------
+# select_bundle — display one persisted bundle by id (manual bundling)
+# ---------------------------------------------------------------------------
+
+
+def test_select_bundle_loads_specific_bundle_by_id(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """select_bundle reads the bundle by id and builds a workflow for it, selected."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel._content_stack = MagicMock()
+
+    mock_analysis_db.get_bundle_with_images.return_value = {
+        "id": 42,
+        "company": "",
+        "document_type": "",
+        "document_date": "",
+        "confidence_score": 1.0,
+        "file_paths": ["a.png", "b.png"],
+        "analyses": [{}, {}],
+    }
+    mock_analysis_db.get_analyzed_pages.return_value = []
+
+    mock_wf = MagicMock()
+    mock_wf.current_bundle_index = 0
+    mock_wf.bundles = [{"file_paths": ["a.png", "b.png"]}]
+    mock_wf.accepted_bundles = []
+    mock_wf.rejected_bundles = []
+    mock_wf.skipped_bundles = []
+
+    with patch(
+        "ui.bundle.bundle_review_widget.BundleReviewWidget", return_value=mock_wf
+    ) as mock_cls:
+        panel.select_bundle(42)
+
+    # Read by id, NOT via generate_bundle_recommendations
+    mock_analysis_db.get_bundle_with_images.assert_called_once_with(42)
+    # A workflow was built and is the live one
+    assert panel._embedded_workflow is mock_wf
+    # It was constructed at start_index 0 (the target is the only/selected bundle)
+    _, kwargs = mock_cls.call_args
+    assert kwargs["start_index"] == 0
+    assert kwargs["bundles"][0]["bundle_id"] == 42
+
+
+def test_select_bundle_forces_rebuild_when_workflow_already_live(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """Unlike refresh_bundle_count, select_bundle must not early-return on a live workflow."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel._content_stack = MagicMock()
+    # Simulate an already-running workflow
+    old_wf = MagicMock()
+    panel._content_stack.indexOf.return_value = 1
+    panel._embedded_workflow = old_wf
+
+    mock_analysis_db.get_bundle_with_images.return_value = {
+        "id": 7,
+        "company": "",
+        "document_type": "",
+        "document_date": "",
+        "confidence_score": 1.0,
+        "file_paths": ["x.png"],
+        "analyses": [{}],
+    }
+    mock_analysis_db.get_analyzed_pages.return_value = []
+
+    new_wf = MagicMock()
+    new_wf.current_bundle_index = 0
+    new_wf.bundles = [{"file_paths": ["x.png"]}]
+    new_wf.accepted_bundles = []
+    new_wf.rejected_bundles = []
+    new_wf.skipped_bundles = []
+
+    with patch("ui.bundle.bundle_review_widget.BundleReviewWidget", return_value=new_wf):
+        panel.select_bundle(7)
+
+    # Old workflow was torn down and replaced
+    old_wf.deleteLater.assert_called_once()
+    assert panel._embedded_workflow is new_wf
+
+
+def test_select_bundle_missing_shows_placeholder_no_workflow(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """A missing/empty bundle falls back to the placeholder without building a workflow."""
+    panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+    panel._content_stack = MagicMock()
+    mock_analysis_db.get_bundle_with_images.return_value = None
+
+    with patch("ui.bundle.bundle_review_widget.BundleReviewWidget") as mock_cls:
+        panel.select_bundle(123)
+
+    mock_cls.assert_not_called()
+    assert panel._embedded_workflow is None
+    panel._content_stack.setCurrentIndex.assert_called_with(0)
+
+
 def test_compute_bundle_stats_basic(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager):
     """_compute_bundle_stats derives correct totals from bundle list."""
     panel = _make_bundle_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
