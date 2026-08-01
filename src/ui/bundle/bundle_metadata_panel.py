@@ -176,6 +176,18 @@ class BundleMetadataPanel(QWidget):
         self._refresh_forms()
         self._update_output_filename()
 
+    def set_current_page(self, current_page_index: int) -> None:
+        """Refresh the forms for a newly selected page within the same bundle.
+
+        Page-level fields (page number, rotation, tax flag, file/analysis info)
+        are read from ``analyses[actual_index]`` when the forms are rebuilt, so
+        this makes the panel reflect the page the user just clicked. The output
+        filename is bundle-level, so it is intentionally left untouched (and its
+        manual-edit flag preserved).
+        """
+        self._current_page_index = current_page_index
+        self._refresh_forms()
+
     def get_metadata(self) -> dict:
         """Collect current field values and return as a dict."""
         result: dict = {}
