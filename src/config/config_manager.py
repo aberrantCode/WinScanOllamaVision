@@ -25,6 +25,14 @@ class ConfigManager:
     _LEGACY_OLLAMA_MODEL = "qwen2.5-vl"
     _DEFAULT_OLLAMA_MODEL = "qwen2.5vl:latest"
 
+    # The original 300s default was too short for a cold CPU vision-model load
+    # plus first inference (measured ~405s), causing analysis to time out while
+    # cheap Test-Connection calls still succeeded. Configs still carrying the old
+    # default are bumped to 600s on load. A user-chosen non-default value is left
+    # untouched.
+    _LEGACY_OLLAMA_TIMEOUT = "300"
+    _DEFAULT_OLLAMA_TIMEOUT = "600"
+
     def __init__(self, config_file=None):
         # If no config file specified, use AppData directory
         if config_file is None:
@@ -98,6 +106,14 @@ class ConfigManager:
                 f"to '{self._DEFAULT_OLLAMA_MODEL}'"
             )
 
+        if self.config.get("Ollama", "timeout", fallback=None) == self._LEGACY_OLLAMA_TIMEOUT:
+            self.config["Ollama"]["timeout"] = self._DEFAULT_OLLAMA_TIMEOUT
+            _get_logger().info(
+                f"[CONFIG] Migrated stale default Ollama timeout "
+                f"'{self._LEGACY_OLLAMA_TIMEOUT}s' to '{self._DEFAULT_OLLAMA_TIMEOUT}s' "
+                "(cold CPU vision load exceeds 300s)"
+            )
+
     def _create_default_config(self):
         # Default LLM Provider settings
         if "LLMProvider" not in self.config:
@@ -108,7 +124,13 @@ class ConfigManager:
             self.config["Ollama"] = {
                 "model": self._DEFAULT_OLLAMA_MODEL,  # Default vision model
                 "base_url": "http://localhost:11434",
-                "timeout": "300",  # Timeout in seconds (5 minutes default for vision models)
+                # 600s / 10 min: a cold CPU vision-model load + first inference was
+                # measured at ~405s, over the old 300s ceiling that caused analysis
+                # timeouts while cheap Test-Connection calls still succeeded.
+                "timeout": self._DEFAULT_OLLAMA_TIMEOUT,
+                # How long Ollama keeps the model resident between requests, so
+                # batches stay warm (~28s/file) after the first cold load.
+                "keep_alive": "30m",
             }
 
         # Claude CLI settings
@@ -339,7 +361,8 @@ class ConfigManager:
             return {
                 "model": self.get_setting("Ollama", "model"),
                 "base_url": self.get_setting("Ollama", "base_url"),
-                "timeout": int(self.get_setting("Ollama", "timeout", "300")),
+                "timeout": int(self.get_setting("Ollama", "timeout", "600")),
+                "keep_alive": self.get_setting("Ollama", "keep_alive", "30m"),
             }
         elif provider_name == "claude_cli":
             return {

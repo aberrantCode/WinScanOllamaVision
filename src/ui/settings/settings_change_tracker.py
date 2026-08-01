@@ -62,6 +62,7 @@ class _ChangeTrackerMixin:
             )
             self._original_values["ollama_url"] = self.ollama_url_edit.text()
             self._original_values["ollama_timeout"] = self.ollama_timeout_spin.value()
+            self._original_values["ollama_keepalive"] = self.ollama_keepalive_edit.text()
             self._original_values["claude_model"] = self.claude_model_combo.currentText()
             self._original_values["claude_command"] = self.claude_command_edit.toPlainText()
             self._original_values["claude_timeout"] = self.claude_timeout_spin.value()
@@ -118,6 +119,7 @@ class _ChangeTrackerMixin:
         self.ollama_model_combo.currentIndexChanged.connect(self._check_for_changes)
         self.ollama_url_edit.textChanged.connect(self._check_for_changes)
         self.ollama_timeout_spin.valueChanged.connect(self._check_for_changes)
+        self.ollama_keepalive_edit.textChanged.connect(self._check_for_changes)
         self.claude_model_combo.currentIndexChanged.connect(self._check_for_changes)
         self.claude_command_edit.textChanged.connect(self._check_for_changes)
         self.claude_timeout_spin.valueChanged.connect(self._check_for_changes)
@@ -272,6 +274,10 @@ class _ChangeTrackerMixin:
             if self.ollama_url_edit.text() != self._original_values.get("ollama_url", ""):
                 has_changes = True
             if self.ollama_timeout_spin.value() != self._original_values.get("ollama_timeout", 0):
+                has_changes = True
+            if self.ollama_keepalive_edit.text() != self._original_values.get(
+                "ollama_keepalive", ""
+            ):
                 has_changes = True
             if self.claude_model_combo.currentText() != self._original_values.get(
                 "claude_model", ""

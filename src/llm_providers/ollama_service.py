@@ -9,7 +9,12 @@ CONNECT_TIMEOUT_SECONDS = 10.0
 
 
 class OllamaService:
-    def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        timeout: float = 600.0,
+        keep_alive: str = "30m",
+    ):
         """
         Initialize OllamaService with configurable timeout.
 
@@ -22,10 +27,19 @@ class OllamaService:
 
         Args:
             base_url: Ollama server URL
-            timeout: Request timeout in seconds (default: 300 seconds / 5 minutes)
+            timeout: Request timeout in seconds (default: 600 seconds / 10 minutes).
+                On CPU-only hosts a cold vision-model load plus the first
+                inference was measured at ~405s — well over the old 300s
+                ceiling, which is why analysis timed out while "Test Connection"
+                (a cheap /api/tags list) still succeeded.
+            keep_alive: How long Ollama keeps the model resident after a request
+                (default "30m"). Passed through on every chat call so files after
+                the first in a batch run warm (~28s) instead of re-paying the
+                cold load.
         """
         self.base_url = base_url
         self.timeout = timeout
+        self.keep_alive = keep_alive
         self.connect_timeout = min(CONNECT_TIMEOUT_SECONDS, timeout)
 
         # Create client with explicit host parameter - no global env mutation needed
@@ -113,6 +127,9 @@ class OllamaService:
                 "options": {
                     "temperature": 0.1  # Keep temperature low for factual extraction
                 },
+                # Keep the model resident so subsequent pages/files in a batch
+                # run warm instead of re-paying the cold vision-model load.
+                "keep_alive": self.keep_alive,
             }
 
             # Only add format parameter if we want JSON

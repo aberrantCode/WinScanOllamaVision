@@ -91,12 +91,17 @@ def _attach_all_widgets(host):
     host.confirm_exit_checkbox = _make_checkbox()
     host.persist_rotation_checkbox = _make_checkbox(True)
     host.log_sql_checkbox = _make_checkbox()
+    host.check_updates_on_startup_checkbox = _make_checkbox(True)
+    host.preflight_verify_startup_checkbox = _make_checkbox(True)
+    host.preflight_verify_save_checkbox = _make_checkbox(True)
+    host.preflight_policy_combo = _make_combo(data="prompt")
 
     # Provider tab
     host.provider_combo = _make_combo(data="ollama")
     host.ollama_model_combo = _make_combo(text="qwen2.5-vl:latest", data="qwen2.5-vl:latest")
     host.ollama_url_edit = _make_lineedit("http://localhost:11434")
     host.ollama_timeout_spin = _make_spinbox(60)
+    host.ollama_keepalive_edit = _make_lineedit("30m")
     host.claude_model_combo = _make_combo("claude-3-5-sonnet-20241022")
     host.claude_command_edit = _make_textedit("claude")
     host.claude_timeout_spin = _make_spinbox(60)
@@ -118,6 +123,7 @@ def _attach_all_widgets(host):
     mock_list.model.return_value = mock_model
     host.directories_list = mock_list
     host.scan_on_startup_checkbox = _make_checkbox()
+    host.auto_advance_on_empty_checkbox = _make_checkbox()
     host.export_static_radio = _make_checkbox()
     host.export_subfolder_radio = _make_checkbox()
     host.export_beside_radio = _make_checkbox()
@@ -177,6 +183,7 @@ def test_capture_original_values_success_captures_all_fields():
         "active_provider",
         "ollama_model",
         "ollama_url",
+        "ollama_keepalive",
         "claude_model",
         "gemini_model",
         "directories",

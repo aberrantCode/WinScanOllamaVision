@@ -144,6 +144,34 @@ class TestOllamaService:
 
         mock_timeout.assert_called_once_with(300.0, connect=CONNECT_TIMEOUT_SECONDS)
 
+    def test_init_default_timeout_is_600(self):
+        """Default timeout must be 600s so a cold CPU vision load (~405s measured)
+        completes instead of firing the old 300s ceiling mid-load."""
+        with patch("llm_providers.ollama_service.ollama.Client"):
+            service = OllamaService()
+
+        assert service.timeout == 600.0
+
+    def test_init_default_keep_alive_is_30m(self):
+        """Default keep_alive keeps the model resident so files after the first in
+        a batch run warm (~28s) instead of re-paying the ~405s cold load."""
+        with patch("llm_providers.ollama_service.ollama.Client"):
+            service = OllamaService()
+
+        assert service.keep_alive == "30m"
+
+    def test_chat_with_vision_model_passes_keep_alive_to_client(self):
+        """chat_with_vision_model must forward keep_alive to client.chat so the
+        model stays warm between analyses."""
+        with patch("llm_providers.ollama_service.ollama.Client"):
+            service = OllamaService(keep_alive="45m")
+        service.client.chat.return_value = {"message": {"content": "{}"}}
+
+        service.chat_with_vision_model("qwen2.5vl:latest", ["a.png"], "prompt")
+
+        _, kwargs = service.client.chat.call_args
+        assert kwargs["keep_alive"] == "45m"
+
     def test_chat_with_vision_model_error_includes_base_url_model_and_elapsed(self, service):
         """chat_with_vision_model exception must include base_url, model_name, and elapsed time."""
         # Arrange

@@ -80,9 +80,11 @@ class EnhancedSettingsWindow(
             self.model_loading_worker = None
 
             # Initialize Ollama service (for backward compatibility)
-            timeout = float(self.config_manager.get_setting("Ollama", "timeout", "300"))
+            timeout = float(self.config_manager.get_setting("Ollama", "timeout", "600"))
             self.ollama_service = OllamaService(
-                base_url=self.config_manager.get_setting("Ollama", "base_url"), timeout=timeout
+                base_url=self.config_manager.get_setting("Ollama", "base_url"),
+                timeout=timeout,
+                keep_alive=self.config_manager.get_setting("Ollama", "keep_alive", "30m"),
             )
 
             app_name = self.config_manager.get_setting("GUI", "app_name", "WinScanLLM")
@@ -629,6 +631,9 @@ class EnhancedSettingsWindow(
                 self.config_manager.set_setting("Ollama", "base_url", self.ollama_url_edit.text())
                 self.config_manager.set_setting(
                     "Ollama", "timeout", str(self.ollama_timeout_spin.value())
+                )
+                self.config_manager.set_setting(
+                    "Ollama", "keep_alive", self.ollama_keepalive_edit.text().strip() or "30m"
                 )
             elif active_provider == "claude_cli":
                 self.config_manager.set_setting(
