@@ -167,8 +167,8 @@ class MetadataRepository:
         # Execute UPSERT
         self.conn.execute(
             f"""
-            INSERT INTO metadata ({', '.join(columns)})
-            VALUES ({', '.join(placeholders)})
+            INSERT INTO metadata ({", ".join(columns)})
+            VALUES ({", ".join(placeholders)})
             ON CONFLICT(image_file_id) DO UPDATE SET {update_clause}
         """,
             tuple(values),

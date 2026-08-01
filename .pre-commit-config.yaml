@@ -14,7 +14,7 @@ default_stages: [pre-commit]
 repos:
   # Ruff - Fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.4
+    rev: v0.15.1
     hooks:
       # Linter
       - id: ruff
@@ -69,18 +69,19 @@ repos:
       - id: conventional-pre-commit
         stages: [commit-msg]
 
-  # Fast test suite as a pre-push gate — catches regressions locally in
-  # ~30 s instead of waiting 2–10 min for GitHub Actions. Scoped to
-  # the fast test directories (services/db/config/llm_providers); the
-  # UI, GUI, and integration suites still run on CI where a full matrix
-  # across Python 3.11/3.12/3.13 × ubuntu/windows is possible. `-n auto`
-  # (pytest-xdist) parallelizes across CPU cores — measured ~3.5x faster
-  # (120s -> 30s) on the full 1065-test subset with no failures.
+  # Local verification gate as a pre-push check. We run CI locally instead
+  # of on GitHub Actions, so this is the real gate before code leaves the
+  # machine. `--quick` = ruff check + ruff format --check + mypy + the
+  # curated fast test subset (services/db/config/llm_providers, -n auto,
+  # no coverage), ~30-60s. Run the FULL gate (adds bandit + the whole test
+  # suite + package build) manually before a PR: `scripts/verify.ps1`.
+  # verify.py is a stdlib launcher that resolves the project venv, so it
+  # works whether or not a venv is active on PATH.
   - repo: local
     hooks:
-      - id: pytest-fast
-        name: pytest (fast subset) on push
-        entry: python scripts/pre_push_tests.py tests/services tests/db tests/config tests/llm_providers --no-cov -x -n auto
+      - id: verify-quick
+        name: local verification gate (quick) on push
+        entry: python scripts/verify.py --quick
         language: system
         pass_filenames: false
         stages: [pre-push]

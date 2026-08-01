@@ -98,9 +98,9 @@ def test_unregister_shows_confirm_dialog_before_deletion(
 
     assert "question" in call_order, "QMessageBox.question was not called"
     assert "mark_deleted" in call_order, "mark_deleted_batch was not called"
-    assert call_order.index("question") < call_order.index(
-        "mark_deleted"
-    ), "Confirm dialog must appear BEFORE mark_deleted_batch is called"
+    assert call_order.index("question") < call_order.index("mark_deleted"), (
+        "Confirm dialog must appear BEFORE mark_deleted_batch is called"
+    )
 
 
 def test_unregister_no_answer_does_not_call_mark_deleted_batch(
@@ -210,6 +210,6 @@ def test_unregister_dialog_mentions_file_count(qapp, mock_analysis_db, mock_conf
         panel._on_unregister()
 
     # The dialog text should include the count (3)
-    assert "3" in captured_args.get(
-        "text", ""
-    ), f"Expected file count '3' in dialog text, got: {captured_args.get('text')!r}"
+    assert "3" in captured_args.get("text", ""), (
+        f"Expected file count '3' in dialog text, got: {captured_args.get('text')!r}"
+    )

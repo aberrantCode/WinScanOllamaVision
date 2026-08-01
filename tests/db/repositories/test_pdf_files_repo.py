@@ -140,9 +140,12 @@ class TestRegister:
 
     def test_register_handles_operational_error(self, repo, sample_bundle_id):
         """Test register handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.register(
                 pdf_path="/test/error.pdf",
                 pdf_filename="error.pdf",
@@ -288,9 +291,12 @@ class TestUpdateGenerationStatus:
             page_count=1,
         )
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_generation_status("/test/status.pdf", "failed")
 
     def test_update_generation_status_handles_generic_error(self, repo, sample_bundle_id):
@@ -375,9 +381,12 @@ class TestUpdateSearchability:
             page_count=1,
         )
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_searchability("/test/searchable.pdf", True)
 
     def test_update_searchability_handles_generic_error_when_column_exists(

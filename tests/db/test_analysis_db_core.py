@@ -740,9 +740,9 @@ class TestSaveFailedAnalysis:
             (norm_path,),
         ).fetchone()
         assert metadata_after is not None
-        assert (
-            metadata_after["company"] == "Original Corp"
-        ), "CRITICAL: save_failed_analysis must never overwrite existing metadata"
+        assert metadata_after["company"] == "Original Corp", (
+            "CRITICAL: save_failed_analysis must never overwrite existing metadata"
+        )
         assert metadata_after["document_type"] == "Invoice"
 
         # Verify two analysis_results rows exist (one success, one error)

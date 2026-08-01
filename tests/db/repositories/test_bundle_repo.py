@@ -138,9 +138,12 @@ class TestSaveSuggestion:
 
     def test_save_suggestion_handles_operational_error(self, repo):
         """Test save_suggestion handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.save_suggestion({"bundle_name": "Test"}, confidence_score=0.9)
 
     def test_save_suggestion_handles_generic_error(self, repo):
@@ -280,9 +283,12 @@ class TestUpdateStatus:
         """Test update_status handles OperationalError."""
         bundle_id = repo.save_suggestion({"bundle_name": "Test"}, confidence_score=0.9)
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_status(bundle_id, "accepted")
 
     def test_update_status_handles_generic_error(self, repo):
@@ -331,9 +337,12 @@ class TestUpdateBundleName:
         """Test update_bundle_name handles OperationalError."""
         bundle_id = repo.save_suggestion({"bundle_name": "Test"}, confidence_score=0.9)
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_bundle_name(bundle_id, "Updated")
 
     def test_update_bundle_name_handles_generic_error(self, repo):

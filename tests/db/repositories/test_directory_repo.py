@@ -101,9 +101,12 @@ class TestAdd:
 
     def test_add_handles_operational_error(self, repo):
         """Test add handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.add("/test/dir")
 
     def test_add_handles_generic_error(self, repo):
@@ -189,9 +192,12 @@ class TestRemove:
         """Test remove handles OperationalError."""
         repo.add("/test/dir")
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.remove("/test/dir")
 
     def test_remove_handles_generic_error(self, repo):
@@ -276,9 +282,12 @@ class TestUpdateScanInfo:
         """Test update_scan_info handles OperationalError."""
         repo.add("/test/dir")
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.update_scan_info("/test/dir", file_count=100)
 
     def test_update_scan_info_handles_generic_error(self, repo):

@@ -753,9 +753,9 @@ class TestAnalyzeSinglePage:
             assert call_kwargs["file_hash"] == file_hash
             assert call_kwargs["provider_name"] == "ollama"
             assert call_kwargs["error_message"] == "Connection failed"
-            assert (
-                call_kwargs["prompt_text"] == "Custom analyze prompt"
-            ), "prompt_text should be set when exception occurs after prompt fetch"
+            assert call_kwargs["prompt_text"] == "Custom analyze prompt", (
+                "prompt_text should be set when exception occurs after prompt fetch"
+            )
 
     def test_analyze_single_page_calls_save_failed_analysis_when_exception_before_prompt(
         self, service, mock_analysis_db, mock_metadata_db
@@ -1003,9 +1003,9 @@ class TestTaxRelatedFeature:
         # Assert - check for tax document examples
         tax_keywords = ["W-2", "1099", "tax return", "property tax", "IRS", "deductible"]
         found_keywords = [keyword for keyword in tax_keywords if keyword in prompt]
-        assert (
-            len(found_keywords) >= 3
-        ), f"Expected at least 3 tax keywords, found: {found_keywords}"
+        assert len(found_keywords) >= 3, (
+            f"Expected at least 3 tax keywords, found: {found_keywords}"
+        )
 
     @pytest.fixture
     def mock_config(self):

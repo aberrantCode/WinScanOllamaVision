@@ -267,7 +267,7 @@ class _DialogActionsMixin:
                     }
 
                     logger.debug(
-                        "[SAVE METADATA] Saving metadata to DB - " "rotation_needed: '%s'",
+                        "[SAVE METADATA] Saving metadata to DB - rotation_needed: '%s'",
                         metadata.get("rotation_needed"),
                     )
 
