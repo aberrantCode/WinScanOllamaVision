@@ -832,3 +832,84 @@ class TestMarkBundleCompleted:
         user_action = call_args[0][2]
         assert "invoice_2024-01-01.pdf" in user_action
         assert "PDF generated:" in user_action
+
+
+class TestMessyMetadataCoercion:
+    """Regression tests: analyses carry messy LLM metadata (None / strings).
+
+    A stored ``confidence_score`` of None broke ``sum()`` with
+    'unsupported operand type(s) for +: int and NoneType', which surfaced as
+    'Could not load bundles' in the pipeline Bundle panel.
+    """
+
+    @pytest.fixture
+    def service(self):
+        return BundlingService(MagicMock())
+
+    def test_confidence_score_none_does_not_crash(self, service):
+        bundle = {
+            "grouping_method": "metadata_matching",
+            "company": "TestCo",
+            "document_type": "invoice",
+            "document_date": "2024-01-01",
+            "analyses": [
+                {"confidence_score": None},
+                {"confidence_score": 0.9},
+            ],
+        }
+
+        result = service._calculate_bundle_confidence(bundle)
+
+        assert isinstance(result, float)
+        assert 0.0 <= result <= 1.0
+
+    def test_string_page_numbers_do_not_crash(self, service):
+        bundle = {
+            "grouping_method": "explicit_page_numbers",
+            "company": "TestCo",
+            "document_type": "invoice",
+            "document_date": "2024-01-01",
+            "analyses": [
+                {"page_number": "1", "confidence_score": None},
+                {"page_number": "2", "confidence_score": "0.8"},
+            ],
+        }
+
+        result = service._calculate_bundle_confidence(bundle)
+
+        assert isinstance(result, float)
+        # Continuous "1","2" should earn the continuity bonus after coercion.
+        assert result > 0.5
+
+    def test_is_bundle_complete_with_string_total_pages(self, service):
+        bundle = {
+            "analyses": [
+                {"page_number": "1", "total_pages": "2"},
+                {"page_number": "2", "total_pages": "2"},
+            ]
+        }
+
+        assert service._is_bundle_complete(bundle) is True
+
+    def test_is_bundle_complete_with_none_values(self, service):
+        bundle = {
+            "analyses": [
+                {"page_number": None, "total_pages": None},
+                {"page_number": 1, "total_pages": None},
+            ]
+        }
+
+        # No usable total_pages -> not complete, and no crash.
+        assert service._is_bundle_complete(bundle) is False
+
+    def test_as_int_rejects_non_whole_and_bool(self, service):
+        assert service._as_int(True) is None
+        assert service._as_int("abc") is None
+        assert service._as_int("3") == 3
+        assert service._as_int(None) is None
+
+    def test_as_float_falls_back_on_none_and_bool(self, service):
+        assert service._as_float(None, 0.5) == 0.5
+        assert service._as_float(True, 0.5) == 0.5
+        assert service._as_float("0.8", 0.5) == 0.8
+        assert service._as_float(0.0, 0.5) == 0.0

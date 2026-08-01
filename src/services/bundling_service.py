@@ -135,8 +135,9 @@ class BundlingService:
         # Create bundles from groups with 2+ pages
         for key, group in groups.items():
             if len(group) >= 2:
-                # Sort by page number
-                group.sort(key=lambda x: x.get("page_number", 0))
+                # Sort by page number (coerced — mixed str/int values from the
+                # LLM would otherwise raise when compared during the sort).
+                group.sort(key=lambda x: self._as_int(x.get("page_number")) or 0)
 
                 company, doc_type, doc_date = key
 
@@ -211,6 +212,40 @@ class BundlingService:
 
         return bundles
 
+    @staticmethod
+    def _as_int(value: Any) -> int | None:
+        """Best-effort int coercion for messy LLM metadata.
+
+        Returns ``None`` for values that aren't whole numbers (``None``, blank,
+        non-numeric strings, floats like ``1.5``). Booleans are rejected so a
+        stray ``True`` never counts as page ``1``.
+        """
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _as_float(value: Any, default: float) -> float:
+        """Best-effort float coercion, falling back to ``default``.
+
+        Guards the confidence math against analyses whose ``confidence_score``
+        is stored as ``None`` — ``dict.get(key, default)`` returns the stored
+        ``None`` rather than the default, which then breaks ``sum()``.
+        """
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, int | float):
+            return float(value)
+        try:
+            return float(str(value).strip())
+        except (TypeError, ValueError):
+            return default
+
     def _calculate_bundle_confidence(self, bundle: dict[str, Any]) -> float:
         """
         Calculate confidence score for a bundle.
@@ -247,7 +282,7 @@ class BundlingService:
         # Factor 3: Page number continuity (20% of score)
         if bundle["grouping_method"] == "explicit_page_numbers":
             page_numbers = sorted(
-                [a.get("page_number", 0) for a in analyses if a.get("page_number")]
+                n for n in (self._as_int(a.get("page_number")) for a in analyses) if n is not None
             )
             if len(page_numbers) >= 2:
                 # Check if continuous (1,2,3,4) or has gaps
@@ -264,9 +299,11 @@ class BundlingService:
                     confidence += max(0, 0.2 - (gaps * 0.05))
 
         # Factor 4: Individual analysis confidence (10% of score)
-        avg_analysis_confidence = sum(a.get("confidence_score", 0.5) for a in analyses) / len(
-            analyses
-        )
+        # NOTE: use _as_float, not dict.get(default) — a stored None confidence
+        # passes straight through .get() and would break sum() with int + None.
+        avg_analysis_confidence = sum(
+            self._as_float(a.get("confidence_score"), 0.5) for a in analyses
+        ) / len(analyses)
         confidence += avg_analysis_confidence * 0.1
 
         # Normalize to 0.0-1.0 range
@@ -474,13 +511,14 @@ class BundlingService:
         if not analyses:
             return False
 
-        # Get page numbers from analyses
+        # Get page numbers from analyses (coerced — LLM metadata may be strings
+        # or None, and total_pages feeds arithmetic below).
         page_numbers = []
         total_pages = None
 
         for analysis in analyses:
-            page_num = analysis.get("page_number")
-            total = analysis.get("total_pages")
+            page_num = self._as_int(analysis.get("page_number"))
+            total = self._as_int(analysis.get("total_pages"))
 
             if page_num is not None:
                 page_numbers.append(page_num)
