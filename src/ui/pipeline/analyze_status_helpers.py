@@ -68,8 +68,7 @@ def create_completeness_section(theme_colors) -> tuple:
 
     title = QLabel("Metadata Completeness")
     title.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600;"
-        " border: none;"
+        f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600; border: none;"
     )
     layout.addWidget(title)
 
@@ -141,8 +140,7 @@ def create_type_dist_section(theme_colors) -> tuple:
 
     title = QLabel("Document Types")
     title.setStyleSheet(
-        f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600;"
-        " border: none;"
+        f"color: {theme_colors['text_primary']}; font-size: 10pt; font-weight: 600; border: none;"
     )
     layout.addWidget(title)
 

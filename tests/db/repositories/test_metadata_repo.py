@@ -944,9 +944,12 @@ class TestMetadataLinkToPdf:
         conn.commit()
 
         # Mock commit to raise OperationalError
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.link_to_pdf([image_id], pdf_id)
 
     def test_link_to_pdf_handles_database_error(self, repo, image_repo, conn):

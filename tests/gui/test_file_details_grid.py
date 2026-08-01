@@ -50,9 +50,9 @@ class TestImageStatusDisplayNames:
 
         for status, expected in expected_display_names.items():
             display_name = status.name.replace("_", " ").title()
-            assert (
-                display_name == expected
-            ), f"Status {status.name} should format to '{expected}', got '{display_name}'"
+            assert display_name == expected, (
+                f"Status {status.name} should format to '{expected}', got '{display_name}'"
+            )
 
     def test_status_does_not_have_display_name_attribute(self):
         """Test that ImageStatus enum does NOT have a display_name attribute.

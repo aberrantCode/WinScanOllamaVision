@@ -141,9 +141,12 @@ class TestAddPage:
 
     def test_add_page_handles_operational_error(self, repo, sample_pdf_id, sample_image_ids):
         """Test add_page handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.add_page(
                 pdf_file_id=sample_pdf_id, image_file_id=sample_image_ids[0], page_number=1
             )
@@ -290,9 +293,12 @@ class TestRemovePage:
         """Test remove_page handles OperationalError."""
         repo.add_page(pdf_file_id=sample_pdf_id, image_file_id=sample_image_ids[0], page_number=1)
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.remove_page(pdf_file_id=sample_pdf_id, page_number=1)
 
     def test_remove_page_handles_generic_error(self, repo, sample_pdf_id, sample_image_ids):
@@ -335,9 +341,12 @@ class TestRemoveAllPages:
         """Test remove_all_pages handles OperationalError."""
         repo.add_page(pdf_file_id=sample_pdf_id, image_file_id=sample_image_ids[0], page_number=1)
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.remove_all_pages(sample_pdf_id)
 
     def test_remove_all_pages_handles_generic_error(self, repo, sample_pdf_id, sample_image_ids):
