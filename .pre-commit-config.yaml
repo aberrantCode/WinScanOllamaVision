@@ -14,7 +14,7 @@ default_stages: [pre-commit]
 repos:
   # Ruff - Fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.1
+    rev: v0.15.22
     hooks:
       # Linter
       - id: ruff
