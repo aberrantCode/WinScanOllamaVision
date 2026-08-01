@@ -5,21 +5,47 @@ from typing import Any, cast
 import httpx
 import ollama
 
+CONNECT_TIMEOUT_SECONDS = 10.0
+
 
 class OllamaService:
-    def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        timeout: float = 600.0,
+        keep_alive: str = "30m",
+    ):
         """
         Initialize OllamaService with configurable timeout.
 
+        A genuinely-unreachable host and a genuinely-slow generation call
+        (first vision-model load, a large pull) used to look identical: both
+        waited the full `timeout` before raising. The connect phase (TCP
+        handshake) is split out with a short, fixed timeout so an unreachable
+        host fails fast, while read/write/pool keep the long `timeout` needed
+        for real generation and model-pull work.
+
         Args:
             base_url: Ollama server URL
-            timeout: Request timeout in seconds (default: 300 seconds / 5 minutes)
+            timeout: Request timeout in seconds (default: 600 seconds / 10 minutes).
+                On CPU-only hosts a cold vision-model load plus the first
+                inference was measured at ~405s — well over the old 300s
+                ceiling, which is why analysis timed out while "Test Connection"
+                (a cheap /api/tags list) still succeeded.
+            keep_alive: How long Ollama keeps the model resident after a request
+                (default "30m"). Passed through on every chat call so files after
+                the first in a batch run warm (~28s) instead of re-paying the
+                cold load.
         """
         self.base_url = base_url
         self.timeout = timeout
+        self.keep_alive = keep_alive
+        self.connect_timeout = min(CONNECT_TIMEOUT_SECONDS, timeout)
 
         # Create client with explicit host parameter - no global env mutation needed
-        self.client = ollama.Client(host=base_url, timeout=httpx.Timeout(timeout))
+        self.client = ollama.Client(
+            host=base_url, timeout=httpx.Timeout(timeout, connect=self.connect_timeout)
+        )
 
     def list_models(self) -> list[dict[str, Any]]:
         """Lists locally available Ollama models."""
@@ -46,8 +72,13 @@ class OllamaService:
                     else:
                         progress_callback(status)
 
-            # Verify model was pulled
-            if not any(m["name"].startswith(model_name) for m in self.list_models()):
+            # Verify model was pulled. The ollama SDK's list() items key the tag
+            # under "model", not "name" — fall back to "name" for callers/tests
+            # that pass plain {"name": ...} dicts.
+            if not any(
+                str(m.get("model") or m.get("name") or "").startswith(model_name)
+                for m in self.list_models()
+            ):
                 raise Exception(
                     f"Model '{model_name}' did not appear in list_models after pull operation."
                 )
@@ -77,6 +108,10 @@ class OllamaService:
             print(f"  Image {i}: {path}")
             print(f"    Exists: {exists} | Size: {size} bytes")
 
+        import time
+
+        start_time = time.time()
+
         try:
             # The SDK accepts file paths directly and handles encoding
             # Build the request parameters
@@ -92,16 +127,14 @@ class OllamaService:
                 "options": {
                     "temperature": 0.1  # Keep temperature low for factual extraction
                 },
+                # Keep the model resident so subsequent pages/files in a batch
+                # run warm instead of re-paying the cold vision-model load.
+                "keep_alive": self.keep_alive,
             }
 
             # Only add format parameter if we want JSON
             if format_json:
                 chat_params["format"] = "json"
-
-            # Start timing
-            import time
-
-            start_time = time.time()
 
             # Use client with configured timeout
             response = self.client.chat(**chat_params)  # type: ignore[call-overload]
@@ -118,9 +151,13 @@ class OllamaService:
             return cast(dict[str, Any], response.get("message", {}))
 
         except Exception as e:
+            elapsed_time = time.time() - start_time
             print(f"ERROR in chat_with_vision_model: {e}")
             print("==========================================\n")
-            raise ConnectionError(f"Failed to communicate with Ollama: {e}") from e
+            raise ConnectionError(
+                f"Failed to communicate with Ollama at {self.base_url} "
+                f"(model={model_name}, elapsed={elapsed_time:.1f}s): {e}"
+            ) from e
 
     # --- Specific Application Prompts ---
 
@@ -279,11 +316,11 @@ Respond ONLY with valid JSON in this format:
 CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, no code blocks.
 
 Required JSON format:
-{
+{{
             "company": "company name or null",
   "title": "document type or null",
   "date": "YYYY-MM-DD or null"
-}
+}}
 
 Task:
 1. Company: Organization name from headers/footers/logos
@@ -399,12 +436,12 @@ Determine the logical reading order based on:
 - Visual layout clues
 
 Respond with ONLY valid JSON:
-{
+{{
             "ordered_indices": [list of 0-based indices in correct order],
   "confidence": "high" or "medium" or "low"
-}
+}}
 
-Example for 3 pages: {"ordered_indices": [1, 0, 2], "confidence": "high"}
+Example for 3 pages: {{"ordered_indices": [1, 0, 2], "confidence": "high"}}
 
 Current order is: [0, 1, 2, ..., {len(image_paths) - 1}]
 Provide the CORRECT order as indices."""

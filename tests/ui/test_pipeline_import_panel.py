@@ -341,3 +341,221 @@ def test_summary_bar_updated_after_refresh(qapp, mock_analysis_db, mock_config_m
     text = panel._summary_bar.text()
     # 2 total images should appear somewhere in the bar
     assert "2" in text
+
+
+# ---------------------------------------------------------------------------
+# Scan UI locking
+# ---------------------------------------------------------------------------
+
+
+def test_on_scan_clicked_locks_controls(qapp, mock_analysis_db, mock_config_manager):
+    """_on_scan_clicked must lock all controls when scan starts."""
+    with patch("ui.pipeline.import_panel.ImageFilesRepository") as mock_repo:
+        mock_repo.return_value.get_all.return_value = []
+        with patch("ui.pipeline.import_panel.DiscoveryWorker") as mock_worker_class:
+            from ui.pipeline import ImportPanel
+
+            panel = ImportPanel(
+                analysis_db=mock_analysis_db,
+                config_manager=mock_config_manager,
+                dark_mode=True,
+            )
+
+            mock_worker_class.return_value.isRunning.return_value = False
+            panel._on_scan_clicked()
+
+            # Assert all controls are disabled
+            assert panel._refresh_btn.isEnabled() is False
+            assert panel.directory_combo.isEnabled() is False
+            assert panel._select_all_btn.isEnabled() is False
+            assert panel._deselect_btn.isEnabled() is False
+
+
+def test_set_controls_locked_disables_controls_when_true():
+    """_set_controls_locked(True) must disable all four controls."""
+    # Create a minimal mock panel for testing the _set_controls_locked method
+    mock_refresh_btn = MagicMock()
+    mock_dir_combo = MagicMock()
+    mock_select_all_btn = MagicMock()
+    mock_deselect_btn = MagicMock()
+
+    # Create a dict-like object that has the attributes
+    from ui.pipeline.import_panel import ImportPanel
+
+    # We'll call the method directly on a dummy object
+    class DummyPanel:
+        def __init__(self):
+            self._refresh_btn = mock_refresh_btn
+            self.directory_combo = mock_dir_combo
+            self._select_all_btn = mock_select_all_btn
+            self._deselect_btn = mock_deselect_btn
+
+        _set_controls_locked = ImportPanel._set_controls_locked
+
+    panel = DummyPanel()
+    panel._set_controls_locked(True)
+
+    # Assert all buttons had setEnabled called with False
+    mock_refresh_btn.setEnabled.assert_called_with(False)
+    mock_dir_combo.setEnabled.assert_called_with(False)
+    mock_select_all_btn.setEnabled.assert_called_with(False)
+    mock_deselect_btn.setEnabled.assert_called_with(False)
+
+
+def test_set_controls_locked_enables_controls_when_false():
+    """_set_controls_locked(False) must enable all four controls."""
+    mock_refresh_btn = MagicMock()
+    mock_dir_combo = MagicMock()
+    mock_select_all_btn = MagicMock()
+    mock_deselect_btn = MagicMock()
+
+    from ui.pipeline.import_panel import ImportPanel
+
+    class DummyPanel:
+        def __init__(self):
+            self._refresh_btn = mock_refresh_btn
+            self.directory_combo = mock_dir_combo
+            self._select_all_btn = mock_select_all_btn
+            self._deselect_btn = mock_deselect_btn
+
+        _set_controls_locked = ImportPanel._set_controls_locked
+
+    panel = DummyPanel()
+    panel._set_controls_locked(False)
+
+    # Assert all buttons had setEnabled called with True
+    mock_refresh_btn.setEnabled.assert_called_with(True)
+    mock_dir_combo.setEnabled.assert_called_with(True)
+    mock_select_all_btn.setEnabled.assert_called_with(True)
+    mock_deselect_btn.setEnabled.assert_called_with(True)
+
+
+def test_lock_for_external_scan_wires_signals():
+    """lock_for_external_scan must wire worker signals to the correct slots."""
+    # Create a fake panel with minimal setup
+    from ui.pipeline.import_panel import ImportPanel
+
+    class DummyPanel:
+        def __init__(self):
+            self._discovery_worker = None
+            self.scan_btn = MagicMock()
+            self.scan_progress_bar = MagicMock()
+            self._refresh_btn = MagicMock()
+            self.directory_combo = MagicMock()
+            self._select_all_btn = MagicMock()
+            self._deselect_btn = MagicMock()
+
+        # Bind the real method
+        lock_for_external_scan = ImportPanel.lock_for_external_scan
+        _set_controls_locked = ImportPanel._set_controls_locked
+        _on_scan_progress = MagicMock()
+        _on_external_scan_finished = MagicMock()
+        _on_external_scan_error = MagicMock()
+
+    panel = DummyPanel()
+
+    # Create a fake worker
+    fake_worker = MagicMock()
+    fake_worker.progress = MagicMock()
+    fake_worker.finished = MagicMock()
+    fake_worker.error = MagicMock()
+
+    # Call lock_for_external_scan
+    panel.lock_for_external_scan(fake_worker)
+
+    # Assert worker is stored
+    assert panel._discovery_worker is fake_worker
+
+    # Assert signals are connected
+    fake_worker.progress.connect.assert_called_once()
+    fake_worker.finished.connect.assert_called_once()
+    fake_worker.error.connect.assert_called_once()
+
+    # Assert the button text changed
+    panel.scan_btn.setText.assert_called_with("Stop Scan")
+
+
+def _make_locked_dummy_panel():
+    """A dummy panel bound to the real unlock-path handlers, with controls
+    pre-locked and heavier collaborators (_refresh, dialogs, logger) mocked
+    out so these can run without a full Qt panel / real DiscoveryWorker."""
+    from ui.pipeline.import_panel import ImportPanel
+
+    class DummyPanel:
+        def __init__(self):
+            self._discovery_worker = None
+            self.scan_btn = MagicMock()
+            self.scan_progress_bar = MagicMock()
+            self._refresh_btn = MagicMock()
+            self.directory_combo = MagicMock()
+            self._select_all_btn = MagicMock()
+            self._deselect_btn = MagicMock()
+            self._refresh = MagicMock()
+            self.maybe_show_analyze_nudge_after_discovery = MagicMock()
+
+        _set_controls_locked = ImportPanel._set_controls_locked
+        _on_scan_finished = ImportPanel._on_scan_finished
+        _on_scan_error = ImportPanel._on_scan_error
+        _on_external_scan_finished = ImportPanel._on_external_scan_finished
+        _on_external_scan_error = ImportPanel._on_external_scan_error
+
+    panel = DummyPanel()
+    panel._set_controls_locked(True)
+    return panel
+
+
+def test_on_scan_finished_unlocks_controls():
+    """_on_scan_finished must re-enable all four controls once the manual
+    scan completes."""
+    with patch("ui.pipeline.import_panel.show_information"):
+        panel = _make_locked_dummy_panel()
+
+        panel._on_scan_finished(3)
+
+        panel._refresh_btn.setEnabled.assert_called_with(True)
+        panel.directory_combo.setEnabled.assert_called_with(True)
+        panel._select_all_btn.setEnabled.assert_called_with(True)
+        panel._deselect_btn.setEnabled.assert_called_with(True)
+        panel._refresh.assert_called_once()
+
+
+def test_on_scan_error_unlocks_controls():
+    """_on_scan_error must re-enable all four controls when a manual scan fails."""
+    with patch("ui.pipeline.import_panel.show_warning"):
+        panel = _make_locked_dummy_panel()
+
+        panel._on_scan_error("boom")
+
+        panel._refresh_btn.setEnabled.assert_called_with(True)
+        panel.directory_combo.setEnabled.assert_called_with(True)
+        panel._select_all_btn.setEnabled.assert_called_with(True)
+        panel._deselect_btn.setEnabled.assert_called_with(True)
+
+
+def test_on_external_scan_finished_unlocks_refreshes_and_stays_silent():
+    """_on_external_scan_finished must re-enable controls and refresh, but
+    must NOT show a completion dialog (startup scans notify via toast, not
+    a modal) — unlike _on_scan_finished, which does show one for manual scans."""
+    with patch("ui.pipeline.import_panel.show_information") as mock_show_info:
+        panel = _make_locked_dummy_panel()
+
+        panel._on_external_scan_finished(2)
+
+        panel._refresh_btn.setEnabled.assert_called_with(True)
+        panel.directory_combo.setEnabled.assert_called_with(True)
+        panel._select_all_btn.setEnabled.assert_called_with(True)
+        panel._deselect_btn.setEnabled.assert_called_with(True)
+        panel._refresh.assert_called_once()
+        mock_show_info.assert_not_called()
+
+
+def test_on_external_scan_error_unlocks_controls():
+    """_on_external_scan_error must re-enable all four controls."""
+    panel = _make_locked_dummy_panel()
+
+    panel._on_external_scan_error("connection refused")
+
+    panel._refresh_btn.setEnabled.assert_called_with(True)
+    panel.directory_combo.setEnabled.assert_called_with(True)
+    panel._select_all_btn.setEnabled.assert_called_with(True)
+    panel._deselect_btn.setEnabled.assert_called_with(True)

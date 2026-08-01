@@ -29,7 +29,7 @@ class TestProviderIntegration:
 
             config["Ollama"] = {
                 "base_url": "http://localhost:11434",
-                "model": "qwen2.5-vl",
+                "model": "qwen2.5vl:latest",
                 "timeout": "300",
             }
 
@@ -65,7 +65,7 @@ class TestProviderIntegration:
 
         # Assert
         assert provider.provider_name == "ollama"
-        assert provider.default_model == "qwen2.5-vl"
+        assert provider.default_model == "qwen2.5vl:latest"
         assert provider.base_url == "http://localhost:11434"
 
     def test_config_manager_to_provider_factory_claude(self, temp_config_file):
@@ -210,7 +210,7 @@ class TestProviderIntegration:
 
         config = {
             "base_url": "http://localhost:11434",
-            "model": "qwen2.5-vl",
+            "model": "qwen2.5vl:latest",
             "timeout": 300,
         }
 
@@ -231,7 +231,7 @@ class TestProviderIntegration:
 
         config = {
             "base_url": "http://localhost:11434",
-            "model": "qwen2.5-vl",
+            "model": "qwen2.5vl:latest",
             "timeout": 300,
         }
 

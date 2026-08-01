@@ -1,4 +1,8 @@
-"""Capture screenshot"""
+"""Manual dev utility: launch the bundle review widget and screenshot it.
+
+Not a test — lives in scripts/ so pytest does not collect it. Run directly:
+    python scripts/capture_workflow_screenshot.py
+"""
 
 import logging
 import sys
@@ -7,7 +11,7 @@ from pathlib import Path
 
 from PIL import ImageGrab
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 

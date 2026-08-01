@@ -116,6 +116,10 @@ class BundleRepository:
 
         return self.conn.fetch_all_dicts(query, params=tuple(params))
 
+    def get_by_id(self, bundle_id: int) -> dict[str, Any] | None:
+        """Return one bundle row by id regardless of status, or None if missing."""
+        return self.conn.fetch_one_dict("SELECT * FROM document_bundles WHERE id = ?", (bundle_id,))
+
     def update_status(self, bundle_id: int, status: str, user_action: str | None = None) -> None:
         """
         Update bundle status after user action.

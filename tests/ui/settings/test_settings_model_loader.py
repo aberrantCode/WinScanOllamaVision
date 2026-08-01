@@ -109,7 +109,7 @@ def test_model_name_pattern_allows_path_traversal_strings(traversal_name):
     # The current regex allows these — this is a documented gap, NOT the desired behavior.
     # A stricter validation layer is needed for security-sensitive contexts.
     assert _full_match(traversal_name), (
-        f"Pattern currently allows {traversal_name!r} — " "this test documents the known limitation"
+        f"Pattern currently allows {traversal_name!r} — this test documents the known limitation"
     )
 
 

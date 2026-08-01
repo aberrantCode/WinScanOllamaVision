@@ -177,7 +177,7 @@ python src/main.py
 active_provider = ollama
 
 [Ollama]
-model = qwen2.5-vl
+model = qwen2.5vl:latest
 base_url = http://localhost:11434
 timeout = 300
 
@@ -651,7 +651,7 @@ sqlite3 $env:APPDATA\WinScanLLM\metadata.db "ANALYZE;"
 ### LLM Provider Optimization
 
 **Ollama:**
-- Use smaller models for faster processing (`qwen2.5-vl` is good balance)
+- Use smaller models for faster processing (`qwen2.5vl:latest` is a good balance)
 - Increase batch size in settings if system has sufficient RAM
 - Monitor GPU usage if using GPU acceleration
 

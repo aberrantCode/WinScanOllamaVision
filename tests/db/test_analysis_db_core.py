@@ -595,3 +595,354 @@ class TestAnalysisDBCore:
         # Assert - error should be removed
         errors_after = db.get_all_errors()
         assert not any(err["file_path"] == file_path for err in errors_after)
+
+
+class TestSaveFailedAnalysis:
+    """Tests for save_failed_analysis method"""
+
+    @pytest.fixture
+    def temp_db_path(self):
+        """Create a temporary database file"""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        yield db_path
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+    @pytest.fixture
+    def db(self, temp_db_path):
+        """Create AnalysisDB instance"""
+        database = AnalysisDB(temp_db_path)
+        yield database
+        if database.connection:
+            database.connection.close()
+
+    def test_save_failed_analysis_creates_image_file_record(self, db):
+        """Test save_failed_analysis creates image_files row when new (line 131-141)."""
+        # Arrange
+        file_path = "/test/new_failed.jpg"
+        file_hash = "hash_fail_new"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash=file_hash,
+            provider_name="ollama",
+            model_name="test-model",
+            prompt_text="Test prompt",
+            error_message="Connection timeout",
+            processing_time_ms=5000,
+        )
+
+        # Assert - verify image_file was created
+        cursor = db.connection.connection.cursor()
+        norm_path = os.path.normpath(file_path)
+        image_file = cursor.execute(
+            "SELECT id, file_path FROM image_files WHERE file_path = ?", (norm_path,)
+        ).fetchone()
+        assert image_file is not None
+        assert image_file["file_path"] == norm_path
+
+    def test_save_failed_analysis_creates_analysis_result_with_had_error(self, db):
+        """Test save_failed_analysis creates analysis_results row with had_error=1 (line 145-156)."""
+        # Arrange
+        file_path = "/test/failed_analysis.jpg"
+        file_hash = "hash_failure"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash=file_hash,
+            provider_name="claude_cli",
+            model_name="sonnet",
+            prompt_text="Analyze this doc",
+            error_message="API rate limit exceeded",
+            processing_time_ms=2000,
+        )
+
+        # Assert - verify analysis_results row has had_error=1
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            """
+            SELECT had_error, response_text, provider_name, model_name, prompt_text
+            FROM analysis_results
+            WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)
+            """,
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["had_error"] == 1
+        assert result["response_text"] == "API rate limit exceeded"
+        assert result["provider_name"] == "claude_cli"
+        assert result["model_name"] == "sonnet"
+        assert result["prompt_text"] == "Analyze this doc"
+
+    def test_save_failed_analysis_get_analyzed_pages_shows_failed_row(self, db):
+        """Test get_analyzed_pages returns failed analyses (line 188-189)."""
+        # Arrange
+        file_path = "/test/show_failed.jpg"
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_show",
+            provider_name="ollama",
+            model_name="model",
+            prompt_text="prompt",
+            error_message="Error occurred",
+            processing_time_ms=100,
+        )
+
+        # Act
+        pages = db.get_analyzed_pages()
+
+        # Assert - failed analysis should appear in the list
+        assert len(pages) >= 1
+        failed_pages = [p for p in pages if os.path.normpath(file_path) == p.get("file_path")]
+        assert len(failed_pages) >= 1
+
+    def test_save_failed_analysis_does_not_touch_metadata_table(self, db):
+        """Test save_failed_analysis never writes to metadata table (critical design)."""
+        # Arrange - first save a successful analysis with metadata
+        file_path = "/test/preserve_metadata.jpg"
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash_v1",
+            provider_name="ollama",
+            model_name="model-v1",
+            analysis_data={"company": "Original Corp", "document_type": "Invoice"},
+            raw_response="{}",
+            processing_time_ms=100,
+        )
+
+        # Verify metadata was created
+        cursor = db.connection.connection.cursor()
+        norm_path = os.path.normpath(file_path)
+        metadata_before = cursor.execute(
+            "SELECT company, document_type FROM metadata WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (norm_path,),
+        ).fetchone()
+        assert metadata_before is not None
+        assert metadata_before["company"] == "Original Corp"
+
+        # Act - now call save_failed_analysis on the SAME file
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_v2",  # Different hash (file changed)
+            provider_name="claude_cli",
+            model_name="sonnet",
+            prompt_text="Analyze",
+            error_message="Provider unavailable",
+            processing_time_ms=0,
+        )
+
+        # Assert - metadata should be UNCHANGED (critical regression test)
+        metadata_after = cursor.execute(
+            "SELECT company, document_type FROM metadata WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (norm_path,),
+        ).fetchone()
+        assert metadata_after is not None
+        assert metadata_after["company"] == "Original Corp", (
+            "CRITICAL: save_failed_analysis must never overwrite existing metadata"
+        )
+        assert metadata_after["document_type"] == "Invoice"
+
+        # Verify two analysis_results rows exist (one success, one error)
+        analysis_count = cursor.execute(
+            "SELECT COUNT(*) FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (norm_path,),
+        ).fetchone()[0]
+        assert analysis_count == 2
+
+    def test_save_failed_analysis_with_none_provider_name(self, db):
+        """Test save_failed_analysis defaults provider_name to 'unknown' when None (line 147)."""
+        # Arrange
+        file_path = "/test/unknown_provider.jpg"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_unknown",
+            provider_name=None,
+            model_name="model",
+            prompt_text="prompt",
+            error_message="Error",
+            processing_time_ms=0,
+        )
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT provider_name FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["provider_name"] == "unknown"
+
+    def test_save_failed_analysis_with_none_model_name(self, db):
+        """Test save_failed_analysis defaults model_name to 'unknown' when None (line 148)."""
+        # Arrange
+        file_path = "/test/unknown_model.jpg"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_model",
+            provider_name="ollama",
+            model_name=None,
+            prompt_text="prompt",
+            error_message="Error",
+            processing_time_ms=0,
+        )
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT model_name FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["model_name"] == "unknown"
+
+    def test_save_failed_analysis_with_none_prompt_text(self, db):
+        """Test save_failed_analysis defaults prompt_text to empty string when None (line 149)."""
+        # Arrange
+        file_path = "/test/none_prompt.jpg"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_prompt",
+            provider_name="ollama",
+            model_name="model",
+            prompt_text=None,
+            error_message="Error",
+            processing_time_ms=0,
+        )
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT prompt_text FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["prompt_text"] == ""
+
+    def test_save_failed_analysis_with_none_error_message(self, db):
+        """Test save_failed_analysis defaults error_message to 'Unknown error' (line 150)."""
+        # Arrange
+        file_path = "/test/unknown_error.jpg"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_error",
+            provider_name="ollama",
+            model_name="model",
+            prompt_text="prompt",
+            error_message=None,
+            processing_time_ms=0,
+        )
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT response_text FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["response_text"] == "Unknown error"
+
+    def test_save_failed_analysis_sets_extracted_metadata_to_none(self, db):
+        """Test save_failed_analysis sets extracted_metadata to None (line 154)."""
+        # Arrange
+        file_path = "/test/no_metadata.jpg"
+
+        # Act
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_meta",
+            provider_name="ollama",
+            model_name="model",
+            prompt_text="prompt",
+            error_message="Error",
+            processing_time_ms=0,
+        )
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT extracted_metadata FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["extracted_metadata"] is None
+
+    def test_save_failed_analysis_uses_existing_image_file_id(self, db):
+        """Test save_failed_analysis reuses existing image_file_id when file already registered."""
+        # Arrange - pre-register the file
+        file_path = "/test/reuse_id.jpg"
+        db.save_analysis(
+            file_path=file_path,
+            file_hash="hash_first",
+            provider_name="ollama",
+            model_name="model",
+            analysis_data={"test": "data"},
+            raw_response="{}",
+            processing_time_ms=100,
+        )
+
+        # Get the original image_file_id
+        cursor = db.connection.connection.cursor()
+        original_id = cursor.execute(
+            "SELECT id FROM image_files WHERE file_path = ?", (os.path.normpath(file_path),)
+        ).fetchone()["id"]
+
+        # Act - save a failed analysis for the same file
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_second",
+            provider_name="claude_cli",
+            model_name="sonnet",
+            prompt_text="prompt",
+            error_message="Error",
+            processing_time_ms=0,
+        )
+
+        # Assert - should still only have one image_file record
+        count = cursor.execute(
+            "SELECT COUNT(*) FROM image_files WHERE file_path = ?",
+            (os.path.normpath(file_path),),
+        ).fetchone()[0]
+        assert count == 1
+
+        # Verify the failed analysis used the same image_file_id
+        failed_analysis = cursor.execute(
+            "SELECT image_file_id FROM analysis_results WHERE image_file_id = ? AND had_error = 1",
+            (original_id,),
+        ).fetchone()
+        assert failed_analysis is not None
+        assert failed_analysis["image_file_id"] == original_id
+
+    def test_save_failed_analysis_processing_time_default(self, db):
+        """Test save_failed_analysis defaults processing_time_ms to 0 (line 122)."""
+        # Arrange
+        file_path = "/test/default_time.jpg"
+
+        # Act - don't specify processing_time_ms
+        db.save_failed_analysis(
+            file_path=file_path,
+            file_hash="hash_time",
+            provider_name="ollama",
+            model_name="model",
+            prompt_text="prompt",
+            error_message="Error",
+        )
+
+        # Assert
+        cursor = db.connection.connection.cursor()
+        result = cursor.execute(
+            "SELECT processing_time_ms FROM analysis_results WHERE image_file_id = (SELECT id FROM image_files WHERE file_path = ?)",
+            (os.path.normpath(file_path),),
+        ).fetchone()
+        assert result is not None
+        assert result["processing_time_ms"] == 0

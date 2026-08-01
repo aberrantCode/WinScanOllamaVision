@@ -304,6 +304,39 @@ class BundlePanel(QWidget):
 
         self._load_embedded_workflow(bundles)
 
+    def select_bundle(self, bundle_id: int) -> None:
+        """Load one persisted bundle by id and show it selected in the review UI.
+
+        Unlike ``refresh_bundle_count``, this bypasses
+        ``BundlingService.generate_bundle_recommendations`` entirely — so a
+        manually-created bundle surfaces even when no pages have been analyzed
+        (the Ollama-down scenario) — and always rebuilds the embedded workflow so
+        the target bundle appears and is the selected one.
+        """
+        try:
+            bundle = self.analysis_db.get_bundle_with_images(bundle_id)
+        except Exception as e:
+            get_logger().warning(f"[Pipeline BundlePanel] could not load bundle {bundle_id}: {e}")
+            bundle = None
+
+        if not bundle or not bundle.get("file_paths"):
+            if self._placeholder_status:
+                self._placeholder_status.setText("Bundle could not be loaded.")
+            if self._content_stack is not None:
+                self._content_stack.setCurrentIndex(0)
+            return
+
+        total_analyzed = 0
+        try:
+            total_analyzed = len(self.analysis_db.get_analyzed_pages())
+        except Exception as e:
+            get_logger().warning(f"[Pipeline BundlePanel] could not fetch analyzed page count: {e}")
+        self.update_bundle_stats(self._compute_bundle_stats([bundle], total_analyzed))
+
+        # Single-bundle list -> index 0 is the target, so it loads selected.
+        # _load_embedded_workflow removes any live workflow first (forced rebuild).
+        self._load_embedded_workflow([bundle])
+
     def _compute_bundle_stats(self, bundles: list[dict], total_analyzed: int = 0) -> dict:
         """Derive summary stats from bundle recommendations for the stats grid."""
         total = len(bundles)

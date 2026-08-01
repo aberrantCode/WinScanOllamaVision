@@ -5,15 +5,18 @@ Pillow
 requests
 ollama
 httpx
-windows-toasts>=1.1.0
+windows-toasts>=1.3.1; sys_platform == "win32"  # winrt-* deps are Windows-only
 
 # Development dependencies
-pytest>=9.0.0
-pytest-cov>=7.0.0
-pytest-asyncio>=1.3.0
-ruff>=0.8.0
-mypy>=1.13.0
-pre-commit>=4.0.0
-bandit>=1.8.0
-pip-audit>=2.7.0
+pytest>=9.0.3
+pytest-cov>=7.1.0
+pytest-asyncio>=1.4.0
+pytest-xdist>=3.8.0
+ruff>=0.15.22
+mypy>=2.3.0
+pre-commit>=4.6.0
+bandit>=1.9.4
+pip-audit>=2.10.1
+build>=1.0.0        # Local build-check (python -m build)
+twine>=5.0.0        # Local build-check (twine check dist/*)
 types-requests  # Type stubs for mypy

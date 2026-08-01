@@ -50,6 +50,7 @@ class _GridActionsMixin:
     proxy_model: Any  # FileDetailsSortFilterProxyModel
     table_view: Any  # QTableView
     re_analyze_requested: Any  # pyqtSignal
+    bundle_created: Any  # pyqtSignal(int) — emits the resulting bundle id
 
     def _save_column_state(self) -> None:
         """Implemented by orchestrator (FileDetailsGrid)."""
@@ -303,6 +304,11 @@ class _GridActionsMixin:
                 change_status_menu.addAction(status_action)
 
             menu.addMenu(change_status_menu)
+
+            # Bundle: group the selected pages into one document bundle.
+            bundle_action = QAction("📦 Bundle", menu)
+            bundle_action.triggered.connect(self._bundle_selected)
+            menu.addAction(bundle_action)
 
         menu.addSeparator()
 
@@ -654,6 +660,90 @@ class _GridActionsMixin:
             show_warning(
                 self, "Update Failed", "No records were updated.\n\n" + "\n".join(errors[:10])
             )
+
+    def _resolve_analysis_db(self) -> AnalysisDB | None:
+        """Return the grid's analysis DB, falling back to a parent that has one."""
+        db: AnalysisDB | None = getattr(self, "analysis_db", None)
+        if db is not None:
+            return db
+        parent_widget = self.parent()
+        while parent_widget is not None:
+            if hasattr(parent_widget, "analysis_db"):
+                return parent_widget.analysis_db  # type: ignore[no-any-return]
+            parent_widget = parent_widget.parent() if hasattr(parent_widget, "parent") else None
+        return None
+
+    def _bundle_selected(self) -> None:
+        """Bundle the selected pages into a suggested document bundle.
+
+        Applies the 0/1/>=2 existing-bundle merge rule via BundlingService, marks
+        the pages as BUNDLED, and emits ``bundle_created`` with the resulting bundle
+        id so the pipeline can switch to the Bundle view with it selected.
+
+        Requires no analysis — works while the LLM provider is unavailable.
+        """
+        selection = self.table_view.selectionModel().selectedRows()
+        if len(selection) < 2:
+            return
+
+        analysis_db = self._resolve_analysis_db()
+        if analysis_db is None:
+            show_warning(
+                self,
+                "Database Not Available",
+                "Cannot bundle: database connection not available.",
+            )
+            return
+
+        # Collect file paths from the selected rows.
+        file_paths = []
+        for index in selection:
+            source_index = self.proxy_model.mapToSource(index)
+            row_data = self.model.get_row_data(source_index.row())
+            if row_data and row_data.get("full_path"):
+                file_paths.append(row_data["full_path"])
+
+        if len(file_paths) < 2:
+            show_warning(self, "Cannot Bundle", "Need at least two valid pages to bundle.")
+            return
+
+        from services.bundling_service import BundlingService
+
+        service = BundlingService(analysis_db)
+        result = service.create_or_extend_manual_bundle(file_paths)
+        status = result.get("status")
+
+        if status == "ambiguous":
+            count = len(result.get("existing_bundle_ids", []))
+            show_warning(
+                self,
+                "Multiple Bundles Selected",
+                f"The selected pages already belong to {count} different bundles.\n\n"
+                "Merging separate bundles is not supported yet. Select pages from at "
+                "most one existing bundle and try again.",
+            )
+            return
+
+        bundle_id = result.get("bundle_id")
+        if status == "error" or not bundle_id:
+            show_warning(
+                self,
+                "Bundle Failed",
+                str(result.get("message", "Could not create the bundle.")),
+            )
+            return
+
+        # Mark the selected pages as bundled so the list reflects membership.
+        from db.image_status import ImageStatus
+
+        for file_path in file_paths:
+            try:
+                analysis_db.update_image_status(file_path, ImageStatus.BUNDLED.value)
+                self._on_metadata_saved(file_path)
+            except Exception as e:  # pragma: no cover - defensive per-row guard
+                logger.warning("Failed to mark %s as bundled: %s", file_path, e)
+
+        self.bundle_created.emit(int(bundle_id))
 
     def _delete_selected(self):
         """Delete selected rows from database."""

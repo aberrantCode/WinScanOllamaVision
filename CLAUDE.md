@@ -446,7 +446,7 @@ logger.error("Error occurred", exc_info=True)  # Includes traceback
 The application supports three LLM provider types:
 
 1. **Ollama** - Local Ollama server via HTTP API
-   - Default model: `qwen2.5-vl`
+   - Default model: `qwen2.5vl:latest`
    - Base URL: `http://localhost:11434`
 
 2. **Claude CLI** - Claude CLI command execution via subprocess

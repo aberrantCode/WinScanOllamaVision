@@ -47,6 +47,13 @@ class _ChangeTrackerMixin:
             self._original_values["check_updates_on_startup"] = (
                 self.check_updates_on_startup_checkbox.isChecked()
             )
+            self._original_values["preflight_verify_startup"] = (
+                self.preflight_verify_startup_checkbox.isChecked()
+            )
+            self._original_values["preflight_verify_save"] = (
+                self.preflight_verify_save_checkbox.isChecked()
+            )
+            self._original_values["preflight_policy"] = self.preflight_policy_combo.currentData()
 
             # LLM Provider tab
             self._original_values["active_provider"] = self.provider_combo.currentData()
@@ -55,6 +62,7 @@ class _ChangeTrackerMixin:
             )
             self._original_values["ollama_url"] = self.ollama_url_edit.text()
             self._original_values["ollama_timeout"] = self.ollama_timeout_spin.value()
+            self._original_values["ollama_keepalive"] = self.ollama_keepalive_edit.text()
             self._original_values["claude_model"] = self.claude_model_combo.currentText()
             self._original_values["claude_command"] = self.claude_command_edit.toPlainText()
             self._original_values["claude_timeout"] = self.claude_timeout_spin.value()
@@ -74,6 +82,9 @@ class _ChangeTrackerMixin:
                     directories.append(item.text())
             self._original_values["directories"] = directories
             self._original_values["scan_on_startup"] = self.scan_on_startup_checkbox.isChecked()
+            self._original_values["auto_advance_on_empty_discovery"] = (
+                self.auto_advance_on_empty_checkbox.isChecked()
+            )
             self._original_values["export_strategy"] = self._current_export_strategy()
             self._original_values["export_static_path"] = self.export_static_path_edit.text()
             self._original_values["export_subfolder_name"] = self.export_subfolder_name_edit.text()
@@ -99,12 +110,16 @@ class _ChangeTrackerMixin:
         self.persist_rotation_checkbox.stateChanged.connect(self._check_for_changes)
         self.log_sql_checkbox.stateChanged.connect(self._check_for_changes)
         self.check_updates_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.preflight_verify_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.preflight_verify_save_checkbox.stateChanged.connect(self._check_for_changes)
+        self.preflight_policy_combo.currentIndexChanged.connect(self._check_for_changes)
 
         # LLM Provider tab
         self.provider_combo.currentIndexChanged.connect(self._check_for_changes)
         self.ollama_model_combo.currentIndexChanged.connect(self._check_for_changes)
         self.ollama_url_edit.textChanged.connect(self._check_for_changes)
         self.ollama_timeout_spin.valueChanged.connect(self._check_for_changes)
+        self.ollama_keepalive_edit.textChanged.connect(self._check_for_changes)
         self.claude_model_combo.currentIndexChanged.connect(self._check_for_changes)
         self.claude_command_edit.textChanged.connect(self._check_for_changes)
         self.claude_timeout_spin.valueChanged.connect(self._check_for_changes)
@@ -122,6 +137,7 @@ class _ChangeTrackerMixin:
         self.directories_list.model().rowsInserted.connect(self._check_for_changes)
         self.directories_list.model().rowsRemoved.connect(self._check_for_changes)
         self.scan_on_startup_checkbox.stateChanged.connect(self._check_for_changes)
+        self.auto_advance_on_empty_checkbox.stateChanged.connect(self._check_for_changes)
         self.export_static_radio.clicked.connect(self._check_for_changes)
         self.export_subfolder_radio.clicked.connect(self._check_for_changes)
         self.export_beside_radio.clicked.connect(self._check_for_changes)
@@ -225,6 +241,18 @@ class _ChangeTrackerMixin:
                 "check_updates_on_startup", True
             ):
                 has_changes = True
+            if self.preflight_verify_startup_checkbox.isChecked() != self._original_values.get(
+                "preflight_verify_startup", True
+            ):
+                has_changes = True
+            if self.preflight_verify_save_checkbox.isChecked() != self._original_values.get(
+                "preflight_verify_save", True
+            ):
+                has_changes = True
+            if self.preflight_policy_combo.currentData() != self._original_values.get(
+                "preflight_policy", "prompt"
+            ):
+                has_changes = True
 
             # LLM Provider tab
             if self.provider_combo.currentData() != self._original_values.get(
@@ -246,6 +274,10 @@ class _ChangeTrackerMixin:
             if self.ollama_url_edit.text() != self._original_values.get("ollama_url", ""):
                 has_changes = True
             if self.ollama_timeout_spin.value() != self._original_values.get("ollama_timeout", 0):
+                has_changes = True
+            if self.ollama_keepalive_edit.text() != self._original_values.get(
+                "ollama_keepalive", ""
+            ):
                 has_changes = True
             if self.claude_model_combo.currentText() != self._original_values.get(
                 "claude_model", ""
@@ -291,6 +323,10 @@ class _ChangeTrackerMixin:
                 )
             if self.scan_on_startup_checkbox.isChecked() != self._original_values.get(
                 "scan_on_startup", False
+            ):
+                has_changes = True
+            if self.auto_advance_on_empty_checkbox.isChecked() != self._original_values.get(
+                "auto_advance_on_empty_discovery", False
             ):
                 has_changes = True
             if self._current_export_strategy() != self._original_values.get(

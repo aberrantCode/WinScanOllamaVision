@@ -103,10 +103,10 @@ python -c "import sys; sys.path.insert(0, '../src'); from llm_providers.provider
 
 **Test 2.2: Ollama Provider**
 ```bash
-python -c "import sys; sys.path.insert(0, '../src'); from llm_providers.provider_factory import ProviderFactory; config = {'base_url': 'http://localhost:11434', 'timeout': 300, 'model': 'qwen2.5-vl'}; p = ProviderFactory.create_provider('ollama', config); print(f'Default model: {p.get_default_model()}')"
+python -c "import sys; sys.path.insert(0, '../src'); from llm_providers.provider_factory import ProviderFactory; config = {'base_url': 'http://localhost:11434', 'timeout': 300, 'model': 'qwen2.5vl:latest'}; p = ProviderFactory.create_provider('ollama', config); print(f'Default model: {p.get_default_model()}')"
 ```
 - [ ] No errors
-- [ ] Shows "Default model: qwen2.5-vl"
+- [ ] Shows "Default model: qwen2.5vl:latest"
 
 **Test 2.3: Provider Validation**
 ```bash

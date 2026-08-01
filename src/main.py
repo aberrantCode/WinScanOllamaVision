@@ -43,9 +43,20 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
         discovery_worker = DiscoveryWorker(config_manager, directories)
         toast_notifier = NotificationService()
 
+        import_panel = getattr(window, "import_panel", None)
+        if import_panel is not None:
+            # Give the Import view the same visible "scanning…" state and
+            # control lock the manual "Discover Images" button uses, so a
+            # startup scan doesn't run invisibly while the user can still
+            # click into a race with a second worker.
+            import_panel.lock_for_external_scan(discovery_worker)
+
         def on_discovery_finished(count: int) -> None:
             get_logger().info("Startup discovery finished – %s new files registered", count)
             toast_notifier.show_discovery_toast(count)
+            import_panel = getattr(window, "import_panel", None)
+            if import_panel is not None:
+                import_panel.maybe_show_analyze_nudge_after_discovery(count)
 
         def on_discovery_error(error: str) -> None:
             get_logger().error("Startup discovery error: %s", error)
@@ -60,6 +71,60 @@ def _start_discovery_if_enabled(window, config_manager) -> None:
 
     # Delay by 500 ms so the window finishes rendering first
     QTimer.singleShot(500, start_discovery)
+
+
+def _start_llm_preflight_if_enabled(window, config_manager) -> None:
+    """Run a deferred, non-blocking LLM readiness check shortly after the UI is up.
+
+    Verifies the active provider is reachable and its configured model is present
+    *before* the user triggers analysis. Runs off the main thread on a QThread so
+    the reachability probe (and any auto-download) never blocks the event loop.
+
+    Non-blocking contract: startup NEVER pops a modal and NEVER prompts inline.
+    ``approve_callback=None`` means a missing model on ``prompt`` policy is
+    surfaced via a StatusEvent + toast (the user resolves it in Settings); only
+    ``auto`` policy performs a download here, and even that runs on the worker.
+    """
+    if not config_manager.get_bool("LLMPreflight", "verify_on_startup", True):
+        get_logger().info("LLM preflight on startup disabled")
+        return
+
+    from PyQt6.QtCore import QTimer
+
+    from services.llm_readiness_worker import LLMPreflightWorker
+    from services.notification_service import NotificationService
+
+    policy = config_manager.get_setting("LLMPreflight", "model_download_policy", "prompt")
+
+    def start_preflight() -> None:
+        worker = LLMPreflightWorker(config_manager, policy, approve_callback=None)
+
+        def on_preflight_finished(result: object) -> None:
+            ok = getattr(result, "ok", False)
+            message = getattr(result, "message", "")
+            if ok:
+                get_logger().info("LLM preflight OK: %s", message)
+                return
+            get_logger().warning("LLM preflight not ready: %s", message)
+            # StatusEvent already emitted inside the service; add a toast.
+            try:
+                NotificationService().show_preflight_toast(message)
+            except Exception as exc:  # pragma: no cover - defensive
+                get_logger().debug("Preflight toast failed: %s", exc)
+
+        def on_preflight_error(error: str) -> None:
+            get_logger().error("LLM preflight worker error: %s", error)
+
+        worker.result_ready.connect(on_preflight_finished)
+        worker.error.connect(on_preflight_error)
+        worker.start()
+        get_logger().info("LLM preflight worker started (policy=%s)", policy)
+
+        # Prevent garbage collection by attaching to the window.
+        window._llm_preflight_worker = worker  # type: ignore[attr-defined]
+
+    # Delay so the window finishes rendering before any network I/O begins.
+    QTimer.singleShot(1500, start_preflight)
 
 
 def _start_periodic_scheduler(window, config_manager) -> None:
@@ -253,6 +318,9 @@ if __name__ == "__main__":
 
             # Start periodic background discovery scheduler if enabled
             _start_periodic_scheduler(pipeline_window, config_manager)
+
+            # LLM readiness preflight (deferred, non-blocking, off-thread)
+            _start_llm_preflight_if_enabled(pipeline_window, config_manager)
 
             # Close splash and show the pipeline
             splash.close()

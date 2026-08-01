@@ -41,6 +41,9 @@ class AnalyzePanel(QWidget):
 
     back_requested = pyqtSignal()
     next_requested = pyqtSignal()
+    # Re-emitted from the grid when the user manually bundles pages; carries the
+    # resulting bundle id so the window can open the Bundle view with it selected.
+    bundle_view_requested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -155,6 +158,16 @@ class AnalyzePanel(QWidget):
         self._deselect_btn.setVisible(False)
         self._deselect_btn.clicked.connect(self._on_deselect)
         toolbar.addWidget(self._deselect_btn)
+
+        self._refresh_btn = QPushButton("⟳ Refresh")
+        self._refresh_btn.setFlat(True)
+        self._refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._refresh_btn.setToolTip("Reload the grid and analytics from the database")
+        self._refresh_btn.setStyleSheet(
+            _LINK_STYLE.format(self._c().get("text_secondary", "#9CA3AF"))
+        )
+        self._refresh_btn.clicked.connect(self.refresh)
+        toolbar.addWidget(self._refresh_btn)
 
         self.start_btn = QPushButton("▶  Start Analysis")
         self.start_btn.setStyleSheet(
@@ -486,7 +499,9 @@ class AnalyzePanel(QWidget):
                     "model_used": row.get("model_name", ""),
                     "provider": row.get("provider_name", ""),
                     "cache_hit": bool(row.get("is_cached", False)),
-                    "error_message": "",
+                    "error_message": (row.get("response_text") or "")
+                    if row.get("had_error")
+                    else "",
                     "file_hash": row.get("file_hash", ""),
                     "raw_response": row.get("response_text", ""),
                     "response_text": row.get("response_text", ""),
@@ -508,6 +523,8 @@ class AnalyzePanel(QWidget):
         self._worker.queue_empty.connect(self._on_queue_empty, ct)  # type: ignore[call-arg]
         if self.file_grid:
             self.file_grid.re_analyze_requested.connect(self._on_re_analyze_requested)
+            # Re-emit the grid's bundle_created upward so the window can switch views.
+            self.file_grid.bundle_created.connect(self.bundle_view_requested)
             self.file_grid.table_view.selectionModel().selectionChanged.connect(
                 self._on_grid_selection_changed
             )
@@ -580,11 +597,20 @@ class AnalyzePanel(QWidget):
 
     def _on_progress(self, status: str, current: int, total: int) -> None:
         if self.progress_bar:
-            if total > 0:
+            if total > 0 and current < total:
                 self.progress_bar.setRange(0, total)
                 self.progress_bar.setValue(current)
                 pct = int(current / total * 100)
                 self.progress_bar.setFormat(f"{pct}% — {status}")
+            elif total > 0:
+                # current == total: the LAST file's analysis call is still in
+                # flight (scan_all_directories reports `current` before
+                # running the call, not after) — there's no sub-file progress
+                # signal, so a determinate "100%" here would be a lie. Switch
+                # to indeterminate/busy mode until _on_job_finished reports
+                # real completion.
+                self.progress_bar.setRange(0, 0)
+                self.progress_bar.setFormat(status)
             else:
                 self.progress_bar.setRange(0, 0)
         if self.status_lbl:
@@ -702,6 +728,9 @@ class AnalyzePanel(QWidget):
             display_count=display_count, dark_mode=self.dark_mode, parent=self
         )
         dropdown.event_activated.connect(self._on_history_event_activated)
+        # Held so the activation handler can read the full ordered list for
+        # prev/next navigation, and so it can close the dropdown itself.
+        self._history_dropdown = dropdown
 
         # Anchor the popup just below the bar for a natural feel
         if self.status_bar is not None:
@@ -709,20 +738,57 @@ class AnalyzePanel(QWidget):
             dropdown.move(pos)
         dropdown.exec()
 
+    @staticmethod
+    def _retry_predicate(event: Any) -> bool:
+        """Retry applies to re-analyzable files — evaluated per shown event."""
+        from services.status_event import StatusEvent
+
+        return bool(
+            isinstance(event, StatusEvent)
+            and event.file_path
+            and event.feature.startswith("Analyze → Re-analyze")
+        )
+
     def _on_history_event_activated(self, event: Any) -> None:
-        """Open StatusEventDialog for an event the user clicked."""
+        """Open StatusEventDialog (modeless) for the clicked event.
+
+        The dialog is shown non-modally so the rest of the app stays usable,
+        and it receives the dropdown's full ordered list so the user can walk
+        prev/next without reopening the dropdown.
+        """
         from services.status_event import StatusEvent
         from ui.status_history import StatusEventDialog
 
         if not isinstance(event, StatusEvent):
             return
 
-        retry_enabled = bool(event.file_path and event.feature.startswith("Analyze → Re-analyze"))
+        dropdown = getattr(self, "_history_dropdown", None)
+        events = dropdown.ordered_events() if dropdown is not None else [event]
+        try:
+            index = events.index(event)
+        except ValueError:
+            events, index = [event], 0
 
-        dialog = StatusEventDialog(event, retry_enabled=retry_enabled, parent=self)
+        # Close the dropdown's modal loop first, otherwise it keeps the app
+        # blocked even though the detail dialog itself is modeless.
+        if dropdown is not None:
+            dropdown.accept()
+
+        dialog = StatusEventDialog(
+            event,
+            events=events,
+            index=index,
+            retry_enabled=self._retry_predicate,
+            parent=self,
+        )
         dialog.retry_requested.connect(self._on_retry_from_history)
         dialog.file_issue_requested.connect(self._on_file_issue)
-        dialog.exec()
+        # Keep a reference so the modeless dialog isn't garbage-collected the
+        # moment this handler returns.
+        self._event_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _on_retry_from_history(self, event: Any) -> None:
         """Re-queue a failed file for analysis when user clicks Retry."""
@@ -747,7 +813,7 @@ class AnalyzePanel(QWidget):
             == "true"
         )
 
-        app_version = self.config_manager.get_setting("App", "version", "0.3.2-dev")
+        from __version__ import __version__ as app_version
 
         preview = IssuePreviewDialog(
             event,

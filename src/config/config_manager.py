@@ -19,6 +19,20 @@ def _get_logger():
 
 
 class ConfigManager:
+    # Ollama has no hyphen in "qwen2.5vl" — "qwen2.5-vl" was never a valid
+    # model name and 404s against the Ollama API. Configs written before this
+    # fix carry the invalid value and are migrated on load.
+    _LEGACY_OLLAMA_MODEL = "qwen2.5-vl"
+    _DEFAULT_OLLAMA_MODEL = "qwen2.5vl:latest"
+
+    # The original 300s default was too short for a cold CPU vision-model load
+    # plus first inference (measured ~405s), causing analysis to time out while
+    # cheap Test-Connection calls still succeeded. Configs still carrying the old
+    # default are bumped to 600s on load. A user-chosen non-default value is left
+    # untouched.
+    _LEGACY_OLLAMA_TIMEOUT = "300"
+    _DEFAULT_OLLAMA_TIMEOUT = "600"
+
     def __init__(self, config_file=None):
         # If no config file specified, use AppData directory
         if config_file is None:
@@ -76,11 +90,29 @@ class ConfigManager:
                 return
 
             # Ensure all default sections exist (for config files created before new providers added)
+            self._migrate_legacy_config()
             self._create_default_config()
             self._save_config()
         else:
             self._create_default_config()
             self._save_config()
+
+    def _migrate_legacy_config(self):
+        """One-time upgrade of legacy config values that are no longer valid."""
+        if self.config.get("Ollama", "model", fallback=None) == self._LEGACY_OLLAMA_MODEL:
+            self.config["Ollama"]["model"] = self._DEFAULT_OLLAMA_MODEL
+            _get_logger().info(
+                f"[CONFIG] Migrated legacy Ollama model '{self._LEGACY_OLLAMA_MODEL}' "
+                f"to '{self._DEFAULT_OLLAMA_MODEL}'"
+            )
+
+        if self.config.get("Ollama", "timeout", fallback=None) == self._LEGACY_OLLAMA_TIMEOUT:
+            self.config["Ollama"]["timeout"] = self._DEFAULT_OLLAMA_TIMEOUT
+            _get_logger().info(
+                f"[CONFIG] Migrated stale default Ollama timeout "
+                f"'{self._LEGACY_OLLAMA_TIMEOUT}s' to '{self._DEFAULT_OLLAMA_TIMEOUT}s' "
+                "(cold CPU vision load exceeds 300s)"
+            )
 
     def _create_default_config(self):
         # Default LLM Provider settings
@@ -90,9 +122,15 @@ class ConfigManager:
         # Default Ollama settings
         if "Ollama" not in self.config:
             self.config["Ollama"] = {
-                "model": "qwen2.5-vl",  # Default vision model
+                "model": self._DEFAULT_OLLAMA_MODEL,  # Default vision model
                 "base_url": "http://localhost:11434",
-                "timeout": "300",  # Timeout in seconds (5 minutes default for vision models)
+                # 600s / 10 min: a cold CPU vision-model load + first inference was
+                # measured at ~405s, over the old 300s ceiling that caused analysis
+                # timeouts while cheap Test-Connection calls still succeeded.
+                "timeout": self._DEFAULT_OLLAMA_TIMEOUT,
+                # How long Ollama keeps the model resident between requests, so
+                # batches stay warm (~28s/file) after the first cold load.
+                "keep_alive": "30m",
             }
 
         # Claude CLI settings
@@ -126,6 +164,7 @@ class ConfigManager:
             self.config["SourceDirectories"] = {
                 "directories": json.dumps([]),
                 "scan_on_startup": "true",
+                "auto_advance_on_empty_discovery": "true",
             }
 
         # Auto-analysis settings
@@ -144,6 +183,17 @@ class ConfigManager:
                 "skipped_version": "",
                 "last_check_iso": "",
                 "last_known_version": "",
+            }
+
+        # LLM readiness preflight settings
+        if "LLMPreflight" not in self.config:
+            self.config["LLMPreflight"] = {
+                "verify_on_startup": "true",
+                "verify_on_save": "true",
+                # off | prompt | auto — governs whether a missing Ollama model
+                # may be auto-downloaded. "prompt" asks first; "auto" pulls
+                # silently; "off" never downloads. Multi-GB pulls, so default safe.
+                "model_download_policy": "prompt",
             }
 
         # Discovery and scheduling settings
@@ -295,7 +345,7 @@ class ConfigManager:
         """Get available models for a provider as list"""
         if provider_name == "ollama":
             # For Ollama, return single model as list
-            model = self.get_setting("Ollama", "model", "qwen2.5-vl")
+            model = self.get_setting("Ollama", "model", self._DEFAULT_OLLAMA_MODEL)
             return [model]
         elif provider_name == "claude_cli":
             models_str = self.get_setting("ClaudeCLI", "models", "")
@@ -311,7 +361,8 @@ class ConfigManager:
             return {
                 "model": self.get_setting("Ollama", "model"),
                 "base_url": self.get_setting("Ollama", "base_url"),
-                "timeout": int(self.get_setting("Ollama", "timeout", "300")),
+                "timeout": int(self.get_setting("Ollama", "timeout", "600")),
+                "keep_alive": self.get_setting("Ollama", "keep_alive", "30m"),
             }
         elif provider_name == "claude_cli":
             return {

@@ -132,9 +132,12 @@ class TestAddImage:
 
     def test_add_image_handles_operational_error(self, repo, sample_bundle_id, sample_image_ids):
         """Test add_image handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.add_image(
                 bundle_id=sample_bundle_id,
                 image_file_id=sample_image_ids[0],
@@ -192,9 +195,12 @@ class TestAddImagesBulk:
         self, repo, sample_bundle_id, sample_image_ids
     ):
         """Test add_images_bulk handles OperationalError."""
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.add_images_bulk(bundle_id=sample_bundle_id, image_file_ids=sample_image_ids)
 
     def test_add_images_bulk_handles_generic_error(self, repo, sample_bundle_id, sample_image_ids):
@@ -311,9 +317,12 @@ class TestRemoveImage:
             bundle_id=sample_bundle_id, image_file_id=sample_image_ids[0], sequence_order=1
         )
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.remove_image(bundle_id=sample_bundle_id, image_file_id=sample_image_ids[0])
 
     def test_remove_image_handles_generic_error(self, repo, sample_bundle_id, sample_image_ids):
@@ -356,9 +365,12 @@ class TestRemoveAllImages:
         """Test remove_all_images handles OperationalError."""
         repo.add_images_bulk(bundle_id=sample_bundle_id, image_file_ids=sample_image_ids)
 
-        with patch.object(
-            repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
-        ), pytest.raises(sqlite3.OperationalError, match="Database is locked"):
+        with (
+            patch.object(
+                repo.conn, "commit", side_effect=sqlite3.OperationalError("database is locked")
+            ),
+            pytest.raises(sqlite3.OperationalError, match="Database is locked"),
+        ):
             repo.remove_all_images(sample_bundle_id)
 
     def test_remove_all_images_handles_generic_error(

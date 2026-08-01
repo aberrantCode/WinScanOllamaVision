@@ -37,7 +37,7 @@ class _ModelLoaderMixin:
         Locally-installed models are listed first with a ✓ marker; suggestions
         follow. Using exact tag names (not just base-name matching) means tags
         the curated list doesn't know about — e.g. ``qwen2.5vl:3b`` when the
-        curated entry is ``qwen2.5-vl:latest`` — still show up.
+        curated entry is ``qwen2.5vl:latest`` — still show up.
 
         Args:
             force_refresh: If True, bypass cache and re-query Ollama.

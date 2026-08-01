@@ -153,6 +153,9 @@ class DocumentPipelineWindow(QMainWindow):
             config_manager=self.config_manager,
             dark_mode=self.dark_mode,
         )
+        self.import_panel.jump_to_analyze_requested.connect(
+            lambda: self._go_to_stage(STAGE_ANALYZE)
+        )
         self.analyze_panel = AnalyzePanel(
             config_manager=self.config_manager,
             analysis_db=self.analysis_db,
@@ -167,6 +170,10 @@ class DocumentPipelineWindow(QMainWindow):
             dark_mode=self.dark_mode,
         )
         self.bundle_panel.bundles_completed.connect(self._on_bundles_completed)
+
+        # Manual bundling: grid -> analyze_panel -> here. Open the Bundle view with
+        # the newly-created/extended bundle selected.
+        self.analyze_panel.bundle_view_requested.connect(self._go_to_bundle)
 
         self.export_panel = ExportPanel(
             config_manager=self.config_manager,
@@ -285,6 +292,16 @@ class DocumentPipelineWindow(QMainWindow):
             self.analyze_panel.refresh()
         elif stage == STAGE_BUNDLE:
             self.bundle_panel.refresh_bundle_count()
+
+    def _go_to_bundle(self, bundle_id: int) -> None:
+        """Switch to the Bundle view and select a specific persisted bundle.
+
+        Called when the user manually bundles pages in the Analyze list view.
+        ``select_bundle`` runs after the stage switch so it wins over the default
+        ``refresh_bundle_count`` load and shows the manual bundle selected.
+        """
+        self._go_to_stage(STAGE_BUNDLE)
+        self.bundle_panel.select_bundle(bundle_id)
 
     def _on_back_clicked(self) -> None:
         self._go_to_stage(self._current_stage - 1)

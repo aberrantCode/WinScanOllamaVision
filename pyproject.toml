@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "winscan-llm"
-version = "0.1.0"
+dynamic = ["version"]
 description = "PyQt6 desktop application for document scanning with multi-provider LLM integration"
 requires-python = ">=3.10"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "__version__.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -55,7 +58,11 @@ ignore = [
 # Ignore import rules in __init__.py
 "__init__.py" = ["F401"]
 # Relax rules for tests
-"tests/**/*.py" = ["N802", "N803"]  # Function/argument naming
+"tests/**/*.py" = [
+    "N802",   # Function naming (test helpers mirror the API under test)
+    "N803",   # Argument naming
+    "SIM117", # Nested `with` (patch + pytest.raises reads clearer un-merged)
+]
 
 [tool.ruff.format]
 # Use double quotes

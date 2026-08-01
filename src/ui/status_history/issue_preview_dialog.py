@@ -25,10 +25,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from __version__ import __version__ as _app_version
 from services.issue_template import build_github_issue_url, build_issue_template
 from services.status_event import StatusEvent
 
-APP_VERSION_FALLBACK = "0.0.0-dev"
+APP_VERSION_FALLBACK = _app_version
 
 
 class IssuePreviewDialog(QDialog):

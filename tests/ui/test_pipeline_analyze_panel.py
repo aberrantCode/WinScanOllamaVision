@@ -153,6 +153,32 @@ def test_analyze_panel_has_no_close_event_override(
 
 
 # ---------------------------------------------------------------------------
+# Refresh button
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_button_exists_and_is_wired(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """The Refresh button must exist, have the correct text, and trigger refresh()."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+
+    # Verify the button exists
+    assert panel._refresh_btn is not None
+
+    # Verify the button text
+    assert panel._refresh_btn.text() == "⟳ Refresh"
+
+    # Verify the button's tooltip indicates it reloads the grid
+    assert "Reload" in panel._refresh_btn.toolTip()
+
+    # Verify the button has a connected slot by checking the signal receivers
+    # (Qt stores a count of receivers for each signal)
+    receivers = panel._refresh_btn.receivers(panel._refresh_btn.clicked)
+    assert receivers > 0, "Refresh button must have at least one connected slot"
+
+
+# ---------------------------------------------------------------------------
 # H4 — unified dark_mode / is_dark_mode
 # ---------------------------------------------------------------------------
 
@@ -471,3 +497,49 @@ def test_job_finished_calls_refresh_analytics(
         panel._on_job_finished("job-1", {"analyzed": 1, "cached": 0, "errors": 0, "total_files": 1})
 
     mock_refresh.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Progress bar behavior — determinate vs. indeterminate
+# ---------------------------------------------------------------------------
+
+
+def test_on_progress_shows_determinate_percentage_when_not_last_file(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_on_progress with current < total must show a determinate bar with percentage."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+
+    panel._on_progress("Analyzing x.png...", 2, 5)
+
+    assert panel.progress_bar.maximum() == 5
+    assert panel.progress_bar.value() == 2
+    assert "40%" in panel.progress_bar.format()
+
+
+def test_on_progress_switches_to_indeterminate_on_last_file(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_on_progress with current == total must switch to indeterminate mode (no fake 100%)."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+
+    panel._on_progress("Analyzing last.png...", 5, 5)
+
+    # Indeterminate mode: setRange(0, 0)
+    assert panel.progress_bar.minimum() == 0
+    assert panel.progress_bar.maximum() == 0
+    # Format must not contain "100%" — only status text
+    assert "100%" not in panel.progress_bar.format()
+    assert "Analyzing last.png..." in panel.progress_bar.format()
+
+
+def test_on_progress_indeterminate_when_total_zero(
+    qapp, mock_analysis_db, mock_metadata_db, mock_config_manager
+):
+    """_on_progress with total == 0 must remain in indeterminate mode (unchanged behavior)."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_metadata_db, mock_config_manager)
+
+    panel._on_progress("Starting...", 0, 0)
+
+    # Indeterminate mode: maximum should be 0
+    assert panel.progress_bar.maximum() == 0

@@ -21,7 +21,7 @@ class TestOllamaProvider:
         return {
             "base_url": "http://localhost:11434",
             "timeout": 60,
-            "model": "qwen2.5-vl",
+            "model": "qwen2.5vl:latest",
         }
 
     @pytest.fixture
@@ -38,7 +38,7 @@ class TestOllamaProvider:
         # Assert
         assert provider.base_url == "http://localhost:11434"
         assert provider.timeout == 60
-        assert provider.default_model == "qwen2.5-vl"
+        assert provider.default_model == "qwen2.5vl:latest"
 
     def test_init_uses_defaults_when_not_provided(self):
         # Arrange
@@ -50,8 +50,8 @@ class TestOllamaProvider:
 
         # Assert
         assert provider.base_url == "http://localhost:11434"
-        assert provider.timeout == 300
-        assert provider.default_model == "qwen2.5-vl"
+        assert provider.timeout == 600
+        assert provider.default_model == "qwen2.5vl:latest"
 
     def test_init_creates_ollama_service(self, config):
         # Arrange & Act
@@ -59,8 +59,19 @@ class TestOllamaProvider:
             provider = OllamaProvider(config)
 
         # Assert
-        mock_service.assert_called_once_with(base_url="http://localhost:11434", timeout=60.0)
+        mock_service.assert_called_once_with(
+            base_url="http://localhost:11434", timeout=60.0, keep_alive="30m"
+        )
         assert provider.service == mock_service.return_value
+
+    def test_init_plumbs_keep_alive_from_config(self):
+        """keep_alive from provider config must reach the OllamaService so the
+        model stays warm between analyses (default 30m when unset)."""
+        with patch("llm_providers.ollama_provider.OllamaService") as mock_service:
+            OllamaProvider({"keep_alive": "1h"})
+
+        _, kwargs = mock_service.call_args
+        assert kwargs["keep_alive"] == "1h"
 
     def test_analyze_images_success_with_valid_json(self, provider):
         # Arrange
@@ -101,9 +112,9 @@ class TestOllamaProvider:
         result = provider.analyze_images(image_paths, prompt)
 
         # Assert
-        assert result["model_used"] == "qwen2.5-vl"
+        assert result["model_used"] == "qwen2.5vl:latest"
         provider.service.chat_with_vision_model.assert_called_once_with(
-            model_name="qwen2.5-vl",
+            model_name="qwen2.5vl:latest",
             image_paths=image_paths,
             prompt=prompt,
             format_json=True,
@@ -165,7 +176,7 @@ class TestOllamaProvider:
         result = provider.get_default_model()
 
         # Assert
-        assert result == "qwen2.5-vl"
+        assert result == "qwen2.5vl:latest"
 
     def test_get_available_models_returns_model_list(self, provider):
         # Arrange
@@ -182,6 +193,23 @@ class TestOllamaProvider:
         # Assert
         assert result == ["model1", "model2", "model3"]
         provider.service.list_models.assert_called_once()
+
+    def test_get_available_models_handles_real_sdk_response_shape(self, provider):
+        """The ollama SDK's list() items key the tag under 'model', not 'name'
+        (['name'] raises KeyError against a real response). Regression for
+        get_available_models() always returning [] against a live server."""
+        # Arrange
+        models = [
+            {"model": "qwen2.5vl:latest"},
+            {"model": "llama3.1:8b"},
+        ]
+        provider.service.list_models = MagicMock(return_value=models)
+
+        # Act
+        result = provider.get_available_models()
+
+        # Assert
+        assert result == ["qwen2.5vl:latest", "llama3.1:8b"]
 
     def test_get_available_models_returns_empty_on_error(self, provider):
         # Arrange
@@ -276,7 +304,7 @@ class TestOllamaProvider:
         # Assert
         assert result is True
         provider.service.validate_grouping.assert_called_once_with(
-            "qwen2.5-vl", image_paths, custom_prompt
+            "qwen2.5vl:latest", image_paths, custom_prompt
         )
 
     def test_validate_grouping_with_page_number_delegates_to_service(self, provider):
@@ -293,7 +321,7 @@ class TestOllamaProvider:
         # Assert
         assert result == expected_result
         provider.service.validate_grouping_with_page_number.assert_called_once_with(
-            "qwen2.5-vl", image_paths, None
+            "qwen2.5vl:latest", image_paths, None
         )
 
     def test_extract_document_info_delegates_to_service(self, provider):
@@ -309,5 +337,5 @@ class TestOllamaProvider:
         # Assert
         assert result == expected_result
         provider.service.extract_document_info.assert_called_once_with(
-            "qwen2.5-vl", image_paths, title_keywords
+            "qwen2.5vl:latest", image_paths, title_keywords
         )

@@ -110,6 +110,51 @@ class AnalysisDB:
             document_category=analysis_data.get("document_category"),
         )
 
+    def save_failed_analysis(
+        self,
+        file_path: str,
+        file_hash: str,
+        provider_name: str | None,
+        model_name: str | None,
+        prompt_text: str | None,
+        error_message: str | None,
+        processing_time_ms: int = 0,
+    ) -> None:
+        """
+        Persist diagnostic provenance for a failed analysis attempt.
+
+        Writes only to analysis_results (had_error=True) so a failed
+        re-analysis of a previously-successful file can never overwrite that
+        file's last-known-good metadata row.
+        """
+        # Get or create image_file record
+        image_file = self._image_files.get_by_path(file_path)
+        if not image_file:
+            # Register new image file
+            directory_path = os.path.dirname(file_path)
+            filename = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            file_mtime = os.path.getmtime(file_path) if os.path.exists(file_path) else 0.0
+
+            image_file_id = self._image_files.register(
+                file_path, file_hash, directory_path, filename, file_size, file_mtime
+            )
+        else:
+            image_file_id = image_file["id"]
+
+        self._analysis.save(
+            image_file_id=image_file_id,
+            provider_name=provider_name or "unknown",
+            model_name=model_name or "unknown",
+            prompt_text=prompt_text or "",
+            response_text=error_message or "Unknown error",
+            confidence_score=None,
+            processing_time_ms=processing_time_ms,
+            had_error=True,
+            extracted_metadata=None,
+            model_options=None,
+        )
+
     def get_analysis(self, file_path: str) -> dict[str, Any] | None:
         """Retrieve analysis results for a file."""
         # Get image_file_id from file_path
@@ -207,6 +252,60 @@ class AnalysisDB:
     ) -> list[dict[str, Any]]:
         """Get bundle suggestions with optional filters."""
         return self._bundles.get_suggestions(status_filter, min_confidence)
+
+    def get_image_id(self, file_path: str) -> int | None:
+        """Return the image_files row id for a path, or None if not registered."""
+        image_file = self._image_files.get_by_path(file_path)
+        return int(image_file["id"]) if image_file else None
+
+    def get_bundles_for_image(self, image_file_id: int) -> list[dict[str, Any]]:
+        """Return all bundles (any status) that contain the given image."""
+        return self._bundle_images.get_bundles_for_image(image_file_id)
+
+    def get_bundle_images(self, bundle_id: int) -> list[dict[str, Any]]:
+        """Return the images in a bundle, ordered by sequence."""
+        return self._bundle_images.get_images_for_bundle(bundle_id)
+
+    def add_images_to_bundle(self, bundle_id: int, image_file_ids: list[int]) -> None:
+        """Append images to an existing bundle after its current last page.
+
+        Sequence order continues from the bundle's current image count so existing
+        pages keep their positions and new pages are appended in the given order.
+        """
+        start = self._bundle_images.get_image_count(bundle_id)
+        for offset, image_file_id in enumerate(image_file_ids, start=1):
+            self._bundle_images.add_image(bundle_id, image_file_id, start + offset)
+
+    def get_bundle_with_images(self, bundle_id: int) -> dict[str, Any] | None:
+        """Load one persisted bundle by id, shaped for BundleReviewWidget.
+
+        Returns a dict matching the input shape of ``BundlePanel._prepare_bundles``:
+        ``id``, ``company``, ``document_type``, ``document_date``,
+        ``confidence_score``, ``file_paths`` (ordered) and ``analyses`` (one entry
+        per page, ``{}`` for pages with no analysis). Bypasses bundle recommendation
+        generation entirely, so it works with zero analyzed pages.
+
+        Returns None if the bundle does not exist.
+        """
+        bundle = self._bundles.get_by_id(bundle_id)
+        if not bundle:
+            return None
+
+        images = self._bundle_images.get_images_for_bundle(bundle_id)
+        file_paths = [img["file_path"] for img in images]
+
+        batch = self._image_files.get_batch_with_analysis(file_paths) if file_paths else {}
+        analyses = [batch.get(os.path.normpath(p)) or {} for p in file_paths]
+
+        return {
+            "id": bundle_id,
+            "company": "",
+            "document_type": "",
+            "document_date": "",
+            "confidence_score": bundle.get("confidence_score", 0.0),
+            "file_paths": file_paths,
+            "analyses": analyses,
+        }
 
     def update_bundle_status(
         self, bundle_id: int, status: str, user_action: str | None = None

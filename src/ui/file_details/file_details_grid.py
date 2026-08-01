@@ -40,6 +40,7 @@ class FileDetailsGrid(_GridActionsMixin, QWidget):
     """
 
     re_analyze_requested = pyqtSignal(list)  # Emits list of file paths
+    bundle_created = pyqtSignal(int)  # Emits the id of a manually-created/extended bundle
 
     def __init__(self, parent=None, analysis_db=None, metadata_db=None):
         super().__init__(parent)

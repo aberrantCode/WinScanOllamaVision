@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -47,6 +48,7 @@ class ImportPanel(QWidget):
     """
 
     next_requested = pyqtSignal()
+    jump_to_analyze_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -73,7 +75,10 @@ class ImportPanel(QWidget):
         self._preview_stack: QStackedWidget | None = None
         self._select_all_btn: QPushButton | None = None
         self._deselect_btn: QPushButton | None = None
+        self._refresh_btn: QPushButton | None = None
         self._summary_bar: QLabel | None = None
+        self._analyze_nudge: QFrame | None = None
+        self._analyze_nudge_label: QLabel | None = None
 
         self._build_ui()
         QTimer.singleShot(0, self._post_init)
@@ -150,11 +155,11 @@ class ImportPanel(QWidget):
         self.show_analyzed_cb.stateChanged.connect(self._refresh)
         bar.addWidget(self.show_analyzed_cb)
 
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setFixedHeight(28)
-        refresh_btn.setFixedWidth(70)
-        refresh_btn.clicked.connect(self._refresh)
-        bar.addWidget(refresh_btn)
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setFixedHeight(28)
+        self._refresh_btn.setFixedWidth(70)
+        self._refresh_btn.clicked.connect(self._refresh)
+        bar.addWidget(self._refresh_btn)
 
         self.scan_btn = QPushButton("Discover Images")
         self.scan_btn.setFixedHeight(28)
@@ -186,6 +191,11 @@ class ImportPanel(QWidget):
             " padding: 4px 8px; border-radius: 4px;"
         )
         root.addWidget(self._summary_bar)
+
+        # ── Analyze-nudge banner (hidden unless auto-advance is disabled and
+        # discovery completes with 0 new but pending work waiting)
+        self._analyze_nudge = self._build_analyze_nudge_banner()
+        root.addWidget(self._analyze_nudge)
 
         # ── Tree / Preview splitter
         # Left: file tree
@@ -321,6 +331,132 @@ class ImportPanel(QWidget):
 
         layout.addWidget(card, alignment=Qt.AlignmentFlag.AlignCenter)
         return outer
+
+    # ------------------------------------------------------------------
+    # Analyze-nudge banner + auto-advance
+    # ------------------------------------------------------------------
+
+    def _build_analyze_nudge_banner(self) -> QFrame:
+        """Dismissible, actionable banner — only shown when auto-advance is off."""
+        c = self._c()
+        accent = c.get("accent", Colors.PRIMARY)
+
+        banner = QFrame()
+        banner.setObjectName("_analyze_nudge_banner")
+        banner.setStyleSheet(
+            f"QFrame#_analyze_nudge_banner {{"
+            f" background-color: {c['bg_secondary']};"
+            f" border: 1px solid {accent};"
+            f" border-radius: 4px;"
+            f" }}"
+        )
+        banner.setVisible(False)
+
+        hbox = QHBoxLayout(banner)
+        hbox.setContentsMargins(12, 6, 6, 6)
+        hbox.setSpacing(8)
+
+        icon_lbl = QLabel("\U0001f4a1")  # 💡
+        icon_lbl.setStyleSheet("border: none; background: transparent; font-size: 12pt;")
+        hbox.addWidget(icon_lbl)
+
+        self._analyze_nudge_label = QLabel("")
+        self._analyze_nudge_label.setWordWrap(True)
+        self._analyze_nudge_label.setStyleSheet(
+            f"border: none; background: transparent; color: {c['text_primary']}; font-size: 9pt;"
+        )
+        hbox.addWidget(self._analyze_nudge_label, stretch=1)
+
+        go_btn = QPushButton("Go to Analyze →")
+        go_btn.setFixedHeight(24)
+        go_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        go_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {Colors.PRIMARY}; color: white;"
+            f" border: none; border-radius: 3px; padding: 2px 10px;"
+            f" font-weight: 600; font-size: 9pt; }}"
+            f"QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}"
+        )
+        go_btn.clicked.connect(self._on_analyze_nudge_accepted)
+        hbox.addWidget(go_btn)
+
+        dismiss_btn = QPushButton("✕")
+        dismiss_btn.setFixedSize(22, 24)
+        dismiss_btn.setFlat(True)
+        dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        dismiss_btn.setToolTip("Dismiss")
+        dismiss_btn.setStyleSheet(
+            f"QPushButton {{ color: {c['text_tertiary']};"
+            f" border: none; background: transparent; font-size: 10pt; }}"
+            f"QPushButton:hover {{ color: {c['text_primary']}; }}"
+        )
+        dismiss_btn.clicked.connect(self._hide_analyze_nudge)
+        hbox.addWidget(dismiss_btn)
+
+        return banner
+
+    def _on_analyze_nudge_accepted(self) -> None:
+        """User clicked 'Go to Analyze' — hide banner and request the tab switch."""
+        self._hide_analyze_nudge()
+        self.jump_to_analyze_requested.emit()
+
+    def _hide_analyze_nudge(self) -> None:
+        if self._analyze_nudge is not None:
+            self._analyze_nudge.setVisible(False)
+
+    def maybe_show_analyze_nudge_after_discovery(self, new_count: int) -> None:
+        """
+        React to a discovery scan that found no new images but left work queued.
+
+        Behaviour is controlled by the
+        ``SourceDirectories.auto_advance_on_empty_discovery`` setting
+        (default: True):
+
+        * **Enabled** — immediately emit ``jump_to_analyze_requested`` so the
+          pipeline switches to the Analyze tab. No banner is shown.
+        * **Disabled** — show a dismissible banner on the Import tab offering
+          a one-click jump to Analyze instead.
+
+        Called from both the panel's own scan button and the app-level startup
+        discovery worker. No-op when there is nothing useful to propose.
+        """
+        if new_count > 0:
+            self._hide_analyze_nudge()
+            return
+
+        try:
+            images = self._image_repo.get_all()
+        except Exception as e:
+            get_logger().warning("[ImportPanel] Could not compute pending/errors: %s", e)
+            self._hide_analyze_nudge()
+            return
+
+        images = [i for i in images if not i.get("is_ignored", False)]
+        pending = sum(1 for i in images if i.get("status") in ("registered", "pending"))
+        errors = sum(1 for i in images if i.get("status") == "error")
+
+        if pending == 0 and errors == 0:
+            self._hide_analyze_nudge()
+            return
+
+        auto_advance = self.config_manager.get_bool(
+            "SourceDirectories", "auto_advance_on_empty_discovery", True
+        )
+        if auto_advance:
+            self._hide_analyze_nudge()
+            self.jump_to_analyze_requested.emit()
+            return
+
+        parts = []
+        if pending:
+            parts.append(f"<b>{pending}</b> pending analysis")
+        if errors:
+            parts.append(f"<b>{errors}</b> with errors")
+        msg = "No new images to import. You still have " + " and ".join(parts) + "."
+
+        if self._analyze_nudge_label is not None:
+            self._analyze_nudge_label.setText(msg)
+        if self._analyze_nudge is not None:
+            self._analyze_nudge.setVisible(True)
 
     def _post_init(self) -> None:
         self._populate_directory_combo()
@@ -476,6 +612,61 @@ class ImportPanel(QWidget):
         if self.image_tree:
             self.image_tree.clearSelection()
 
+    def _set_controls_locked(self, locked: bool) -> None:
+        """Disable/enable controls that would race with an in-flight scan.
+
+        The scan button itself is left enabled — it already toggles between
+        "Discover Images" and "Stop Scan" and guards against starting a
+        duplicate scan, so disabling it would remove the ability to cancel.
+        """
+        enabled = not locked
+        if self._refresh_btn:
+            self._refresh_btn.setEnabled(enabled)
+        if self.directory_combo:
+            self.directory_combo.setEnabled(enabled)
+        if self._select_all_btn:
+            self._select_all_btn.setEnabled(enabled)
+        if self._deselect_btn:
+            self._deselect_btn.setEnabled(enabled)
+
+    def lock_for_external_scan(self, worker: DiscoveryWorker) -> None:
+        """Wire an externally-created DiscoveryWorker (e.g. the startup scan
+        in main.py) into this panel's scan UI, so the Import view shows the
+        same visible "scanning…" state and stays locked for the duration —
+        instead of the scan running invisibly while the user can still click
+        Discover Images and race a second worker.
+
+        No completion dialog is shown here (startup scans notify via toast,
+        not a modal) — only progress + locking reuse the manual-scan wiring.
+        """
+        self._discovery_worker = worker
+        if self.scan_btn:
+            self.scan_btn.setText("Stop Scan")
+        if self.scan_progress_bar:
+            self.scan_progress_bar.setVisible(True)
+            self.scan_progress_bar.setRange(0, 0)
+        self._set_controls_locked(True)
+
+        worker.progress.connect(self._on_scan_progress)
+        worker.finished.connect(self._on_external_scan_finished)
+        worker.error.connect(self._on_external_scan_error)
+
+    def _on_external_scan_finished(self, count: int) -> None:
+        if self.scan_btn:
+            self.scan_btn.setText("Discover Images")
+        if self.scan_progress_bar:
+            self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
+        self._refresh()
+
+    def _on_external_scan_error(self, error_msg: str) -> None:
+        if self.scan_btn:
+            self.scan_btn.setText("Discover Images")
+        if self.scan_progress_bar:
+            self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
+        get_logger().error(f"[ImportPanel] external scan error: {error_msg}")
+
     def _on_scan_clicked(self) -> None:
         if self._discovery_worker and self._discovery_worker.isRunning():
             self._discovery_worker.stop()
@@ -491,6 +682,7 @@ class ImportPanel(QWidget):
         if self.scan_progress_bar:
             self.scan_progress_bar.setVisible(True)
             self.scan_progress_bar.setRange(0, 0)
+        self._set_controls_locked(True)
 
         self._discovery_worker = DiscoveryWorker(self.config_manager, dirs)
         self._discovery_worker.progress.connect(self._on_scan_progress)
@@ -510,15 +702,18 @@ class ImportPanel(QWidget):
             self.scan_btn.setText("Discover Images")
         if self.scan_progress_bar:
             self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
         self._refresh()
         if count > 0:
             show_information(self, "Discovery Complete", f"Found {count} new image(s).")
+        self.maybe_show_analyze_nudge_after_discovery(count)
 
     def _on_scan_error(self, error_msg: str) -> None:
         if self.scan_btn:
             self.scan_btn.setText("Discover Images")
         if self.scan_progress_bar:
             self.scan_progress_bar.setVisible(False)
+        self._set_controls_locked(False)
         show_warning(self, "Discovery Error", f"Scan failed:\n{error_msg}")
 
     def _on_unregister(self) -> None:

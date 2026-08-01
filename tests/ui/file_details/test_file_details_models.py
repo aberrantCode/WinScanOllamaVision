@@ -215,6 +215,67 @@ def test_header_data_returns_column_name(qapp):
 
 
 # ---------------------------------------------------------------------------
+# FileDetailsTableModel — Date Modified column (position, format, sort key)
+# ---------------------------------------------------------------------------
+
+
+def test_date_modified_is_second_column(qapp):
+    """'Date Modified' must be the second column in the default order."""
+    from PyQt6.QtCore import Qt
+
+    assert FileDetailsTableModel.COLUMNS[1][0] == "modified_time"
+    assert FileDetailsTableModel.COLUMNS[1][1] == "Date Modified"
+
+    model = FileDetailsTableModel()
+    model.set_data(SAMPLE_DATA)
+    header = model.headerData(1, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+    assert header == "Date Modified"
+
+
+def test_modified_time_display_uses_us_datetime_format(qapp):
+    """modified_time renders as MM/DD/YYYY HH:MM AM/PM."""
+    import re
+    from datetime import timezone
+
+    # A naive value is shown as-is (no tz conversion) → deterministic.
+    model = FileDetailsTableModel()
+    model.set_data([_make_row(modified_time="2024-01-15T14:30:00")])
+    val = _display_for(model, 0, "modified_time")
+    assert val == "01/15/2024 02:30 PM"
+
+    # An aware value is converted to local; assert the shape, not the value.
+    model2 = FileDetailsTableModel()
+    model2.set_data([_make_row(modified_time=datetime(2024, 1, 15, 14, 30, tzinfo=timezone.utc))])
+    val2 = _display_for(model2, 0, "modified_time")
+    assert re.match(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2} (AM|PM)$", val2)
+
+
+def test_sort_key_is_none_for_text_columns(qapp):
+    """Non-datetime columns provide no sort key (fall back to text sort)."""
+    assert FileDetailsTableModel._sort_key("filename", "/docs/a.png") is None
+    assert FileDetailsTableModel._sort_key("company", "Acme") is None
+
+
+def test_modified_time_sorts_chronologically_not_lexically(qapp):
+    """Sort must be by time, even where MM/DD/YYYY strings sort the other way.
+
+    Dec 2023 precedes Jan 2024 chronologically, but "12/01/2023" sorts AFTER
+    "01/01/2024" lexically — so this only passes with the epoch sort key.
+    """
+    from PyQt6.QtCore import Qt
+
+    data = [
+        _make_row(filename="/newer.png", modified_time="2024-01-01T00:00:00"),
+        _make_row(filename="/older.png", modified_time="2023-12-01T00:00:00"),
+    ]
+    proxy = _make_proxy_with_data(data)
+    proxy.sort(1, Qt.SortOrder.AscendingOrder)  # column 1 == Date Modified
+
+    first_filename = proxy.data(proxy.index(0, 0), Qt.ItemDataRole.DisplayRole)
+    assert first_filename == "older.png"
+
+
+# ---------------------------------------------------------------------------
 # FileDetailsSortFilterProxyModel — quick filters
 # ---------------------------------------------------------------------------
 
