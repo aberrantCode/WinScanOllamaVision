@@ -38,6 +38,13 @@ class BundleThumbnailPanel(QWidget):
     def __init__(self, dark_mode: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._dark_mode = dark_mode
+        # Decoded/scaled thumbnail pixmaps keyed by file path. Avoids re-reading
+        # every page image from disk each time the list is rebuilt.
+        self._thumb_cache: dict[str, QPixmap] = {}
+        # Live thumbnail widgets keyed by visual index, so selection can be
+        # updated without tearing down and rebuilding the whole list.
+        self._thumbnails: dict[int, DraggableThumbnail] = {}
+        self._current_selected: int = 0
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -169,6 +176,9 @@ class BundleThumbnailPanel(QWidget):
 
         QApplication.processEvents()
 
+        self._thumbnails = {}
+        self._current_selected = current_page_index
+
         for visual_index, actual_index in enumerate(page_order):
             row = self._create_thumbnail_row(
                 visual_index,
@@ -181,6 +191,26 @@ class BundleThumbnailPanel(QWidget):
             self._thumbnail_layout.addWidget(row)
 
         self._thumbnail_layout.addStretch()
+
+    def set_selected(self, visual_index: int) -> None:
+        """Update the selection highlight without rebuilding the thumbnail list.
+
+        Restyles only the previously-selected and newly-selected thumbnails.
+        This is the fast path for page navigation — no widgets are destroyed
+        and no image files are re-decoded.
+        """
+        prev = self._current_selected
+        self._current_selected = visual_index
+        if prev in self._thumbnails and prev != visual_index:
+            self._thumbnails[prev].setStyleSheet(self._thumbnail_border_style(selected=False))
+        if visual_index in self._thumbnails:
+            self._thumbnails[visual_index].setStyleSheet(
+                self._thumbnail_border_style(selected=True)
+            )
+
+    def clear_cache(self) -> None:
+        """Drop cached thumbnail pixmaps — call when loading a different bundle."""
+        self._thumb_cache.clear()
 
     def apply_theme(self, dark_mode: bool) -> None:
         """Re-apply colour styles for the given theme."""
@@ -220,6 +250,68 @@ class BundleThumbnailPanel(QWidget):
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _thumbnail_border_style(self, selected: bool) -> str:
+        """Return the DraggableThumbnail stylesheet for the given selection state."""
+        theme = get_bundle_colors(self._dark_mode)
+        border_color = theme["selected"] if selected else theme["border"]
+        border_width = 3 if selected else 1
+        return f"""
+            DraggableThumbnail {{
+                border: {border_width}px solid {border_color};
+                background: {theme["bg_primary"]};
+                border-radius: 4px;
+            }}
+            DraggableThumbnail:hover {{
+                border-color: {theme["selected"]};
+            }}
+        """
+
+    def _thumbnail_pixmap(self, file_path: str, actual_index: int, prototype_mode: bool) -> QPixmap:
+        """Return an 80x100 thumbnail pixmap, decoding real files at most once.
+
+        Prototype placeholders and error placeholders are cheap and always
+        regenerated; successfully decoded file thumbnails are cached by path so
+        rebuilding the list (selection, reorder, theme change) never re-reads
+        the image from disk.
+        """
+        if prototype_mode:
+            pixmap = QPixmap(80, 100)
+            base_color = QColor(220 + (actual_index * 10) % 30, 230, 245)
+            pixmap.fill(base_color)
+            painter = QPainter(pixmap)
+            painter.drawText(
+                pixmap.rect(), Qt.AlignmentFlag.AlignCenter, f"Page\n{actual_index + 1}"
+            )
+            painter.end()
+            return pixmap
+
+        cached = self._thumb_cache.get(file_path)
+        if cached is not None:
+            return cached
+
+        pixmap = QPixmap(file_path)
+        if pixmap.isNull():
+            # Don't cache failures — the file may reappear (e.g. still being written).
+            placeholder = QPixmap(80, 100)
+            placeholder.fill(QColor(220, 230, 245))
+            painter = QPainter(placeholder)
+            painter.drawText(
+                placeholder.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                f"Page\n{actual_index + 1}\n(Error)",
+            )
+            painter.end()
+            return placeholder
+
+        scaled = pixmap.scaled(
+            80,
+            100,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._thumb_cache[file_path] = scaled
+        return scaled
+
     def _create_thumbnail_row(
         self,
         visual_index: int,
@@ -237,58 +329,16 @@ class BundleThumbnailPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # --- Thumbnail pixmap ---
-        if prototype_mode:
-            pixmap = QPixmap(80, 100)
-            base_color = QColor(220 + (actual_index * 10) % 30, 230, 245)
-            pixmap.fill(base_color)
-            painter = QPainter(pixmap)
-            painter.drawText(
-                pixmap.rect(), Qt.AlignmentFlag.AlignCenter, f"Page\n{actual_index + 1}"
-            )
-            painter.end()
-        else:
-            pixmap = QPixmap(file_path)
-            if pixmap.isNull():
-                pixmap = QPixmap(80, 100)
-                pixmap.fill(QColor(220, 230, 245))
-                painter = QPainter(pixmap)
-                painter.drawText(
-                    pixmap.rect(),
-                    Qt.AlignmentFlag.AlignCenter,
-                    f"Page\n{actual_index + 1}\n(Error)",
-                )
-                painter.end()
-            else:
-                pixmap = pixmap.scaled(
-                    80,
-                    100,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+        # --- Thumbnail pixmap (cached to avoid re-decoding on every rebuild) ---
+        pixmap = self._thumbnail_pixmap(file_path, actual_index, prototype_mode)
 
         thumbnail = DraggableThumbnail(visual_index)
         thumbnail.setPixmap(pixmap)
         thumbnail.setFixedSize(80, 100)
-
-        # Selection border
-        if visual_index == current_page_index:
-            border_color = theme["selected"]
-            border_width = 3
-        else:
-            border_color = theme["border"]
-            border_width = 1
-
-        thumbnail.setStyleSheet(f"""
-            DraggableThumbnail {{
-                border: {border_width}px solid {border_color};
-                background: {theme["bg_primary"]};
-                border-radius: 4px;
-            }}
-            DraggableThumbnail:hover {{
-                border-color: {theme["selected"]};
-            }}
-        """)
+        thumbnail.setStyleSheet(
+            self._thumbnail_border_style(selected=visual_index == current_page_index)
+        )
+        self._thumbnails[visual_index] = thumbnail
 
         # Signals: forward drag-drop as page_reorder_requested, click as page_selected
         thumbnail.drop_requested.connect(self.page_reorder_requested)

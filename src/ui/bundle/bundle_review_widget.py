@@ -203,6 +203,7 @@ class BundleReviewWidget(QWidget):
     def _load_current_bundle(self):
         """Load the current bundle data."""
         bundle = self.bundles[self.current_bundle_index]
+        self.thumbnail_panel.clear_cache()
         self.page_order = list(range(len(bundle.get("file_paths", []))))
         self.current_page_index = 0
         self.preview_panel.rotation_angle = 0
@@ -424,7 +425,9 @@ class BundleReviewWidget(QWidget):
             return
 
         with contextlib.suppress(Exception):
-            os.startfile(output_dir)  # type: ignore[attr-defined]
+            # output_dir is validated by is_path_confined() above, so this only
+            # ever opens a folder under the configured directories.
+            os.startfile(output_dir)  # type: ignore[attr-defined]  # nosec B606
 
     def _show_completion_summary(self) -> None:
         """Show workflow completion summary."""
@@ -442,11 +445,17 @@ class BundleReviewWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _on_thumbnail_clicked(self, page_index: int) -> None:
-        """Navigate to the page selected in the thumbnail panel."""
+        """Navigate to the page selected in the thumbnail panel.
+
+        Uses the lightweight selection/refresh paths rather than rebuilding the
+        whole thumbnail list: only the preview reloads, the highlight moves, and
+        the metadata panel is refreshed to show the newly selected page.
+        """
         if 0 <= page_index < len(self.page_order):
             self.current_page_index = page_index
             self._display_current_page()
-            self._populate_thumbnails()
+            self.thumbnail_panel.set_selected(page_index)
+            self.metadata_panel.set_current_page(page_index)
 
     def _on_drop_requested(self, from_index: int, to_index: int) -> None:
         """Reorder pages after a drag-and-drop operation in the thumbnail panel."""
@@ -631,6 +640,7 @@ class BundleReviewWidget(QWidget):
 
             self._populate_thumbnails()
             self._display_current_page()
+            self.metadata_panel.set_current_page(self.current_page_index)
             self._update_header()
 
     def _toggle_theme(self):
