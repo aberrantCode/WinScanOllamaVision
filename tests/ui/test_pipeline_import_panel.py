@@ -238,6 +238,75 @@ def test_image_tree_header_is_configured_after_init(qapp, mock_analysis_db, mock
 
 
 # ---------------------------------------------------------------------------
+# Column-header sorting
+# ---------------------------------------------------------------------------
+
+
+def test_image_tree_sorting_enabled(qapp, mock_analysis_db, mock_config_manager):
+    """Clicking a column header must sort — sorting has to be enabled and shown."""
+    panel = _make_panel(qapp, mock_analysis_db, mock_config_manager)
+
+    assert panel.image_tree.isSortingEnabled() is True
+    hdr = panel.image_tree.header()
+    assert hdr is not None
+    assert hdr.isSortIndicatorShown() is True
+    assert hdr.sectionsClickable() is True
+
+
+def test_size_column_sorts_numerically_not_lexically(qapp):
+    """The Size column must sort by byte count, not by the formatted string.
+
+    Lexically '1.2 MB' < '900 B'; numerically 900 B < 1.2 MB. The item must
+    order by bytes.
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QTreeWidget
+
+    from ui.pipeline.import_panel import _ImageTreeItem
+
+    tree = QTreeWidget()
+    tree.setColumnCount(4)
+    tree.setSortingEnabled(True)
+
+    small = _ImageTreeItem(["a.png", "registered", "2024-01-01", "900 B"])
+    small.setData(3, Qt.ItemDataRole.UserRole, 900)
+    big = _ImageTreeItem(["b.png", "registered", "2024-01-02", "1.2 MB"])
+    big.setData(3, Qt.ItemDataRole.UserRole, 1_258_291)
+
+    tree.addTopLevelItem(big)
+    tree.addTopLevelItem(small)
+    tree.sortItems(3, Qt.SortOrder.AscendingOrder)
+
+    # Ascending by bytes: 900 B first, then 1.2 MB.
+    assert tree.topLevelItem(0).text(3) == "900 B"
+    assert tree.topLevelItem(1).text(3) == "1.2 MB"
+
+
+def test_date_column_sorts_by_mtime(qapp):
+    """The Date column must sort by the stored mtime, oldest first ascending."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QTreeWidget
+
+    from ui.pipeline.import_panel import _ImageTreeItem
+
+    tree = QTreeWidget()
+    tree.setColumnCount(4)
+    tree.setSortingEnabled(True)
+
+    newer = _ImageTreeItem(["a.png", "registered", "2024-06-01", "1 KB"])
+    newer.setData(2, Qt.ItemDataRole.UserRole, 1_717_200_000)
+    older = _ImageTreeItem(["b.png", "registered", "2024-01-01", "1 KB"])
+    older.setData(2, Qt.ItemDataRole.UserRole, 1_704_067_200)
+
+    tree.addTopLevelItem(newer)
+    tree.addTopLevelItem(older)
+    tree.sortItems(2, Qt.SortOrder.AscendingOrder)
+
+    assert tree.topLevelItem(0).text(2) == "2024-01-01"
+    assert tree.topLevelItem(1).text(2) == "2024-06-01"
+
+
+# ---------------------------------------------------------------------------
 # Summary bar — Phase 2 additions
 # ---------------------------------------------------------------------------
 
